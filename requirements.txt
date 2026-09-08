@@ -1,0 +1,73 @@
+# ============================================================
+# requirements.txt - Dependencias del asistente Miku
+# Python 3.10+ sobre Windows.
+# Separa en bloques según su función. Comentá lo que no uses
+# para reducir la instalación en máquinas sin GPU, etc.
+# ============================================================
+
+# ---------- Núcleo del sistema ----------
+# Configuración y entorno
+python-dotenv>=1.0.0
+
+# HTTP (para el cerebro Groq y STT por API)
+requests>=2.31.0
+
+# Logging con colores (consola)
+colorama>=0.4.6
+
+# ---------- Reconocimiento de voz (STT) ----------
+# Captura de audio local + SpeechRecognition (API Groq Whisper).
+SpeechRecognition>=3.10.0
+pyaudio>=0.2.13
+
+# ---------- Voz de Miku (TTS: Kokoro -> RVC -> pygame) ----------
+# Motor base de texto a voz (Kokoro).
+kokoro
+# Librería de conversión de voz RVC.
+rvc-python
+# Audio científico / lectura de wav.
+numpy
+soundfile>=0.12.1
+pygame>=2.5.0
+sentencepiece
+phonemizer
+
+# ---------- Control del sistema (ventanas, procesos) ----------
+# Abrir programas por nombre.
+AppOpener
+# Automatización de teclado/mouse.
+pyautogui>=0.9.54
+pygetwindow>=0.0.9
+# Control de ventanas nativo de Windows.
+pywin32>=306
+# Brillo de la pantalla.
+screen-brightness-control>=0.21.0
+# Volumen del sistema por proceso / master (pycaw).
+pycaw>=20240210
+
+# ---------- Memoria persistente (chromadb) ----------
+chromadb>=0.4.24
+# Modelo de embeddings usado por la memoria.
+sentence-transformers>=2.6.0
+
+# ---------- Autómatas / teclas (push-to-talk/efectos) ----------
+# Teclado global (tecla F22 del HP Omen).
+keyboard>=0.13.5
+pynput>=1.7.6
+# Monitoreo de procesos / temperatura del CPU.
+psutil>=5.9.8
+
+# ---------- Navegador / multimedia (YouTube, TIDAL) ----------
+# Seedance de Chromium (Brave) vía CDP y automatización de pestañas.
+playwright>=1.40.0
+
+# ---------- Plugins futuros (opcionales) ----------
+# Discord (silenciar, expulsar, control de volumen).
+# discord.py>=2.3.2
+# Traducción de frases a varios idiomas (deep-translator).
+# deep-translator>=1.11.4
+
+# ---------- Motor de cálculo / IA (opcional pero recomendado) ----------
+# Para RVC se necesita torch con soporte CUDA.
+# torch>=2.3.0
+# torchaudio>=2.3.0

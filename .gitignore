@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+venv/
+env/
+.env
+
+# Archivos de configuración
+config_local.py
+keys.txt
+*.key
+
+# Archivos de datos
+data/preferences.json
+data/macros_config.json
+# Persistencia de la memoria (chromadb)
+data/miku_memoria/
+
+# VS Code
+.vscode/settings.json
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Código viejo (no versionar)
+codigo_viejo/
+
+# Modelos de voz (archivos pesados)
+voice_models/
+*.pth
+*.index
+*.bin
+modelos_voz/
+

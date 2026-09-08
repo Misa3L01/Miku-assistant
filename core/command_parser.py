@@ -1,0 +1,350 @@
+"""
+command_parser.py - Parser de comandos (el "cerebro" del asistente).
+
+Convierte el texto del usuario en una acción. Para no copiar el código viejo
+(aunque mucho es referencia) este módulo implementa un flujo claro:
+
+  1. Comandos inmediatos (fast path) resueltos localmente sin LLM.
+  2. Despacho por match de palabras clave a plugins (vía event_bus).
+  3. Si ninguno respondió, se consulta al LLM (Groq) con herramientas
+     (tools) declaradas por los plugins, se ejecutan y se arma la respuesta.
+
+De mantenerlo modular, toda la "inteligencia" se descarga a un cliente de
+LLM intercambiable (ver clase `BrainGroq`), así se pueden probar respuestas
+sin tocar el resto.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import threading
+import time
+from typing import Any, Dict, List, Optional
+
+import requests
+
+import config as config_mod
+
+logger = logging.getLogger("miku.parser")
+
+# Cache LRU trivial para respuestas frecuentes (optimización).
+_CACHE = {}
+_CACHE_ORDEN: List[str] = []
+_CACHE_MAX = 64
+
+
+def cache_respuesta(clave: str, respuesta: str) -> None:
+    """Guarda una respuesta frecuente en la cache con límite simple."""
+    global _CACHE, _CACHE_ORDEN
+    if clave in _CACHE:
+        _CACHE_ORDEN.remove(clave)
+    _CACHE[clave] = respuesta
+    _CACHE_ORDEN.append(clave)
+    if len(_CACHE) > _CACHE_MAX:
+        vieja = _CACHE_ORDEN.pop(0)
+        _CACHE.pop(vieja, None)
+
+
+def obtener_cache(clave: str) -> Optional[str]:
+    """Devuelve la respuesta cacheada si existe."""
+    return _CACHE.get(clave)
+
+
+# ---------------- Brain (cliente de LLM) ---------------- #
+
+class BrainGroq:
+    """Cliente mínimo de chat con tools usando la API de Groq.
+
+    El objetivo es separar el transporte (HTTP) de la lógica del asistente,
+    para poder reemplazar Groq por otro proveedor sin tocar el parser.
+    """
+
+    BASE_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+    def __init__(self, cfg: "config_mod.Config", system_prompt: str = "") -> None:
+        self.cfg = cfg
+        self.system_prompt = system_prompt or self._prompt_default()
+        self._ultima_llamada: float = 0.0
+        self._lock = threading.Lock()
+
+    def _prompt_default(self) -> str:
+        """Prompt de sistema base de Miku."""
+        return (
+            "Sos Hatsune Miku, una asistente virtual alegre, entusiasta y un poco "
+            "juguetona. Respondé siempre en español, de forma natural y concisa "
+            "(máximo 2-3 oraciones salvo que haga falta más detalle).\n\n"
+            "REGLAS IMPORTANTES:\n"
+            "- Usá herramientas SOLO cuando el usuario pide una acción real "
+            "(abrir, cerrar, minimizar, buscar, reproducir, mover ventana, etc.).\n"
+            "- Si es una pregunta de conocimiento, charla, chiste o curiosidad: "
+            "respondé directo SIN herramientas.\n"
+            "- Nunca inventes parámetros de las tools.\n"
+            "- Sé útil con personalidad de Hatsune Miku.\n"
+            "- NUNCA uses markdown (asteriscos, guiones) ni emojis en tus "
+            "respuestas porque se leen en voz alta."
+        )
+
+    def consultar(self, texto: str, contexto: Dict[str, Any],
+                  tools: List[dict]) -> Dict[str, Any]:
+        """Hace una consulta al LLM y devuelve un dict con 'respuesta'
+        (str) y 'tools_call' (lista de dicts) o 'error'.
+        """
+        claves = [t["function"]["name"] for t in tools]
+
+        # Fast path en cache (solo fuera de confirmaciones peligrosas).
+        cache_key = f"{texto.lower()}|{sorted(claves)}"
+        hit = obtener_cache(cache_key)
+        if hit and not contexto.get("espera_confirmacion"):
+            return {"respuesta": hit, "tools_call": []}
+
+        # Prompt de sistema con contexto dinámico (fecha / memoria).
+        sistema = self.system_prompt
+        extra_ctx = []
+        if contexto.get("fecha"):
+            extra_ctx.append(f"Fecha y hora actual: {contexto['fecha']}")
+        if contexto.get("miku_memoria"):
+            extra_ctx.append(f"Recuerdos relevantes:\n{contexto['miku_memoria']}")
+        if extra_ctx:
+            sistema = f"{sistema}\n\nContexto actual:\n" + "\n".join(extra_ctx)
+
+        payload = {
+            "model": self.cfg.modelo_api_externa,
+            "messages": [
+                {"role": "system", "content": sistema},
+                {"role": "user", "content": texto},
+            ],
+            "tools": tools,
+            "tool_choice": "auto",
+            "temperature": 0.4,
+            "max_tokens": 400,
+        }
+
+        headers = {
+            "Authorization": f"Bearer {self.cfg.groq_api_key}",
+            "Content-Type": "application/json",
+        }
+
+        # Protección de rate-limit básica.
+        with self._lock:
+            espera = 0.25 - (time.monotonic() - self._ultima_llamada)
+            if espera > 0:
+                time.sleep(espera)
+
+        try:
+            resp = requests.post(self.BASE_URL, headers=headers,
+                                 json=payload, timeout=20)
+            data = resp.json()
+            if "choices" not in data:
+                logger.error("Error Groq: %s", data)
+                return {"error": "Tuve un problema conectándome con mi cerebro."}
+
+            mensaje = data["choices"][0]["message"]
+            texto_resp = (mensaje.get("content") or "").strip()
+            tool_calls = mensaje.get("tool_calls") or []
+
+            parsed_calls = []
+            for call in tool_calls:
+                funcion = call.get("function", {})
+                raw = funcion.get("arguments", "{}")
+                try:
+                    args = json.loads(raw) if isinstance(raw, str) else raw
+                except Exception:  # noqa: BLE001
+                    args = {}
+                parsed_calls.append({
+                    "nombre": funcion.get("name", ""),
+                    "args": args,
+                })
+
+            with self._lock:
+                self._ultima_llamada = time.monotonic()
+
+            # Cache de respuestas típicas (no para acciones peligrosas).
+            hay_danger = any(
+                c["nombre"] == "control_energia" for c in parsed_calls
+            )
+            if texto_resp and not hay_danger:
+                cache_respuesta(cache_key, texto_resp)
+
+            return {"respuesta": texto_resp, "tools_call": parsed_calls}
+        except Exception as e:  # noqa: BLE001
+            logger.exception("Error general en consulta al LLM.")
+            return {"error": "Uy, tuve un problema técnico."}
+
+
+# ---------------- Parser principal ---------------- #
+
+class CommandParser:
+    """Coordina texto del usuario -> acción del asistente.
+
+    Args:
+        cfg: Config del programa.
+        brain: Cliente de LLM para el parseo semántico.
+        event_bus: Bus de eventos para despachar a plugins.
+        memoria: Objeto opcional con guardar/buscar/olvidar recuerdos.
+    """
+
+    def __init__(self, cfg: "config_mod.Config", brain: BrainGroq,
+                 event_bus, memoria: Any = None) -> None:
+        self.cfg = cfg
+        self.brain = brain
+        self.bus = event_bus
+        self.memoria = memoria
+
+    # ---------------- Construcción de tools desde plugins ----------------
+    def recopilar_tools(self) -> List[dict]:
+        """Junta los schemas de tools declaradas por todos los plugins."""
+        tools: List[dict] = []
+        for p in self.bus.plugins:
+            for t in getattr(p, "tools", []):
+                if t not in tools:
+                    tools.append(t)
+        return tools
+
+    def despachar_tool(self, nombre_tool: str, args: Dict[str, Any],
+                       contexto: Dict[str, Any]) -> Any:
+        """Busca el plugin que maneja la tool `nombre_tool` y la ejecuta."""
+        for p in self.bus.plugins:
+            if getattr(p, "manejar_tool", None):
+                try:
+                    resultado = p.manejar_tool(nombre_tool, args, contexto)
+                except Exception:  # noqa: BLE001
+                    logger.exception("Plugin '%s' falló en tool '%s'.",
+                                     p.nombre, nombre_tool)
+                    continue
+                if resultado is not None:
+                    return resultado
+        return None
+
+    # ---------------- Flujo principal ----------------
+    def procesar(self, texto: str, contexto: Dict[str, Any]) -> str:
+        """Procesa `<texto>` del usuario y devuelve la respuesta a decir.
+
+        Args:
+            texto: Comando/consulta del usuario.
+            contexto: Diccionario de runtime (rvc, kokoro, preferencias,
+                espera_confirmacion, etc.).
+
+        Returns:
+            Respuesta de texto final.
+        """
+        texto = (texto or "").strip()
+        if not texto:
+            return "Sí? No escuché nada."
+
+        # 1) Confirmación de acción peligrosa pendiente.
+        if contexto.get("espera_confirmacion"):
+            resultado = self._manejar_confirmacion(texto, contexto)
+            if resultado is not None:
+                return resultado
+
+        # 2) Fast path sin LLM: comandos locales triviales (hora, saludo...).
+        respuesta_memoria = self._comandos_inmediatos(texto, contexto)
+        if respuesta_memoria is not None:
+            return respuesta_memoria
+
+        # 2b) Fast path a plugins: si un plugin declara este comando.
+        respuesta_plugin = self.bus.despachar_comando(texto, contexto)
+        if respuesta_plugin:
+            return respuesta_plugin
+
+        # 3) Construir contexto de memoria para el prompt.
+        contexto_brain = self._agregar_memoria(texto)
+
+        # 4) Consultar al LLM y ejecutar tools si hace falta.
+        tools = self.recopilar_tools()
+        resultado = self.brain.consultar(texto, contexto_brain, tools)
+
+        if resultado.get("error"):
+            return resultado["error"]
+
+        respuesta_base = resultado.get("respuesta") or ""
+        extras: List[str] = []
+
+        for call in resultado.get("tools_call", []):
+            nombre = call["nombre"]
+            args = call["args"]
+            logger.debug("Tool invocada: %s(%s)", nombre, args)
+            extra = self.despachar_tool(nombre, args, contexto)
+            if isinstance(extra, str) and extra.strip():
+                extras.append(extra)
+
+        # Respuesta final = texto del LLM + resultado de herramientas.
+        partes = [p for p in [respuesta_base, " ".join(extras)] if p]
+        final = " ".join(partes).strip()
+        return final or "¡Listo!"
+
+    # ---------------- Manejo de confirmación ----------------
+    def _manejar_confirmacion(self, texto: str, contexto: Dict[str, Any]) -> Optional[str]:
+        """Resuelve una confirmación de acción peligrosa (energía)."""
+        pendiente = contexto.get("pendiente_energia")
+        if not pendiente:
+            return None
+        if any(p in texto.lower() for p in
+               ("sí", "si", "dale", "confirmo", "hacelo", "ok", "okay", "yes")):
+            # Ejecuta vía plugin de sistema.
+            contexto["ejecutar_energia"] = pendiente
+            res = self.despachar_tool("control_energia", pendiente, contexto)
+            return res or "Listo."
+        return "Cancelado."
+
+    # ---------------- Comandos inmediatos (sin LLM) ----------------
+    def _comandos_inmediatos(self, texto: str, contexto: Dict[str, Any]) -> Optional[str]:
+        """Atiende comandos triviales que no requieren el LLM.
+
+        Devuelve una respuesta si la maneja localmente, o None si hay que
+        pasar al LLM. Mantenerlo acotado ayuda a la velocidad, no a cubrir
+        todo (el LLM se encarga del resto).
+        """
+        t = texto.lower().strip()
+
+        from datetime import datetime
+
+        # Hora/fecha simple.
+        if t in ("que hora es", "hora", "decime la hora", "que hora es?"):
+            ahora = datetime.now()
+            return (f"Hoy es {ahora.strftime('%A %d/%m/%Y')} y son las "
+                    f"{ahora.strftime('%H:%M')}.")
+
+        # Saludos minimalistas (para no gastar la API).
+        if t in ("hola", "buenas", "hey", "hola miku"):
+            return "¡Hola! ¿En qué te ayudo?"
+
+        # Listado de plugins.
+        if t in ("que plugins tienes", "plugins", "que sabes hacer"):
+            nombres = self.bus.listar_plugins()
+            disp = ", ".join(nombres) if nombres else "por ahora solo el núcleo."
+            return f"Tengo disponibles: {disp if disp else 'nada aún'}."
+
+        # Memoria: guardar un recuerdo explícito ("acordate que X").
+        if t.startswith(("acordate", "recorda", "acordate que", "guarda que")):
+            if self.memoria:
+                dato = t.replace("acordate", "").replace("recorda", "")
+                dato = _quitar_preposicion(dato)
+                self.memoria.guardar_recuerdo(dato.strip())
+                return "Anotado, no me olvido."
+            return "No tengo memoria activa en este modo."
+
+        return None
+
+    def _agregar_memoria(self, texto: str) -> Dict[str, Any]:
+        """Devuelve dict con contextos adicionales (memoria, fecha)."""
+        c: Dict[str, Any] = {}
+        from datetime import datetime
+        c["fecha"] = datetime.now().strftime('%A %d/%m/%Y %H:%M')
+        if self.memoria is not None:
+            try:
+                recuerdos = self.memoria.buscar_recuerdos(texto)
+                if recuerdos:
+                    c["miku_memoria"] = recuerdos
+            except Exception:  # noqa: BLE001
+                logger.warning("No se pudo consultar la memoria.")
+        return c
+
+
+def _quitar_preposicion(dato: str) -> str:
+    """Limpia una frase de memoria de las preposiciones iniciales típicas."""
+    for pre in ("que ", "que tengas "):
+        if dato.startswith(pre):
+            dato = dato[len(pre):]
+            break
+    return dato
