@@ -38,3 +38,8 @@ voice_models/
 *.bin
 modelos_voz/
 
+# VOICEVOX (carpeta externa)
+extern/
+
+# Configuración local (secretos)
+config_local.py

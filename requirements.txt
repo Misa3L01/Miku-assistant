@@ -1,73 +1,51 @@
 # ============================================================
 # requirements.txt - Dependencias del asistente Miku
 # Python 3.10+ sobre Windows.
-# Separa en bloques según su función. Comentá lo que no uses
-# para reducir la instalación en máquinas sin GPU, etc.
+#
+# Solo figuran las librerías que se IMPORTAN/usarán en el código activo.
+# Se ELIMINARON deps pesadas no usadas (torch, rvc-python, kokoro,
+# chromadb, sentence-transformers, numpy, soundfile).
+# IMPORTANTE: PyQt5, pyttsx3, deep-translator, pygame, pywin32 y demás
+# se importan de forma LAZY (dentro de funciones) para no romper el
+# arranque en modo texto.
 # ============================================================
 
 # ---------- Núcleo del sistema ----------
-# Configuración y entorno
-python-dotenv>=1.0.0
-
-# HTTP (para el cerebro Groq y STT por API)
+# HTTP (cerebro Groq por API y verificación del servidor VOICEVOX).
 requests>=2.31.0
 
-# Logging con colores (consola)
-colorama>=0.4.6
-
 # ---------- Reconocimiento de voz (STT) ----------
-# Captura de audio local + SpeechRecognition (API Groq Whisper).
+# Motor de captura/transcripción de audio local.
 SpeechRecognition>=3.10.0
+# pyaudio lo importa SpeechRecognition en tiempo de ejecución para abrir
+# el micrófono (requisito indirecto).
 pyaudio>=0.2.13
-
-# ---------- Voz de Miku (TTS: Kokoro -> RVC -> pygame) ----------
-# Motor base de texto a voz (Kokoro).
-kokoro
-# Librería de conversión de voz RVC.
-rvc-python
-# Audio científico / lectura de wav.
-numpy
-soundfile>=0.12.1
+# ---------- Voz de Miku (TTS con VOICEVOX) ----------
+# Reproduce el WAV generado por VOICEVOX.
 pygame>=2.5.0
-sentencepiece
-phonemizer
+# Fallback de voz del sistema cuando VOICEVOX no está corriendo.
+pyttsx3>=2.90
+# Traduce la respuesta (español -> japonés) para enviar a VOICEVOX.
+# Requiere conexión a Google Translate.
+deep-translator>=1.11.4
 
-# ---------- Control del sistema (ventanas, procesos) ----------
-# Abrir programas por nombre.
-AppOpener
-# Automatización de teclado/mouse.
-pyautogui>=0.9.54
-pygetwindow>=0.0.9
-# Control de ventanas nativo de Windows.
+# ---------- Subtítulos en pantalla (overlay) ----------
+# Ventana transparente "siempre encima" (solo en modo voz-push).
+PyQt5>=5.15.10
+
+# ---------- Control del sistema (plugins) ----------
+# Abrir programas por nombre (usado por el plugin SystemControl).
+AppOpener>=1.7
+# Control de ventanas nativo de Windows (win32gui/con/api).
 pywin32>=306
-# Brillo de la pantalla.
+# Control de brillo de la pantalla (plugin SystemControl).
 screen-brightness-control>=0.21.0
-# Volumen del sistema por proceso / master (pycaw).
-pycaw>=20240210
-
-# ---------- Memoria persistente (chromadb) ----------
-chromadb>=0.4.24
-# Modelo de embeddings usado por la memoria.
-sentence-transformers>=2.6.0
-
-# ---------- Autómatas / teclas (push-to-talk/efectos) ----------
-# Teclado global (tecla F22 del HP Omen).
+# Teclado global (push-to-talk F22 en main).
 keyboard>=0.13.5
-pynput>=1.7.6
-# Monitoreo de procesos / temperatura del CPU.
-psutil>=5.9.8
 
-# ---------- Navegador / multimedia (YouTube, TIDAL) ----------
-# Seedance de Chromium (Brave) vía CDP y automatización de pestañas.
-playwright>=1.40.0
+# ---------- Opcionales (comentados) ----------
+# TTS online alternativo (si preferís edge-tts a VOICEVOX):
+# edge-tts>=6.1.10
+# Lectura de variables de entorno desde archivo .env:
+# python-dotenv>=1.0.0
 
-# ---------- Plugins futuros (opcionales) ----------
-# Discord (silenciar, expulsar, control de volumen).
-# discord.py>=2.3.2
-# Traducción de frases a varios idiomas (deep-translator).
-# deep-translator>=1.11.4
-
-# ---------- Motor de cálculo / IA (opcional pero recomendado) ----------
-# Para RVC se necesita torch con soporte CUDA.
-# torch>=2.3.0
-# torchaudio>=2.3.0

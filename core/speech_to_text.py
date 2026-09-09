@@ -109,6 +109,12 @@ class SpeechToText:
             Texto transcrito o "" si falló.
         """
         self._importar_dependencias()
+        # Guard: si faltara la API key de STT, avisar y no romper.
+        if not str(self.cfg.groq_api_key_stt).strip():
+            logger.error(
+                "Falta la API key para STT. Configurala en GROQ_API_KEY_STT "
+                "(entorno) o en config_local.GROQ_API_KEY_STT.")
+            return ""
         import requests  # lazy
 
         try:
@@ -140,6 +146,11 @@ class SpeechToText:
         Usa el modelo configurado para wake (fast), distinto del comando.
         """
         self._importar_dependencias()
+        # Guard: sin API key de STT no hay transcripción posible.
+        if not str(self.cfg.groq_api_key_stt).strip():
+            logger.error(
+                "Falta la API key de STT (GROQ_API_KEY_STT) para el wake word.")
+            return ""
         import requests  # lazy
 
         try:

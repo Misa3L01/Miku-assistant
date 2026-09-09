@@ -89,6 +89,16 @@ class BrainGroq:
         """Hace una consulta al LLM y devuelve un dict con 'respuesta'
         (str) y 'tools_call' (lista de dicts) o 'error'.
         """
+        # Guard: si NO hay API key configurada, informar con claridad y
+        # devolver un mensaje amigable en vez de fallar con un HTTP 401.
+        if not str(self.cfg.groq_api_key).strip():
+            logger.error(
+                "Falta GROQ_API_KEY. Configuralo en tu variable de entorno "
+                "o en config_local.py (config.GROQ_API_KEY = 'gsk_...').")
+            return {"error":
+                    "No tengo mi clave de acceso configurada todavía. "
+                    "Agregá GROQ_API_KEY y reiniciame."}
+
         claves = [t["function"]["name"] for t in tools]
 
         # Fast path en cache (solo fuera de confirmaciones peligrosas).

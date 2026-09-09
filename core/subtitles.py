@@ -1,0 +1,212 @@
+"""
+subtitles.py - Overlay de subtítulos estilo anime con PyQt5.
+
+Mientras Miku "habla", se muestra una ventana transparente y sin bordes
+(siempre encima) con el texto en español. La ventana:
+
+    - sin bordes                 -> Qt.FramelessWindowHint
+    - siempre encima             -> Qt.WindowStaysOnTopHint
+    - sin barra de tareas        -> Qt.Tool
+    - fondo transparente         -> WA_TranslucentBackground
+    - no captura mouse/teclado   -> WA_TransparentForMouseEvents / WindowDoesNotAcceptFocus
+
+Diseño de hilos (importante para PyQt):
+    Todo el código que toca Qt corre en un hilo dedicado que ejecuta el event
+    loop de QApplication. Para mostrar/ocultar se envía un comando a una cola;
+    el hilo de Qt lo consume y ejecuta sobre widgets creados en ese mismo hilo
+    (así la "afinidad de hilos" queda consistente y no hay crashes).
+
+Así se puede llamar a ``mostrar()/ocultar()`` desde el hilo del TTS sin romper.
+"""
+from __future__ import annotations
+
+import logging
+import queue
+import threading
+from typing import Optional
+
+logger = logging.getLogger("miku.subtitles")
+
+# Import de PyQt5 protegido para no romper el arranque (p. ej. modo texto).
+try:
+    from PyQt5 import QtCore, QtGui, QtWidgets
+    from PyQt5.QtCore import Qt
+except Exception as e:  # noqa: BLE001
+    QtCore = QtGui = QtWidgets = None
+    Qt = None
+    logger.warning("PyQt5 no disponible, no habrá subtítulos: %s", e)
+
+# Comandos aceptados por la cola.
+_VER = "ver"
+_OCULTAR = "ocultar"
+_CERRAR = "cerrar"
+
+
+class _WorkerQt(threading.Thread):
+    """Hilo que posee el QApplication y los widgets de subtítulos."""
+
+    def __init__(self) -> None:
+        super().__init__(daemon=True)
+        self._cola: "queue.Queue[tuple]" = queue.Queue()
+        self._widget = None
+        self._label = None
+        self._app = None
+        self._listo = threading.Event()
+
+    def emitir(self, comando: str, *args) -> None:
+        """Encola un comando para el hilo de Qt (no bloqueante)."""
+        self._cola.put((comando, args))
+
+    def run(self) -> None:
+        """Arranca el event loop de Qt dentro de este hilo."""
+        if QtWidgets is None:
+            return
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        app.setQuitOnLastWindowClosed(False)
+        self._app = app
+        self._listo.set()
+        # Event loop; procesamos comandos idle con un timer que drena la cola.
+        timer = QtCore.QTimer()
+        timer.timeout.connect(self._drenar_cola)
+        timer.start(30)
+        app.exec_()
+
+    # ---------------- procesamiento ----------------
+    def _drenar_cola(self) -> None:
+        try:
+            while True:
+                comando, args = self._cola.get_nowait()
+                self._ejecutar(comando, args)
+        except queue.Empty:
+            pass
+
+    def _ejecutar(self, comando: str, args: tuple) -> None:
+        if comando == _VER:
+            self._mostrar_sync(args[0] if args else "")
+        elif comando == _OCULTAR:
+            self._ocultar_sync()
+        elif comando == _CERRAR:
+            self._cerrar_sync()
+
+    # ---------------- Qt en este hilo ----------------
+    def _crear_widget(self) -> None:
+        widget = QtWidgets.QWidget()
+        widget.setWindowFlags(
+            Qt.FramelessWindowHint
+            | Qt.WindowStaysOnTopHint
+            | Qt.Tool
+            | Qt.WindowDoesNotAcceptFocus
+        )
+        widget.setAttribute(Qt.WA_TranslucentBackground)
+        widget.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        widget.setAttribute(Qt.WA_ShowWithoutActivating, True)
+
+        label = QtWidgets.QLabel(widget)
+        label.setAlignment(Qt.AlignCenter)
+
+        from PyQt5.QtGui import QColor, QFont
+        from PyQt5.QtWidgets import QGraphicsDropShadowEffect
+
+        fuente = QFont("Arial", 22)
+        fuente.setBold(True)
+        label.setFont(fuente)
+
+        # Borde negro con un único efecto de sombra desplazado; combinado con
+        # un segundo QPainter (outline) en el paintEvent del label para borde.
+        efe = QGraphicsDropShadowEffect(widget)
+        efe.setBlurRadius(2)
+        efe.setColor(QColor(0, 0, 0, 255))
+        efe.setOffset(3, 3)
+        label.setGraphicsEffect(efe)
+
+        self._widget = widget
+        self._label = label
+        self._reemplazar_paint(label)
+
+    def _reemplazar_paint(self, label) -> None:
+        """Reemplaza paintEvent del label para un borde grueso negro."""
+        direcciones = [(-2, 0), (2, 0), (0, -2), (0, 2),
+                       (-2, -2), (2, -2), (-2, 2), (2, 2)]
+
+        def nuevo_paint(event):  # noqa: ANN001
+            from PyQt5.QtGui import QPainter, QColor
+            painter = QPainter(label)
+            painter.setRenderHint(QPainter.Antialiasing)
+            color_borde = QColor(0, 0, 0, 255)
+            for dx, dy in direcciones:
+                painter.save()
+                painter.translate(dx, dy)
+                painter.setPen(color_borde)
+                painter.drawText(label.rect(), Qt.AlignCenter, label.text())
+                painter.restore()
+            painter.setPen(QColor(255, 255, 255, 255))
+            painter.drawText(label.rect(), Qt.AlignCenter, label.text())
+            painter.end()
+
+        label.paintEvent = nuevo_paint
+
+    def _mostrar_sync(self, texto: str) -> None:
+        if self._widget is None:
+            self._crear_widget()
+        from PyQt5.QtGui import QFontMetrics
+        texto_n = (texto or "").replace("\n", " ").strip()
+        self._label.setText(texto_n)
+        fm = QFontMetrics(self._label.font())
+        ancho = min(1100, fm.boundingRect(texto_n).width() + 60)
+        alto = fm.lineSpacing() + 24
+        self._label.resize(ancho, alto)
+        self._widget.resize(ancho, alto)
+        self._posicionar()
+        self._widget.show()
+        self._widget.raise_()
+
+    def _ocultar_sync(self) -> None:
+        if self._widget is not None:
+            try:
+                self._widget.hide()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _cerrar_sync(self) -> None:
+        if self._widget is not None:
+            try:
+                self._widget.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _posicionar(self) -> None:
+        if not self._app or self._widget is None:
+            return
+        pantalla = self._app.primaryScreen()
+        if not pantalla:
+            return
+        geo = pantalla.availableGeometry()
+        w = self._widget.width()
+        h = self._widget.height()
+        x = geo.center().x() - w // 2
+        y = geo.bottom() - h - 80
+        self._widget.move(x, y)
+
+
+class SubtitulosOverlay:
+    """API pública para mostrar/ocultar subtítulos desde cualquier hilo.
+
+    Internamente lanza un hilo ``_WorkerQt`` que posee el QApplication.
+    ``mostrar()`` y ``ocultar()`` son seguras para llamar desde el TTS.
+    """
+
+    def __init__(self) -> None:
+        if QtWidgets is None:
+            raise RuntimeError("PyQt5 es necesario para los subtítulos.")
+        self._worker = _WorkerQt()
+        self._worker.start()
+        self._worker._listo.wait(timeout=5.0)  # espera a que Qt esté listo
+
+    def mostrar(self, texto: str) -> None:
+        self._worker.emitir(_VER, texto)
+
+    def ocultar(self) -> None:
+        self._worker.emitir(_OCULTAR)
+
+    def cerrar(self) -> None:
+        self._worker.emitir(_CERRAR)

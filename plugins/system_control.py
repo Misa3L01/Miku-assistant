@@ -224,19 +224,39 @@ class SystemControl(Plugin):
         return None
 
     def cerrar_programa(self, nombre: str) -> str:
-        """Cierra (mata) el proceso asociado a un programa."""
-        nombre = nombre.lower().strip()
-        proceso = _PROCESOS.get(nombre)
+        """Cierra (mata) el proceso asociado a un programa (seguro).
+
+        Sólo permite cerrar procesos de la lista blanca (_PROCESOS o la
+        config `app_whitelist`). No usa ``shell=True`` para evitar
+        inyección de comandos.
+        """
+        cfg = None
+        try:
+            import config as config_mod  # noqa: ruta segura
+            config_mod.cargar()  # asegura que el singleton esté cargado
+            cfg = config_mod.config
+        except Exception:  # noqa: BLE001
+            cfg = None
+
+        blanca = set(_PROCESOS.keys())
+        if cfg is not None:
+            blanca |= set(getattr(cfg, "app_whitelist", []) or [])
+
+        alias = nombre.lower().strip()
+        proceso = _PROCESOS.get(alias)
         if not proceso:
-            proceso = nombre if nombre.endswith(".exe") else nombre + ".exe"
+            # Si no figura en la whitelist, rechazamos: no se mata a cualquiera.
+            if alias not in blanca and not any(a in alias for a in blanca):
+                return f"No está permitido cerrar '{nombre}'."
+            proceso = alias if alias.endswith(".exe") else alias + ".exe"
 
         try:
             subprocess.run(
-                f'taskkill /IM "{proceso}" /T', shell=True,
+                ["taskkill", "/IM", proceso, "/T"], shell=False,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             time.sleep(0.4)
             subprocess.run(
-                f'taskkill /F /IM "{proceso}" /T', shell=True,
+                ["taskkill", "/F", "/IM", proceso, "/T"], shell=False,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return f"Cerré {nombre}."
         except Exception as e:  # noqa: BLE001

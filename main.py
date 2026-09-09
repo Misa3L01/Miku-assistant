@@ -1,21 +1,20 @@
 """
 main.py - Núcleo principal del asistente Miku.
 
-Punto de entrada de la app. Se encarga de:
-    1. Configurar logging.
-    2. Cargar la configuración (config.py).
-    3. Construir el bus de eventos y registrar plugins.
-    4. Crear el reconocimiento de voz (STT), la voz de Miku (TTS) y el
-       parser de comandos.
-    5. Inicializar la memoria persistente (chromadb).
-    6. Elegir el modo de entrada y correr su bucle principal.
+Punto de entrada de la app. Responsabilidades:
+    1. Configurar logging y cargar la configuración (config.py).
+    2. Montar el bus de eventos y registrar los plugins.
+    3. Crear el parser (cerebro) que convierte texto en respuestas.
+    4. Elegir el modo de entrada y correr SU bucle.
 
-Modos de entrada (se eligen al arrancar):
-    1) Voz       -> decís "Miku" para activarla (escucha continua).
-    2) Push-talk -> mantenés la tecla F22 (botón HP Omen) para hablar.
-    3) Texto     -> escribís los comandos en la consola.
-
-Todo el cierre se maneja con KeyboardInterrupt (Ctrl+C) de forma limpia.
+Particularidades de esta refactorización:
+    - **Lazy loading por modo**: el reconocimiento de voz (STT) y la voz de
+      Miku (TTS / VOICEVOX) se importan/fabrican SOLO si se entra a modo
+      "voz" o "push". En modo "texto" no se toca nada de audio.
+    - **Modo texto 100% limpio**: sólo se lee por consola y se imprime la
+      respuesta (no subtítulos, no sonido).
+    - Push-to-talk corregido: arranca con ``on_press_key`` y termina con
+      ``on_release_key``, con flag anti-reentrada, y ``unhook_all()`` al salir.
 """
 from __future__ import annotations
 
@@ -24,12 +23,13 @@ import sys
 import threading
 from typing import Any, Dict, Optional
 
-# Import de configuración (raíz).
+# Import de configuración (siempre seguro, sin deps pesadas).
 import config as config_mod
 from core.event_bus import EventBus
-from core.memoria import Memoria
 from core.command_parser import BrainGroq, CommandParser
-from core.text_to_speech import TextoAVoz
+
+# El plugin de control de sistema es ligero (imports heavy son dentro de
+# métodos), así que puede importarse al inicio sin penalizar el modo texto.
 from plugins import Plugin, registrar_plugins
 from plugins.system_control import SystemControl
 
@@ -41,60 +41,42 @@ def configurar_logging(nivel: str) -> None:
     nivel_obj = getattr(logging, nivel, None)
     if not isinstance(nivel_obj, int):
         nivel_obj = logging.INFO
-
     logging.basicConfig(
         level=nivel_obj,
         format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
         datefmt="%H:%M:%S",
     )
-    # Reduce el ruido de librerías de terceros.
-    logging.getLogger("phonemizer").setLevel(logging.ERROR)
-    logging.getLogger("chromadb").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
 class Asistente:
-    """Ensambla todos los componentes del asistente en una sola entidad.
+    """Ensambla bus + parser + plugins. La voz/STT se inyecta por modo.
 
-    Mantiene las dependencias en un solo lugar para que main() pueda
-    arrancar el modo de entrada que corresponda.
+    Args:
+        cfg: Config del programa ya cargada.
     """
 
     def __init__(self, cfg: "config_mod.Config") -> None:
         self.cfg = cfg
         self.bus = EventBus()
-        self.voice: Optional[TextoAVoz] = None
         self.parser: Optional[CommandParser] = None
-        self.memoria: Optional[Memoria] = None
-        # Entradas instaladas (se llenan bajo demanda por el modo).
+        # Objeto de voz (solo si el modo elegido lo requiere).
+        self.voice = None
+        # Manejadores por modo: se instalan cuando entran a correr.
         self.stt = None
 
-    # ---------------- Setup de componentes ----------------
+    # ---------------- Setup (no toca audio) ----------------
     def instalar_core(self) -> None:
-        """Construye bus, memoria, voz (lazy) y parser. Lanza plugins."""
+        """Monta bus, parser y plugins. NO crea STT/TTS (es lazy por modo)."""
         logger.info("Ensamblando el núcleo del asistente...")
-
-        # 1) Memoria persistente.
-        try:
-            self.memoria = Memoria()
-        except Exception:  # noqa: BLE001
-            logger.exception("No se pudo inicializar la memoria; sigue sin ella.")
-            self.memoria = None
-
-        # 2) Bus de eventos.
         self.bus = EventBus()
 
-        # 3) Voz de Miku (lazy: no carga los modelos todavía).
-        self.voice = TextoAVoz(self.cfg)
-
-        # 4) Brain + parser.
+        # Brain + parser. La memoria queda desactivada (None) de momento.
         brain = BrainGroq(self.cfg)
-        self.parser = CommandParser(self.cfg, brain, self.bus, self.memoria)
+        self.parser = CommandParser(self.cfg, brain, self.bus, memoria=None)
 
-        # 5) Plugins (SystemControl y futuros). SystemControl ya está
-        #    importado arriba; registrar_plugins lo inicializa y nos devuelve
-        #    los que quedaron activos para conectarlos al bus.
+        # Plugins.
         candidatos: list[Plugin] = [SystemControl()]
         activos = registrar_plugins(candidatos, self.bus)
         for plugin in activos:
@@ -102,9 +84,9 @@ class Asistente:
 
         logger.info("Núcleo listo. %d plugins activos.", len(self.bus.plugins))
 
-    # ---------------- Utilidad: generar respuesta ----------------
+    # ---------------- Responder ----------------
     def _contexto_base(self) -> Dict[str, Any]:
-        """Contexto por defecto compartido entre comandos."""
+        """Contexto compartido entre comandos."""
         return {
             "espera_confirmacion": False,
             "pendiente_energia": None,
@@ -113,7 +95,11 @@ class Asistente:
         }
 
     def responder(self, texto_usuario: str) -> None:
-        """Procesa un comando/usuario y emite la respuesta por voz/texto."""
+        """Procesa el texto del usuario y emite la respuesta (voz o texto).
+
+        En modo texto, ``voice`` es None y la respuesta se imprime. En modo
+        voz/push, ``voice`` hablará y mostrará subtítulos (si los tiene).
+        """
         if self.parser is None:
             return
         contexto = self._contexto_base()
@@ -123,19 +109,19 @@ class Asistente:
             logger.exception("Error procesando el comando.")
             respuesta = "Disculpá, tuve un problema interno."
 
-        # Emite la respuesta por voz (si está disponible y cargada) o texto.
-        if self.voice:
+        # Emisión.
+        if self.voice is not None:
             try:
                 self.voice.decir(respuesta)
             except Exception:  # noqa: BLE001
                 logger.exception("No se pudo hablar la respuesta.")
+                print(f"[Miku] {respuesta}")
         else:
-            print(f"[Miku] {respuesta}")
-        return None
+            print(f"\nMiku: {respuesta}")
 
     def decir(self, texto: str) -> None:
-        """Habla `texto` por la voz de Miku (o lo imprime si no hay)."""
-        if self.voice:
+        """Habla (o imprime) un texto suelto, p. ej. el saludo de wake."""
+        if self.voice is not None:
             try:
                 self.voice.decir(texto)
             except Exception:  # noqa: BLE001
@@ -143,24 +129,46 @@ class Asistente:
         else:
             print(f"[Miku] {texto}")
 
+    # ---------------- Cierre ----------------
+    def cerrar(self) -> None:
+        """Limpia recursos (subtítulos y callbacks de teclado)."""
+        if self.voice is not None:
+            try:
+                self.voice._ocultar_subtitulos()  # noqa: evita ventana abierta
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            import keyboard  # type: ignore
+            keyboard.unhook_all()
+        except Exception:  # noqa: BLE001
+            pass
+        if self.bus:
+            self.bus.detener()
+
 
 # ===================================================================== #
 #                          MODO VOZ (wake word)                         #
 # ===================================================================== #
-def _hablar_saludo_voz(asistente: Asistente) -> None:
-    """Pequeña frase de confirmación al detectar la wake word 'Miku'."""
-    asistente.decir("¿Sí? Decime.")
+def _preparar_voz(asistente: Asistente) -> Any:
+    """Crea (lazy) el motor de voz VOICEVOX con subtítulos activos."""
+    if asistente.voice is None:
+        from core.text_to_speech import TextoAVoz  # import tardío
+        voz = TextoAVoz(asistente.cfg, subtitulos_activos=True)
+        asistente.voice = voz
+        logger.info("Voz (VOICEVOX) preparada con subtítulos.")
+    return asistente.voice
 
 
 def run_modo_voz(asistente: Asistente) -> None:
     """Bucle voice: escucha continua + wake word 'Miku'."""
-    from core.speech_to_text import SpeechToText
+    from core.speech_to_text import SpeechToText  # import tardío
     import time
 
+    _preparar_voz(asistente)  # activa TTS sólo cuando hace falta voz
     stt = SpeechToText(asistente.cfg)
 
     def al_wake(_texto: str) -> None:
-        _hablar_saludo_voz(asistente)
+        asistente.decir("¿Sí? Decime.")
 
     def al_comando(comando: str) -> None:
         print(f"\nVos: {comando}")
@@ -177,11 +185,10 @@ def run_modo_voz(asistente: Asistente) -> None:
         logger.exception("No se pudo empezar la escucha continua.")
         return
 
-    # Muestra los micrófonos disponibles para configurar el índice.
     mostrar_microfonos(stt)
     try:
         while True:
-            time.sleep(0.5)  # mantenemos vivo el main; la voz va en su hilo
+            time.sleep(0.5)
     except KeyboardInterrupt:
         pass
     finally:
@@ -193,7 +200,7 @@ def mostrar_microfonos(stt: Any) -> None:
     """Lista los micrófonos y cuál está en uso según config."""
     if not getattr(stt, "sr", None):
         try:
-            stt.sr  # noqa: B018  fuerza el import para ver dispositivos
+            stt.sr  # fuerza el import para ver los dispositivos
         except Exception:  # noqa: BLE001
             return
     try:
@@ -214,63 +221,88 @@ _TECLA_PTT = "f22"
 
 
 def run_modo_push(asistente: Asistente) -> None:
-    """Bucle push-to-talk: se escucha mientras se mantiene F22."""
-    from core.speech_to_text import SpeechToText
+    """Bucle push-to-talk con pulsar-grabar / soltar-detener (correcto).
 
+    Tecnología:
+        - ``keyboard.on_press_key(F22, iniciar)``
+        - ``keyboard.on_release_key(F22, finalizar)``
+        - flag ``_grabando`` para evitar pulsaciones simultáneas.
+        - ``keyboard.unhook_all()`` al salir (lo hace Asistente.cerrar()).
+    """
+    from core.speech_to_text import SpeechToText  # import tardío
+
+    _preparar_voz(asistente)
     stt = SpeechToText(asistente.cfg)
 
-    # Importamos la librería de teclado (ya es dependencia opcional).
     try:
         import keyboard  # type: ignore
     except Exception:  # noqa: BLE001
         logger.error(
-            "No se pudo importar 'keyboard' para el modo push-to-talk. "
+            "No se pudo importar 'keyboard' para el push-to-talk. "
             "Instalala con: pip install keyboard")
         return
 
     print(f"\n=== Push-to-talk activo (mantené {_TECLA_PTT}) ===\n")
 
-    def tomar_comando() -> None:
-        """Captura un comando mientras se suelta la tecla."""
-        def _callback(texto: str) -> None:
-            if texto:
-                print(f"\nVos: {texto}")
-                asistente.responder(texto)
+    # Estado simple para la grabación de una sola toma a la vez.
+    estado = {"grabando": False}
 
-        # El STT ya está "escuchando" sólo cuando la tecla termina de dar
-        # una toma (se explica en el siguiente bloque con F22).
-        stt.capturar_comando(_callback)
+    def _respuesta(texto: str) -> None:
+        if texto:
+            print(f"\nVos: {texto}")
+            asistente.responder(texto)
 
-    def en_soltar(_evento) -> None:
-        # Se llamará al capturar porque listamos on release.
-        tomar_comando()
-
-    # Registramos la tecla en el hilo del mainloop de keyboard.
-    def monitor_ptt() -> None:
+    def iniciar_grabacion(_evento) -> None:
+        """Se llama al PRESIONAR la tecla. Empieza a escuchar."""
+        if estado["grabando"]:
+            return  # evita reentrada
+        estado["grabando"] = True
+        logger.info("F22 presionada: escuchando...")
+        # Registramos un flag en el STT para que la captura sepa que debe
+        # transcribir cuando soltemos.
         try:
-            keyboard.on_release_key(_TECLA_PTT, en_soltar)
+            setattr(stt, "_ptt_activo", True)
+            # Lanza la captura única asíncrona (se transcribe al soltar).
+            stt.capturar_comando(_respuesta)
         except Exception:  # noqa: BLE001
-            logger.exception("No se pudo registrar la tecla %s.", _TECLA_PTT)
+            logger.exception("Error arrancando la grabación.")
+            estado["grabando"] = False
+
+    def finalizar_grabacion(_evento) -> None:
+        """Se llama al SOLTAR la tecla. Termina la toma activa."""
+        if not estado["grabando"]:
             return
+        try:
+            setattr(stt, "_ptt_activo", False)
+            # Pide al STT que corte la captura en curso lo antes posible.
+            if hasattr(stt, "detener_captura_activa"):
+                stt.detener_captura_activa()
+        except Exception:  # noqa: BLE001
+            logger.exception("Error finalizando la grabación.")
+        finally:
+            estado["grabando"] = False
+            logger.info("F22 soltada: fin de grabación.")
 
-        logger.info("Esperando que presiones %s para hablar...", _TECLA_PTT)
-        # Mantenemos vivo este hilo hasta Ctrl+C.
+    # Registro de la tecla (release de eventos de keyup arrancan la toma).
+    keyboard.on_press_key(_TECLA_PTT, iniciar_grabacion)
+    keyboard.on_release_key(_TECLA_PTT, finalizar_grabacion)
+
+    try:
         while True:
-            try:
-                thread_wait = threading.Event()
-                thread_wait.wait(timeout=60)
-            except KeyboardInterrupt:
-                break
-
-    monitor_ptt()
+            signal = threading.Event()
+            signal.wait(timeout=60)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        asistente.cerrar()  # unhook_all + cierre de bus/voz
 
 
 # ===================================================================== #
 #                    MODO TEXTO (consola estándar)                      #
 # ===================================================================== #
 def run_modo_texto(asistente: Asistente) -> None:
-    """Bucle en texto: lee de la consola y responde en voz/texto."""
-    print("\n=== Miku lista (modo texto) ===")
+    """Bucle de texto. NO toca audio/subtítulos: sólo imprime respuesta."""
+    print("\n=== Miku lista (modo texto — sin sonido) ===")
     print("Escribí tu mensaje y Enter. Escribí 'salir' para cerrar.\n")
 
     while True:
@@ -281,6 +313,7 @@ def run_modo_texto(asistente: Asistente) -> None:
             if comando.lower() in ("salir", "exit", "quit"):
                 print("Chau!")
                 break
+            # En modo texto self.voice es None -> responder imprime.
             asistente.responder(comando)
         except KeyboardInterrupt:
             print("\nChau!")
@@ -289,6 +322,9 @@ def run_modo_texto(asistente: Asistente) -> None:
             break
         except Exception:  # noqa: BLE001
             logger.exception("Error en el bucle de texto.")
+        finally:
+            # Aseguramos limpieza de teclado por si entró alguna vez con push.
+            pass
 
 
 # ===================================================================== #
@@ -324,7 +360,7 @@ def main() -> None:
     cfg = config_mod.cargar()
     configurar_logging(cfg.log_level)
 
-    # 2) Asistente ensamblado.
+    # 2) Asistente ensamblado (no toca audio todavía).
     asistente = Asistente(cfg)
     try:
         asistente.instalar_core()
@@ -336,7 +372,7 @@ def main() -> None:
     modo = seleccionar_modo(cfg)
     logger.info("Modo de entrada seleccionado: %s", modo)
 
-    # 4) Correr el modo elegido.
+    # 4) Correr el modo elegido (la voz/STT solo se crean dentro del modo).
     try:
         if modo == "voz":
             run_modo_voz(asistente)
@@ -347,8 +383,7 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\nChau!")
     finally:
-        if asistente.bus:
-            asistente.bus.detener()
+        asistente.cerrar()
 
 
 if __name__ == "__main__":

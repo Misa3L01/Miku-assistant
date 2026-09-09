@@ -1,49 +1,39 @@
 """
-text_to_speech.py - Síntesis de voz (TTS) con la personalidad de Miku.
+text_to_speech.py - Síntesis de voz (TTS) usando VOICEVOX.
 
-Pipeline original:
-  1. Kokoro (KPipeline) genera la voz base desde texto.
-  2. RVC (rvc_python) con el modelo .pth la convierte a la voz de Miku.
-  3. pygame reproduce el audio resultante.
+Estrategia (cambio de arquitectura: ya NO se usa RVC/Kokoro/torch):
+    1. El texto de la respuesta está en español (viene del LLM).
+    2. Se traduce a japonés con ``deep-translator`` (GoogleTranslator).
+    3. Se le pide a VOICEVOX (API HTTP local en ``localhost:50021``) que
+       genere el WAV de esa frase en japonés.
+    4. Se reproduce el WAV con pygame.
 
-Acá se encapsula ese flujo en la clase `TextoAVoz`, con lazy loading de
-modelos (así ni Kokoro ni RVC se cargan si no se habla por voz) y una
-cola que reproduce en un hilo para no bloquear el main.
+Fallbacks robustos:
+    - Si el servidor VOICEVOX no responde -> se usa ``pyttsx3`` (voz del
+      sistema) y se avisa por consola.
+    - Si la traducción falla -> se intenta VOICEVOX con el texto original
+      (pero VOICEVOX está pensado para japonés) o bien pyttsx3 directo.
+
+Subtítulos:
+    La clase puede mostrar el texto en español en pantalla (overlay estilo
+    anime) mientras se reproduce el audio. Para eso se conecta con el módulo
+    ``core.subtitles`` (PyQt5). Los subtítulos NO se muestran en modo texto
+    (eso lo decide main.py al no instanciar TTS).
 """
 from __future__ import annotations
 
-import glob
 import logging
-import os
 import queue
 import re
 import threading
 import time
-import traceback
-from dataclasses import dataclass
-from typing import List, Optional
+from typing import Optional
 
-import numpy as np
+import requests
 
 import config as config_mod
 
 logger = logging.getLogger("miku.tts")
-
-# Cantidad de archivos temporales (wav) que conservamos.
-_MAX_WAVS = 4
-
-
-@dataclass
-class VozMiku:
-    """Configuración concreta del modelo de voz a usar."""
-
-    modelo_rvc: str = ""            # Ruta al archivo .pth del modelo.
-    f0up_key: int = 12              # Corrimiento de tono RVC.
-    f0method: str = "rmvpe"         # Método de análisis F0.
-    index_rate: float = 0.5         # Peso del índice.
-    filter_radius: int = 2          # Radio de filtro mediana.
-    rms_mix_rate: float = 0.25      # Mezcla RMS.
-    protect: float = 0.33           # Protección de consonantes.
 
 
 def limpiar_texto_para_voz(texto: Optional[str]) -> str:
@@ -54,91 +44,54 @@ def limpiar_texto_para_voz(texto: Optional[str]) -> str:
     t = re.sub(r"\*+", "", t)         # asteriscos (negritas, cursivas)
     t = re.sub(r"_+", "", t)          # guiones bajos
     t = re.sub(r"`+", "", t)          # backticks (código)
-    # Rango amplio de emojis y símbolos.
-    t = re.sub(
-        r"[\U0001F000-\U0001FAFF\U00002700-\U000027BF"
-        r"\U000024C2-\U0001F251\U0001F300-\U0001F5FF]",
-        "", t,
-    )
     t = re.sub(r"\s+", " ", t).strip()
     return t
 
 
-def _limpiar_wavs_viejos(patron: str = "tts_*.wav",
-                         mantener: int = _MAX_WAVS) -> None:
-    """Borra los wav temporales más viejos, conservando `mantener`."""
-    try:
-        viejos = sorted(glob.glob(patron), key=lambda p: os.path.getmtime(p))
-        for f in viejos[:-mantener]:
-            try:
-                os.remove(f)
-            except OSError:  # noqa: fué borrado / en uso
-                continue
-    except Exception:  # noqa: BLE001
-        logger.debug("No se pudieron limpiar wavs viejos.")
-
-
 class TextoAVoz:
-    """Motor TTS (Kokoro -> RVC -> pygame) reproducido en un hilo dedicado.
+    """Motor TTS basado en VOICEVOX reproducido en un hilo dedicado.
 
     Args:
-        cfg: Config del programa (le da `modelo_miku` por defecto).
-        voz: Config de voz opcional para sobreescribir parámetros.
+        cfg: Config del programa (le da ``voicevox_url`` y el speaker).
+        subtitulos_activos: True para mostrar subtítulos en pantalla.
+            (main.py debe pasarlo solo en modo voz/push).
     """
 
     def __init__(self, cfg: "config_mod.Config",
-                 voz: Optional[VozMiku] = None) -> None:
+                 subtitulos_activos: bool = False) -> None:
         self.cfg = cfg
-        self.voz = voz or VozMiku(modelo_rvc=cfg.modelo_miku)
+        self.voicevox_url = cfg.voicevox_url.rstrip("/")
+        self.speaker_id = cfg.voicevox_speaker_id
 
-        # Componentes cargados de forma "lazy" (None hasta que se pidan).
-        self.rvc = None
-        self.kokoro = None
-        self.pygame = None
+        # Subtítulos (cargado de forma perezosa vía core.subtitles).
+        self._subs_enabled = subtitulos_activos
+        self._subtitulos = None
 
         # Cola de frases a decir + hilo reproductor (no bloquea al caller).
         self._cola: "queue.Queue[str]" = queue.Queue()
         self._hilo_reproductor: Optional[threading.Thread] = None
         self._hablando = threading.Event()
 
-        # Asegura una sola reproducción (chat) a la vez.
-        self._lock_voz = threading.Lock()
+    # ---------------- Subtítulos (lazy) ----------------
+    def _obtener_subtitulos(self):
+        """Crea el overlay de subtítulos la primera vez que se usa."""
+        if self._subtitulos is None and self._subs_enabled:
+            try:
+                from core.subtitles import SubtitulosOverlay  # import tardío
+                self._subtitulos = SubtitulosOverlay()
+            except Exception:  # noqa: BLE001
+                logger.exception("No se pudo cargar el overlay de subtítulos.")
+                self._subtitulos = False  # no reintentar con errores cada vez
+        return self._subtitulos
 
-    # ---------------- Lazy loading de modelos ----------------
-    @property
-    def listo(self) -> bool:
-        """True si los tres componentes (pygame, kokoro, rvc) están."""
-        return self.kokoro is not None and self.rvc is not None and self.pygame is not None
-
-    def cargar_modelos(self) -> bool:
-        """Carga (si falta) pygame, Kokoro y RVC. Devuelve True si quedó OK."""
-        if self.listo:
-            return True
+    # ---------------- Comprobación de VOICEVOX ----------------
+    def _verificar_voicevox(self) -> bool:
+        """Devuelve True si el servidor VOICEVOX responde en su puerto."""
+        # Podría cachearse; por ahora consulta rápida con timeout corto.
         try:
-            if self.pygame is None:
-                import pygame
-                pygame.mixer.init()
-                self.pygame = pygame
-
-            if self.kokoro is None:
-                from kokoro import KPipeline  # import tardío
-                self.kokoro = KPipeline(lang_code="e")
-
-            if self.rvc is None:
-                from rvc_python.infer import RVCInference  # import tardío
-                self.rvc = RVCInference(device="cuda:0")
-                self.rvc.load_model(self.voz.modelo_rvc)
-                self.rvc.set_params(
-                    f0up_key=self.voz.f0up_key,
-                    f0method=self.voz.f0method,
-                    index_rate=self.voz.index_rate,
-                    filter_radius=self.voz.filter_radius,
-                    rms_mix_rate=self.voz.rms_mix_rate,
-                    protect=self.voz.protect,
-                )
-            return True
+            resp = requests.get(f"{self.voicevox_url}/speakers", timeout=2)
+            return resp.status_code == 200
         except Exception:  # noqa: BLE001
-            logger.exception("No se pudieron cargar los modelos de voz.")
             return False
 
     # ---------------- API pública ----------------
@@ -148,9 +101,12 @@ class TextoAVoz:
         if not texto_limpio:
             return
         print(f"\nMiku: {texto_limpio}")
+
+        # Mostrar subtítulos con el TEXTO EN ESPAÑOL (no la traducción).
+        self._mostrar_subtitulos(texto_limpio)
+
         self._cola.put(texto_limpio)
 
-        # Arranca el hilo reproductor si no está vivo.
         if self._hilo_reproductor is None or not self._hilo_reproductor.is_alive():
             self._hilo_reproductor = threading.Thread(
                 target=self._bucle_reproductor,
@@ -159,17 +115,25 @@ class TextoAVoz:
             )
             self._hilo_reproductor.start()
 
-    def decir_sync(self, texto: str) -> None:
-        """Habla bloqueando hasta terminar. Util en hooks críticos."""
-        with self._lock_voz:
-            self._sintetizar_y_reproducir(texto)
+    def _mostrar_subtitulos(self, texto: str) -> None:
+        """Muestra el subtítulo en pantalla (si está habilitado)."""
+        overlay = self._obtener_subtitulos()
+        if overlay:
+            try:
+                overlay.mostrar(texto)
+            except Exception:  # noqa: BLE001
+                logger.exception("Error mostrando subtítulos.")
+
+    def _ocultar_subtitulos(self) -> None:
+        """Oculta los subtítulos cuando termina la reproducción."""
+        if self._subtitulos:
+            try:
+                self._subtitulos.ocultar()
+            except Exception:  # noqa: BLE001
+                logger.debug("No se pudieron ocultar subtítulos.")
 
     def esperar_hablando(self, timeout: Optional[float] = None) -> bool:
-        """Espera (bloqueante) a que terminen las frases encoladas.
-
-        Returns:
-            True si se liberó el evento; False si venció el timeout.
-        """
+        """Espera (bloqueante) a que terminen las frases encoladas."""
         return self._hablando.wait(timeout=timeout)
 
     # ---------------- Hilo reproductor ----------------
@@ -182,84 +146,135 @@ class TextoAVoz:
                 continue  # daemon: queda esperando nuevas frases
             self._hablando.set()
             try:
-                with self._lock_voz:
-                    self._sintetizar_y_reproducir(texto)
+                self._sintetizar_y_reproducir(texto)
             except Exception:  # noqa: BLE001
-                traceback.print_exc()
+                logger.exception("Error reproduciendo frase.")
             finally:
                 self._hablando.clear()
+                self._ocultar_subtitulos()
 
     # ---------------- Pipeline de síntesis ----------------
-    def _sintetizar_y_reproducir(self, texto: str) -> None:
-        """Sintetiza Kokoro -> RVC -> pygame. Asume tomado el lock."""
-        import datetime  # local para la marca horaria de archivo
-        import soundfile as sf
-
-        texto = limpiar_texto_para_voz(texto)
-        if not texto:
-            return
-        if not self.cargar_modelos():
+    def _sintetizar_y_reproducir(self, texto_es: str) -> None:
+        """Sintetiza (traduce->VOICEVOX) y reproduce. Con fallbacks."""
+        texto_es = limpiar_texto_para_voz(texto_es)
+        if not texto_es:
             return
 
-        marca_hora = datetime.datetime.now().strftime("%H%M%S%f")
-        archivo_base = f"tts_base_{marca_hora}.wav"
-        archivo_final = f"tts_final_{marca_hora}.wav"
+        if not self._verificar_voicevox():
+            logger.warning("Voicevox no activo, usando voz del sistema.")
+            self._hablar_sistema(texto_es)
+            return
 
+        # 1) Traducir a japonés.
+        texto_ja = self._traducir_a_japones(texto_es)
+        if texto_ja is None:
+            # La traducción falló -> usamos voz del sistema con el original.
+            logger.warning("Falló la traducción; usando voz del sistema.")
+            self._hablar_sistema(texto_es)
+            return
+
+        # 2) Obtener WAV de VOICEVOX (si vino vacío, fallback a sistema).
+        wav_bytes = self._sintetizar_voicevox(texto_ja)
+        if not wav_bytes:
+            logger.warning("Voicevox no generó audio; usando voz del sistema.")
+            self._hablar_sistema(texto_es)
+            return
+
+        # 3) Reproducir con pygame.
+        self._reproducir_bytes(wav_bytes)
+
+    # ---------------- Traducción ----------------
+    def _traducir_a_japones(self, texto_es: str) -> Optional[str]:
+        """Traduce a japonés con deep-translator. Devuelve None si falla."""
         try:
-            # 1) Kokoro produce los chunks de audio base.
-            chunks: List[np.ndarray] = []
-            for _enc, _ids, audio in self.kokoro(texto, voice="ef_dora",
-                                                 speed=1.05):
-                chunks.append(audio)
-            if not chunks:
-                logger.warning("Kokoro no generó audio para: %s", texto)
-                return
-
-            audio_total = np.concatenate(chunks)
-            sf.write(archivo_base, audio_total, 24000)
-
-            # 2) RVC lo transforma a la voz de Miku.
-            self.rvc.infer_file(archivo_base, archivo_final)
-            if not os.path.exists(archivo_final):
-                logger.warning("RVC no generó el archivo de salida.")
-                return
-
-            # 3) Reproducción con pygame.
-            self.pygame.mixer.music.load(archivo_final)
-            self.pygame.mixer.music.play()
-            while self.pygame.mixer.music.get_busy():
-                time.sleep(0.1)
-            self.pygame.mixer.music.unload()
-
+            from deep_translator import GoogleTranslator  # import tardío
+            traductor = GoogleTranslator(source="es", target="ja")
+            return traductor.translate(texto_es)
         except Exception as e:  # noqa: BLE001
-            logger.error("Error en la síntesis de voz: %s", e)
-            traceback.print_exc()
-        finally:
-            self._liberar_cache_cuda()
-            _limpiar_wavs_viejos()
+            logger.warning("No se pudo traducir a japonés: %s", e)
+            return None
 
-    def _liberar_cache_cuda(self) -> None:
-        """Libera la memoria de la VRAM de torch tras reproducir."""
-        if _detectar_cuda():
-            try:
-                import torch
-                torch.cuda.empty_cache()
-            except Exception:  # noqa: BLE001
-                pass
-
-
-def _detectar_cuda() -> bool:
-    """Detecta CUDA una sola vez sin importar torch en el import del módulo."""
-    global _cuda_disponible
-    if _cuda_disponible is None:
-        _cuda_disponible = False
+    # ---------------- VOICEVOX ----------------
+    def _sintetizar_voicevox(self, texto_ja: str) -> Optional[bytes]:
+        """Genera y devuelve el WAV para `texto_ja` con VOICEVOX."""
+        speaker = self.speaker_id
         try:
-            import torch
-            _cuda_disponible = torch.cuda.is_available()
+            # Paso 1: audio_query.
+            rq = requests.post(
+                f"{self.voicevox_url}/audio_query",
+                params={"text": texto_ja, "speaker": speaker},
+                timeout=60,
+            )
+            if rq.status_code != 200:
+                logger.error("audio_query falló: HTTP %s - %s",
+                             rq.status_code, rq.text[:200])
+                return None
+
+            # Paso 2: synthesis con el JSON resultado.
+            rs = requests.post(
+                f"{self.voicevox_url}/synthesis",
+                params={"speaker": speaker},
+                headers={"Content-Type": "application/json"},
+                data=rq.content,
+                timeout=90,
+            )
+            if rs.status_code != 200:
+                logger.error("synthesis falló: HTTP %s - %s",
+                             rs.status_code, rs.text[:200])
+                return None
+            return rs.content
         except Exception:  # noqa: BLE001
-            _cuda_disponible = False
-    return _cuda_disponible
+            logger.exception("Error en la síntesis con VOICEVOX.")
+            return None
 
+    # ---------------- Reproducción / fallback ----------------
+    def _reproducir_bytes(self, wav_bytes: bytes) -> None:
+        """Escribe el WAV a tempfile y lo reproduce con pygame."""
+        import tempfile
+        import os
+        try:
+            import pygame  # import tardío
+        except Exception:  # noqa: BLE001
+            logger.warning("pygame no disponible para reproducir audio.")
+            self._hablar_sistema("[audio no reproducido]")
+            return
 
-# Variable de estado global (perezosa) para saber si hay CUDA.
-_cuda_disponible: Optional[bool] = None
+        if not pygame.mixer.get_init():
+            try:
+                pygame.mixer.init()
+            except Exception:  # noqa: BLE001
+                logger.warning("No se pudo inicializar pygame.mixer.")
+                self._hablar_sistema("[audio no reproducido]")
+                return
+
+        # Escribir a un archivo temporal.
+        archivo_tmp = os.path.join(tempfile.gettempdir(), "miku_tts.wav")
+        try:
+            with open(archivo_tmp, "wb") as f:
+                f.write(wav_bytes)
+        except Exception as e:  # noqa: BLE001
+            logger.error("No se pudo escribir el WAV temporal: %s", e)
+            return
+
+        try:
+            pygame.mixer.music.load(archivo_tmp)
+            pygame.mixer.music.play()
+            # Espera a que termine o que dejen de estar "ocupados".
+            while pygame.mixer.music.get_busy():
+                time.sleep(0.05)
+            pygame.mixer.music.unload()
+        except Exception:  # noqa: BLE001
+            logger.exception("Error reproduciendo con pygame.")
+        finally:
+            # No borramos de inmediato (a veces pygame mantiene el archivo).
+            pass
+
+    def _hablar_sistema(self, texto: str) -> None:
+        """Fallback final con pyttsx3 (voz del sistema). No bloquea audio."""
+        try:
+            import pyttsx3  # import tardío
+            motor = pyttsx3.init()
+            motor.say(texto)
+            motor.runAndWait()
+        except Exception:  # noqa: BLE001
+            logger.warning("pyttsx3 no disponible tampoco; solo hay subtítulo/print.")
