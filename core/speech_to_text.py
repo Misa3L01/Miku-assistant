@@ -70,6 +70,11 @@ class SpeechToText:
         self._ejecutando = False
         self._stop = threading.Event()
 
+        # ---- Push-to-talk: flag de "tecla presionada" ----
+        # True mientras F22 está apretado. La captura de audio corta en
+        # cuanto esto pasa a False (se suelta la tecla).
+        self._ptt_activo = False
+
         # Handler cuando se detecta la palabra de activación.
         self.on_wake: Optional[CallbackTranscripcion] = None
         # Handler con el texto del comando final (tras el wake echo).
@@ -202,6 +207,120 @@ class SpeechToText:
         elif not resultado.exito and (on_error or self.on_error):
             handler = on_error or self.on_error
             handler(resultado.error or RuntimeError("No se pudo capturar audio."))
+
+    # ---------------------------------------------------------------- #
+    #      Push-to-talk real: graba mientras F22 está apretado          #
+    #      y corta al soltar la tecla (no depende del silencio).        #
+    # ---------------------------------------------------------------- #
+    def capturar_para_push(self, callback: CallbackTranscripcion,
+                           on_error: Optional[CallbackError] = None,
+                           max_duracion: float = 20.0) -> None:
+        """Arranca una captura de push-to-talk en un hilo.
+
+        Graba audio en crudo mientras ``self._ptt_activo`` sea True.
+        Al soltar la tecla (``_ptt_activo`` = False) la grabación se corta
+        de inmediato y se transcribe lo capturado.
+        """
+        self._ptt_activo = True
+        hilo = threading.Thread(
+            target=self._run_captura_push,
+            args=(callback, on_error, max_duracion),
+            daemon=True,
+            name="captura_ptt",
+        )
+        hilo.start()
+
+    def detener_captura_activa(self) -> None:
+        """Corta la captura push-to-talk en curso al soltar la tecla.
+
+        Simplemente levanta el flag: el hilo ``_run_captura_push`` que está
+        leyendo el audio lo verá y dejará de grabar en la próxima pasada.
+        """
+        self._ptt_activo = False
+
+    def _run_captura_push(self, callback: CallbackTranscripcion,
+                          on_error: Optional[CallbackError],
+                          max_duracion: float) -> None:
+        """Hilo interno: graba en crudo hasta soltar y luego transcribe."""
+        audio = None
+        try:
+            audio = self._grabar_crudo_mientras_apretado(max_duracion)
+        except Exception as e:  # noqa: BLE001
+            self._ptt_activo = False
+            if on_error or self.on_error:
+                (on_error or self.on_error)(
+                    e if isinstance(e, Exception) else RuntimeError(str(e)))
+            return
+
+        self._ptt_activo = False
+        if audio is None:
+            return  # no hubo audio (fue muy corto)
+
+        try:
+            texto = self.transcribir_audio(audio)
+        except Exception as e:  # noqa: BLE001
+            if on_error or self.on_error:
+                (on_error or self.on_error)(e)
+            return
+
+        if texto:
+            callback(texto)
+
+    def _grabar_crudo_mientras_apretado(self, max_duracion: float):
+        """Lee frames de audio del micrófono mientras F22 está apretado.
+
+        No depende de la detección de silencio de SpeechRecognition: corta
+        en cuanto ``_ptt_activo`` pasa a False (tecla soltada) o se agota el
+        tiempo máximo. Devuelve un AudioData listo para transcribir.
+        """
+        import pyaudio  # lazy
+        import time
+        self._importar_dependencias()
+        sr = self._sr_mod
+
+        tasa = 16000
+        chunk = 1024
+        ancho = pyaudio.paInt16
+
+        p = pyaudio.PyAudio()
+        try:
+            stream = p.open(
+                format=ancho, channels=1, rate=tasa, input=True,
+                input_device_index=self.cfg.microfono_index,
+                frames_per_buffer=chunk)
+        except Exception as e:  # noqa: BLE001
+            try:
+                p.terminate()
+            except Exception:  # noqa: BLE001
+                pass
+            self._ptt_activo = False
+            raise RuntimeError("No pude abrir el micrófono: %s" % e)
+
+        frames: List[bytes] = []
+        inicio = time.monotonic()
+        try:
+            # Graba mientras esté presionado y no se exceda la duración máxima.
+            while self._ptt_activo and (time.monotonic() - inicio) < max_duracion:
+                data = stream.read(chunk, exception_on_overflow=False)
+                frames.append(data)
+        finally:
+            try:
+                stream.stop_stream()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                stream.close()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                p.terminate()
+            except Exception:  # noqa: BLE001
+                pass
+
+        if not frames:
+            return None
+        contenido = b"".join(frames)
+        return sr.AudioData(contenido, tasa, 2)  # 2 bytes = paInt16
 
     def capturar_una_vez_sync(self) -> _ResultadoEscucha:
         """Captura una toma de audio del micrófono y la transcribe.

@@ -1,0 +1,62 @@
+# -*- coding: utf-8 -*-
+"""
+config_local.py.example  -  PLANTILLA de configuración local (NO versionada).
+
+Para usarla: copiá este archivo a ``config_local.py`` en la raíz del proyecto
+y completá los valores con TUS datos. El archivo ``config_local.py`` REAL está
+en ``.gitignore`` (nunca se sube al repo) porque contiene datos privados de tu
+máquina (rutas, API keys, índices de micrófono, etc.).
+
+Todas las variables van en MAYÚSCULAS y config.py las carga fundiéndolas (en
+minúsculas) sobre los valores por defecto. Las variables que NO definas acá
+simplemente usan su default seguro de ``config.py``.
+
+Importante: NUNCA pongas valores reales en este archivo ``.example`` ni en
+ningún archivo versionado.
+"""
+# ============================================================================ #
+# API KEYS (Groq) - cerebro + transcripción por voz (STT)
+# ============================================================================ #
+# Clave principal del cerebro (chat + tools). Obtenela en console.groq.com.
+GROQ_API_KEY = ""            # ej: "gsk_xxxxxxxxxxxxxxxx"
+
+# Clave de transcripción de voz (Whisper). Opcional: si la dejas vacía,
+# se usa GROQ_API_KEY para todo.
+GROQ_API_KEY_STT = ""
+
+# ============================================================================ #
+# VOICEVOX (síntesis de voz local)
+# ============================================================================ #
+# URL del servidor VOICEVOX (suele ser el default).
+VOICEVOX_URL = "http://localhost:50021"
+# ID del hablante/VOICEBOX a usar (prueba 1, 2, 3...).
+VOICEVOX_SPEAKER_ID = 1
+
+# ============================================================================ #
+# Microfono - índice del dispositivo de entrada (propio de tu máquina)
+# ============================================================================ #
+# Dejalo en None para usar el del sistema por defecto, o un entero (índice
+# que muestra el log de micrófonos). Ej: MICROFONO_INDEX = 2
+MICROFONO_INDEX = None
+
+# ============================================================================ #
+# Navegador Brave (rutas de TU instalación)
+# ============================================================================ #
+# Ruta completa al ejecutable de Brave (como está instalado en tu PC).
+BRAVE_RUTA_EXE = ""
+# Ruta al perfil de datos de usuario de Brave (para lanzar con tu sesión).
+BRAVE_PERFIL_DIR = ""
+
+# ============================================================================ #
+# TIDAL
+# ============================================================================ #
+# Ruta completa al ejecutable de la app de escritorio de TIDAL.
+TIDAL_RUTA_EXE = ""
+
+# ============================================================================ #
+# Interpolación de video (rutas específicas de este equipo)
+# ============================================================================ #
+# Carpeta donde están los videos a interpolar (ej: R:\\...\\videos).
+CARPETA_VIDEOS = ""
+# Ruta al script .bat que interpola (ej: R:\\...\\interpolar_miku.bat).
+RUTA_BAT_INTERPOLAR = ""

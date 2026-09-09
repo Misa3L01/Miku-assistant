@@ -140,10 +140,47 @@ brillo de pantalla y gestión básica de ventanas (listar/minimizar/mover).
 
 ---
 
-## Puntos de mejora / próximos pasos
+## 🎯 Funcionalidades Base y Heredadas
 
-Ver el detalle en `docs/continuar_despues.md`. En resumen:
-- Implementar los plugins complejos del sistema anterior (navegador Brave,
-  Discord, TIDAL, energía de ZZZ, búsqueda de archivos, etc.) sobre este marco.
-- Validar la voz completa (Kokoro → RVC → pygame) con modelos reales y GPU.
-- Confirmar el `.gitignore` de `data/`.
+El asistente hereda y mejora las siguientes capacidades del sistema original:
+
+### Control de programas y sistema
+- **Abrir/cerrar aplicaciones** favoritas (Brave, Discord, Tidal, VSCode) y cualquier otra registrada.
+- **Cierre seguro** de procesos mediante lista blanca (sin `shell=True`).
+- **Control multimedia** global: pausa/reanudación, siguiente/anterior (teclas multimedia).
+- **Volumen del sistema**: subir/bajar volumen general y por aplicación (navegador, reproductor).
+- **Gestión de ventanas**: listar, minimizar, maximizar, mover entre monitores.
+- **Cambio de resolución** de monitores (preparado para macros de gaming).
+- **Gestion de recuerdos para recordatorios** por ejemplo alarmas  orecordatorios de hacer x cosa en x minutos.
+
+### Búsqueda y archivos
+- **Búsqueda instantánea** mediante indexación con Everything (`es.exe`).
+
+### Respuestas inteligentes
+- **Preguntas cotidianas** resueltas vía LLM (Groq) con herramientas (tools) declaradas por plugins.
+- **Memoria persistente** (opcional, vía chromadb) para recordar información relevante.
+
+### Interfaz de voz mejorada
+- **Activación dual**: palabra clave "Miku" (escucha continua) o **push-to-talk** (tecla F22).
+- **Voz japonesa** con VOICEVOX (traducción ES→JA mediante deep-translator) y fallback a pyttsx3.
+- **Subtítulos estilo anime** en overlay transparente (PyQt5) mostrando el texto en español.
+
+### Configuración flexible
+- **Preferencias de usuario** en `data/preferences.json`.
+- **Secretos y rutas privadas** en `config_local.py` (no versionado) con plantilla de ejemplo.
+- **Modo texto** para pruebas sin micrófono, y ahora **con salida de voz obligatoria** para verificar TTS.
+
+### Seguridad
+- **Validación de comandos peligrosos** (apagar/reiniciar/suspender) con flujo de confirmación.
+- **Whitelist** de procesos permitidos para cierre.
+
+---
+
+## 🛠️ Próximos pasos (roadmap)
+
+- Verificar que todas las funcionalidades anteriores esten implementadas correctamente.
+- **Discord**: silenciar/desilenciar, volumen por usuario, expulsar, traducción al chat.
+- **Game Booster**: bajar volumen del navegador, pausar Wallpaper Engine, monitorizar temperatura.
+- **Traductor para juegos**: mensajes predefinidos para CS:GO (portugués) y Genshin Impact (inglés).
+- **Macros personalizadas**: "modo Fortnite" (cambiar resolución), "comedor" (abrir web y autocompletar).
+- **Push-to-talk real**: grabación continua mientras se mantiene presionada la tecla (buffer propio con pyaudio).

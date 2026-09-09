@@ -152,6 +152,26 @@ class SystemControl(Plugin):
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "control_energia",
+                "description": "Apaga, reinicia o suspende la PC. ACCIÓN "
+                               "PELIGROSA: el sistema SIEMPRE pedirá "
+                               "confirmación antes de ejecutarla.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "accion": {
+                            "type": "string",
+                            "enum": ["apagar", "reiniciar", "suspender"],
+                            "description": "Qué hacer con la energía de la PC.",
+                        },
+                    },
+                    "required": ["accion"],
+                },
+            },
+        },
     ]
 
     # ---------------------------------------------------------- #
@@ -193,6 +213,8 @@ class SystemControl(Plugin):
                                       args.get("monitor", 1))
         if nombre_tool == "minimizar_ventana":
             return self.minimizar_ventana(str(args.get("nombre", "")))
+        if nombre_tool == "control_energia":
+            return self.control_energia(str(args.get("accion", "")))
         return None
 
     # ---------------- Acciones: programas ---------------- #
@@ -245,8 +267,9 @@ class SystemControl(Plugin):
         alias = nombre.lower().strip()
         proceso = _PROCESOS.get(alias)
         if not proceso:
-            # Si no figura en la whitelist, rechazamos: no se mata a cualquiera.
-            if alias not in blanca and not any(a in alias for a in blanca):
+            # No está en el mapa fijo. Solo se permite si el alias coincide
+            # EXACTAMENTE con algún elemento de la lista blanca (no substring).
+            if alias not in blanca:
                 return f"No está permitido cerrar '{nombre}'."
             proceso = alias if alias.endswith(".exe") else alias + ".exe"
 
@@ -262,6 +285,34 @@ class SystemControl(Plugin):
         except Exception as e:  # noqa: BLE001
             logger.error("Error cerrando %s: %s", nombre, e)
             return f"No pude cerrar {nombre}."
+
+    # ---------------- Energía de la PC (apagar/reiniciar/suspender) ---------------- #
+    def control_energia(self, accion: str) -> str:
+        """Apaga, reinicia o suspende la PC.
+
+        SOLO se ejecuta tras confirmación explícita (ese gating lo hace el
+        CommandParser antes de llegar acá). `accion` ∈ {apagar, reiniciar,
+        suspender}.
+        """
+        accion = (accion or "").lower().strip()
+        try:
+            if accion == "apagar":
+                subprocess.run(["shutdown", "/s", "/t", "5"], shell=False,
+                               check=True)
+                return "Voy a apagar la PC en unos segundos."
+            if accion == "reiniciar":
+                subprocess.run(["shutdown", "/r", "/t", "5"], shell=False,
+                               check=True)
+                return "Voy a reiniciar la PC en unos segundos."
+            if accion == "suspender":
+                subprocess.run(["rundll32", "powrprof.dll,SetSuspendState",
+                                "0,1,0"], shell=False, check=True)
+                return "Voy a suspender la PC."
+            return ("No entendí la acción. Puedo apagar, reiniciar o "
+                    "suspender la PC.")
+        except Exception as e:  # noqa: BLE001
+            logger.error("Error en control_energia(%s): %s", accion, e)
+            return "No pude ejecutar la acción de energía."
 
     # ---------------- Brillo ---------------- #
     def controlar_brillo(self, accion: str, valor: Optional[int] = None) -> str:

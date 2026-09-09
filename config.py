@@ -59,10 +59,11 @@ def _defaults() -> Dict[str, Any]:
 
         # --- Navegador (Brave) ---
         "brave_debug_port": 9222,
+        # Las rutas de tu instalación van en config_local.py (NO en defaults).
         "brave_ruta_exe": "",
         "brave_perfil_dir": "",
-
         # --- TIDAL ---
+        # Ruta de instalación en config_local.py.
         "tidal_ruta_exe": "",
         "tidal_debug_port": 9223,
 
@@ -80,8 +81,10 @@ def _defaults() -> Dict[str, Any]:
         "ganancia": 1.10,
 
         # --- Interpolación de video ---
-        "carpeta_videos": "R:\\VapourSynth-Env\\videos",
-        "ruta_bat_interpolar": "R:\\VapourSynth-Env\\interpolar_miku.bat",
+        # Rutas privadas (carpeta_videos / ruta_bat_interpolar): vacías en
+        # defaults. Se definen únicamente en config_local.py (NO versionado).
+        "carpeta_videos": "",
+        "ruta_bat_interpolar": "",
     }
 
 
@@ -209,9 +212,17 @@ class Config:
                              clave, env_nombre)
 
     def _cargar_preferences(self) -> None:
-        """Lee data/preferences.json (si existe) y lo funde sobre defaults."""
+        """Lee data/preferences.json (si existe dentro de la carpeta data/)
+        y lo funde sobre los defaults.
+
+        Nota: el archivo real debe vivir en ``<raíz>/data/preferences.json``.
+        """
         if not self.ruta_archivo.exists():
-            logger.debug("No existe %s; uso defaults.", self.ruta_archivo)
+            logger.warning(
+                "No se encontró el archivo de preferencias (%s). "
+                "Se usan los valores por defecto. Asegurate de que "
+                "preferences.json esté dentro de la carpeta data/ del proyecto.",
+                self.ruta_archivo)
             return
         try:
             with open(self.ruta_archivo, "r", encoding="utf-8") as f:
@@ -220,7 +231,11 @@ class Config:
                 for k in ("__comentario__", "_version"):
                     datos.pop(k, None)
                 self.valores.update(datos)
-            logger.debug("Preferencias cargadas desde %s", self.ruta_archivo)
+            logger.info("Preferencias cargadas desde %s", self.ruta_archivo)
+        except FileNotFoundError:
+            logger.warning(
+                "No se pudo abrir %s (¿está en data/?). Uso defaults.",
+                self.ruta_archivo)
         except json.JSONDecodeError as e:
             logger.error(
                 "%s tiene un error de sintaxis (línea %s): %s",
@@ -262,42 +277,3 @@ def cargar() -> Config:
     """Carga y devuelve la instancia global lista para usar."""
     config.cargar()
     return config
-
-
-# ---------------------------------------------------------------------- #
-# Exportación de configuración a nivel de MÓDULO (mayúsculas).
-#
-# Para compatibilidad con código que lee claves como ``config.GROQ_API_KEY``
-# (y no vía el objeto ``Config``), si existe ``config_local.py`` se copian sus
-# variables en MAYÚSCULAS a ``globals()``; del mismo modo se busca en el
-# entorno las definidas arriba. Acá NO se hardcodea ningún valor real.
-# ---------------------------------------------------------------------- #
-def _exportar_a_globals(claves: Dict[str, Any]) -> None:
-    """Copia cada (clave, valor) a globals como ``clave.upper()``."""
-    for clave, valor in claves.items():
-        if isinstance(clave, str) and clave.isupper():
-            globals()[clave] = valor
-
-
-# 1) Variables en MAYÚSCULAS de config_local.py (si existe).
-try:
-    import config_local  # type: ignore
-    _exportar_a_globals({
-        k: getattr(config_local, k)
-        for k in dir(config_local)
-        if k.isupper() and not k.startswith("_") and hasattr(config_local, k)
-    })
-except ImportError:            # no hay config_local.py: no pasa nada
-    pass
-except Exception as e:         # config_local.py con errores
-    logger.debug("config_local.py (globals) no aplicado: %s", e)
-
-# 2) Variables de entorno con las claves conocidas de la config (en MAYÚSCULAS).
-_exportar_a_globals({
-    clave.upper(): os.environ[clave.upper()]
-    for clave in _defaults()
-    if clave.upper() in os.environ and os.environ.get(clave.upper(), "").strip()
-})
-
-# Limpiamos el helper para no exponerlo en el namespace público.
-del _exportar_a_globals

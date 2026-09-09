@@ -86,10 +86,13 @@ class Asistente:
 
     # ---------------- Responder ----------------
     def _contexto_base(self) -> Dict[str, Any]:
-        """Contexto compartido entre comandos."""
+        """Contexto compartido entre comandos.
+
+        Nota: el estado de confirmación (espera_confirmacion / pendiente
+        de energía) NO vive acá (se recrearía por turno). Ahora reside en el
+        objeto CommandParser (``self.parser``), que persiste entre llamadas.
+        """
         return {
-            "espera_confirmacion": False,
-            "pendiente_energia": None,
             "cfg": self.cfg,
             "voice": self.voice,
         }
@@ -253,35 +256,31 @@ def run_modo_push(asistente: Asistente) -> None:
             asistente.responder(texto)
 
     def iniciar_grabacion(_evento) -> None:
-        """Se llama al PRESIONAR la tecla. Empieza a escuchar."""
+        """Se llama al PRESIONAR la tecla. Empieza a grabar audio."""
         if estado["grabando"]:
             return  # evita reentrada
         estado["grabando"] = True
-        logger.info("F22 presionada: escuchando...")
-        # Registramos un flag en el STT para que la captura sepa que debe
-        # transcribir cuando soltemos.
+        logger.info("F22 presionada: grabando...")
         try:
-            setattr(stt, "_ptt_activo", True)
-            # Lanza la captura única asíncrona (se transcribe al soltar).
-            stt.capturar_comando(_respuesta)
+            # Graba mientras la tecla esté apretada (corta al soltar).
+            stt.capturar_para_push(_respuesta)
         except Exception:  # noqa: BLE001
             logger.exception("Error arrancando la grabación.")
             estado["grabando"] = False
 
     def finalizar_grabacion(_evento) -> None:
-        """Se llama al SOLTAR la tecla. Termina la toma activa."""
+        """Se llama al SOLTAR la tecla. Corta la captura activa YA."""
         if not estado["grabando"]:
             return
         try:
-            setattr(stt, "_ptt_activo", False)
-            # Pide al STT que corte la captura en curso lo antes posible.
+            # Levanta el flag para que el hilo de grabación corte al momento.
             if hasattr(stt, "detener_captura_activa"):
                 stt.detener_captura_activa()
         except Exception:  # noqa: BLE001
             logger.exception("Error finalizando la grabación.")
         finally:
             estado["grabando"] = False
-            logger.info("F22 soltada: fin de grabación.")
+            logger.info("F22 soltada: fin de grabación (transcribiendo).")
 
     # Registro de la tecla (release de eventos de keyup arrancan la toma).
     keyboard.on_press_key(_TECLA_PTT, iniciar_grabacion)

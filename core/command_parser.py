@@ -104,7 +104,7 @@ class BrainGroq:
         # Fast path en cache (solo fuera de confirmaciones peligrosas).
         cache_key = f"{texto.lower()}|{sorted(claves)}"
         hit = obtener_cache(cache_key)
-        if hit and not contexto.get("espera_confirmacion"):
+        if hit:
             return {"respuesta": hit, "tools_call": []}
 
         # Prompt de sistema con contexto dinámico (fecha / memoria).
@@ -200,6 +200,11 @@ class CommandParser:
         self.bus = event_bus
         self.memoria = memoria
 
+        # ---- Estado persistente de confirmación (sobrevive entre turnos) ----
+        # Vive en el parser (no en el contexto, que se recrea en cada turno).
+        self._espera_confirmacion = False
+        self._pendiente_energia: Optional[Dict[str, Any]] = None
+
     # ---------------- Construcción de tools desde plugins ----------------
     def recopilar_tools(self) -> List[dict]:
         """Junta los schemas de tools declaradas por todos los plugins."""
@@ -241,8 +246,8 @@ class CommandParser:
         if not texto:
             return "Sí? No escuché nada."
 
-        # 1) Confirmación de acción peligrosa pendiente.
-        if contexto.get("espera_confirmacion"):
+        # 1) Confirmación de acción peligrosa pendiente (estado persistente).
+        if self._espera_confirmacion:
             resultado = self._manejar_confirmacion(texto, contexto)
             if resultado is not None:
                 return resultado
@@ -268,9 +273,17 @@ class CommandParser:
             return resultado["error"]
 
         respuesta_base = resultado.get("respuesta") or ""
-        extras: List[str] = []
+        tool_calls = resultado.get("tools_call", []) or []
 
-        for call in resultado.get("tools_call", []):
+        # 4a) Acciones peligrosas (control_energia) NUNCA se ejecutan directo:
+        #     se encolan y se pide confirmación al usuario.
+        for call in tool_calls:
+            if call.get("nombre") == "control_energia":
+                return self._encolar_confirmacion_energia(call.get("args", {}))
+
+        # 4b) El resto de tools se ejecutan de inmediato.
+        extras: List[str] = []
+        for call in tool_calls:
             nombre = call["nombre"]
             args = call["args"]
             logger.debug("Tool invocada: %s(%s)", nombre, args)
@@ -284,18 +297,64 @@ class CommandParser:
         return final or "¡Listo!"
 
     # ---------------- Manejo de confirmación ----------------
-    def _manejar_confirmacion(self, texto: str, contexto: Dict[str, Any]) -> Optional[str]:
-        """Resuelve una confirmación de acción peligrosa (energía)."""
-        pendiente = contexto.get("pendiente_energia")
+    # Palabras que el usuario usa para confirmar una acción.
+    _CONFIRMAR = ("sí", "si", "dale", "confirmo", "hacelo", "ok", "okay",
+                  "yes", "confirmá", "adelante", "apagala", "reiniciala")
+    # Palabras para cancelar explícitamente.
+    _CANCELAR = ("no", "cancelar", "cancelá", "cancel", "para", "frenar",
+                 "abortar", "salí", "tranca", "no apagues", "no apagues la pc")
+
+    def _encolar_confirmacion_energia(self, args: Dict[str, Any]) -> str:
+        """Registra una acción de energía pendiente y pide confirmación."""
+        accion = str(args.get("accion", "")).lower().strip()
+        if not accion:
+            return "¿Qué querés hacer: apagar, reiniciar o suspender la PC?"
+        self._pendiente_energia = {"accion": accion}
+        self._espera_confirmacion = True
+        texto_accion = {"apagar": "apagar la PC",
+                        "reiniciar": "reiniciar la PC",
+                        "suspender": "suspender la PC"}.get(accion, accion)
+        return (f"¿Confirmás que quiero {texto_accion}? "
+                f"Decime 'sí' para confirmar o 'no' para cancelar.")
+
+    def _limpiar_confirmacion(self) -> None:
+        """Borra el estado de confirmación pendiente."""
+        self._espera_confirmacion = False
+        self._pendiente_energia = None
+
+    def _manejar_confirmacion(self, texto: str,
+                              contexto: Dict[str, Any]) -> Optional[str]:
+        """Resuelve una confirmación de acción peligrosa (energía).
+
+        Usa el estado persistente guardado en `self`, que sobrevive entre
+        llamadas a ``procesar()`` (no depende del contexto transitorio).
+        """
+        pendiente = self._pendiente_energia
         if not pendiente:
+            self._espera_confirmacion = False
             return None
-        if any(p in texto.lower() for p in
-               ("sí", "si", "dale", "confirmo", "hacelo", "ok", "okay", "yes")):
-            # Ejecuta vía plugin de sistema.
-            contexto["ejecutar_energia"] = pendiente
-            res = self.despachar_tool("control_energia", pendiente, contexto)
+
+        bajo = (texto or "").lower().strip()
+
+        # Si el usuario confirma -> se ejecuta la acción.
+        if any(p in bajo for p in self._CONFIRMAR):
+            accion = dict(pendiente)
+            self._limpiar_confirmacion()
+            res = self.despachar_tool("control_energia", accion, contexto)
             return res or "Listo."
-        return "Cancelado."
+
+        # Si cancela explícitamente -> no se hace nada y se destraba.
+        if any(n in bajo for n in self._CANCELAR):
+            self._limpiar_confirmacion()
+            return "Cancelado, no hice nada."
+
+        # Sin confirmación ni cancelación clara: seguimos esperando.
+        texto_accion = {"apagar": "apagar la PC",
+                        "reiniciar": "reiniciar la PC",
+                        "suspender": "suspender la PC"}.get(
+                            pendiente.get("accion", ""), pendiente.get("accion", ""))
+        return (f"Todavía no me confirmaste. ¿{texto_accion}? "
+                f"Decime 'sí' o 'no'.")
 
     # ---------------- Comandos inmediatos (sin LLM) ----------------
     def _comandos_inmediatos(self, texto: str, contexto: Dict[str, Any]) -> Optional[str]:
