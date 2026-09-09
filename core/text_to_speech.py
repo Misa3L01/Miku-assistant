@@ -23,8 +23,10 @@ Subtítulos:
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import re
+import subprocess
 import threading
 import time
 from typing import Optional
@@ -34,6 +36,13 @@ import requests
 import config as config_mod
 
 logger = logging.getLogger("miku.tts")
+
+# Ruta por defecto (relativa a la raíz del proyecto) donde está instalado el
+# motor interno de VOICEVOX. Se usa para lanzarlo automáticamente si hace
+# falta. Puede anularse en config_local.py con VOICEVOX_RUN_EXE (ruta
+# absoluta al ``run.exe``).
+VOICEVOX_RUN_EXE = (config_mod.BASE_DIR / "extern" / "VOICEVOX"
+                    / "vv-engine" / "run.exe")
 
 
 def limpiar_texto_para_voz(texto: Optional[str]) -> str:
@@ -93,6 +102,70 @@ class TextoAVoz:
             return resp.status_code == 200
         except Exception:  # noqa: BLE001
             return False
+
+    # ---------------- Auto-arranque de VOICEVOX ----------------
+    def _asegurar_voicevox(self) -> bool:
+        """Comprueba VOICEVOX y, si no está, intenta lanzarlo una sola vez.
+
+        La primera vez que se llama: si el servidor no responde, busca el
+        ``run.exe`` (por defecto en ``extern/VOICEVOX/vv-engine/run.exe`` y,
+        mejor, la ruta definida en config_local VOICEVOX_RUN_EXE), lo lanza
+        en segundo plano y espera unos segundos a que quede operativo.
+
+        Returns:
+            True si el servidor quedó accesible (o ya lo estaba).
+        """
+        if self._verificar_voicevox():
+            return True
+
+        # No reintentamos arrancarlo si ya estuvimos en ese intento (cache).
+        if getattr(self, "_voicevox_intento_lanzado", False):
+            return self._verificar_voicevox()
+        self._voicevox_intento_lanzado = True
+
+        ruta_run = self._buscar_run_voicevox()
+        if ruta_run is None:
+            logger.warning(
+                "VOICEVOX no responde en %s y no encontré su run.exe. "
+                "Usaré pyttsx3 como fallback (voz del sistema).", self.voicevox_url)
+            return False
+
+        logger.info("Intentando arrancar VOICEVOX desde: %s", ruta_run)
+        try:
+            subprocess.Popen([str(ruta_run)], cwd=str(ruta_run.parent),
+                             shell=False,  # sin shell por seguridad
+                             stdin=None, stdout=None, stderr=None,
+                             creationflags=subprocess.CREATE_NO_WINDOW
+                             if hasattr(subprocess, "CREATE_NO_WINDOW") else 0)
+        except Exception as e:  # noqa: BLE001
+            logger.error("No pude lanzar VOICEVOX: %s. Uso pyttsx3.", e)
+            return False
+
+        # Esperamos (con cortes) a que levante el puerto.
+        for _ in range(6):  # hasta ~12 s
+            time.sleep(2)
+            if self._verificar_voicevox():
+                logger.info("VOICEVOX quedó activo.")
+                return True
+        logger.warning("VOICEVOX tardó en responder; uso pyttsx3 por ahora.")
+        return False
+
+    def _buscar_run_voicevox(self):
+        """Devuelve la ruta al run.exe de VOICEVOX (o None si no se halla).
+
+        Prioridad: config_local (VOICEVOX_RUN_EXE) -> default relativo.
+        """
+        # Ruta configurable desde config_local.py (se lee del singleton).
+        try:
+            import config_local  # noqa: F401
+            ruta_conf = str(getattr(config_local, "VOICEVOX_RUN_EXE", "")).strip()
+            if ruta_conf and os.path.exists(ruta_conf):
+                return ruta_conf
+        except Exception:  # noqa: BLE001
+            pass
+        if VOICEVOX_RUN_EXE and VOICEVOX_RUN_EXE.exists():
+            return str(VOICEVOX_RUN_EXE)
+        return None
 
     # ---------------- API pública ----------------
     def decir(self, texto: str) -> None:
@@ -160,7 +233,8 @@ class TextoAVoz:
         if not texto_es:
             return
 
-        if not self._verificar_voicevox():
+        # Aseguramos que el servidor esté (lo arranca solo si hace falta).
+        if not self._asegurar_voicevox():
             logger.warning("Voicevox no activo, usando voz del sistema.")
             self._hablar_sistema(texto_es)
             return

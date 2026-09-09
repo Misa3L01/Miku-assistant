@@ -19,7 +19,9 @@ perezosa dentro de cada método para acelerar el arranque.
 """
 from __future__ import annotations
 
+import ctypes
 import logging
+import os
 import subprocess
 import time
 from typing import Any, Dict, List, Optional
@@ -172,6 +174,72 @@ class SystemControl(Plugin):
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "control_multimedia",
+                "description": "Controla la reproducción multimedia global: "
+                               "pausar/reproducir, siguiente o anterior "
+                               "canción (usa teclas multimedia virtuales). "
+                               "Ej: 'pausá la música', 'siguiente tema'.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "accion": {
+                            "type": "string",
+                            "enum": ["play", "pausa", "play_pausa",
+                                     "siguiente", "anterior"],
+                            "description": "Acción multimedia a ejecutar.",
+                        },
+                    },
+                    "required": ["accion"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "ajustar_volumen",
+                "description": "Sube o baja el volumen del sistema, o lo "
+                               "silencia. Ej: 'subí el volumen', 'mutear'.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "accion": {
+                            "type": "string",
+                            "enum": ["subir", "bajar", "silenciar"],
+                            "description": "Qué hacer con el volumen.",
+                        },
+                        "paso": {
+                            "type": "integer",
+                            "description": "Opcional: cantidad de pasos "
+                                           "para subir/bajar (default 5).",
+                        },
+                    },
+                    "required": ["accion"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "buscar_archivo",
+                "description": "Busca un archivo/carpeta en tu PC usando el "
+                               "indexador Everything (es.exe). Requiere que "
+                               "es.exe esté presente en bin/ o en la ruta "
+                               "configurada.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "nombre": {
+                            "type": "string",
+                            "description": "Palabra o nombre a buscar.",
+                        },
+                    },
+                    "required": ["nombre"],
+                },
+            },
+        },
     ]
 
     # ---------------------------------------------------------- #
@@ -215,6 +283,13 @@ class SystemControl(Plugin):
             return self.minimizar_ventana(str(args.get("nombre", "")))
         if nombre_tool == "control_energia":
             return self.control_energia(str(args.get("accion", "")))
+        if nombre_tool == "control_multimedia":
+            return self.control_multimedia(str(args.get("accion", "")))
+        if nombre_tool == "ajustar_volumen":
+            return self.ajustar_volumen(str(args.get("accion", "")),
+                                        args.get("paso"))
+        if nombre_tool == "buscar_archivo":
+            return self.buscar_archivo(str(args.get("nombre", "")))
         return None
 
     # ---------------- Acciones: programas ---------------- #
@@ -313,6 +388,154 @@ class SystemControl(Plugin):
         except Exception as e:  # noqa: BLE001
             logger.error("Error en control_energia(%s): %s", accion, e)
             return "No pude ejecutar la acción de energía."
+
+    # ---------------- Multimedia (teclas virtuales Windows) ---------------- #
+    # Códigos de VK (virtual key) para medios / volumen (Windows).
+    _VK = {
+        "play_pausa": 0xB3, "siguiente": 0xB0, "anterior": 0xB1,
+        "subir_volumen": 0xAF, "bajar_volumen": 0xAE, "silenciar": 0xAD,
+    }
+    # Nombres equivalentes que acepta el módulo `keyboard` (fallback).
+    _NOMBRE_KEYBOARD = {
+        "play_pausa": "play/pause media",
+        "siguiente": "next track", "anterior": "previous track",
+        "subir_volumen": "volume up", "bajar_volumen": "volume down",
+        "silenciar": "volume mute",
+    }
+
+    def _enviar_tecla_virtual(self, clave: str) -> bool:
+        """Envía una tecla multimedia/volumen por hardware.
+
+        Intenta primero con `keyboard` (si está instalado) y, si no, con
+        ctypes ``keybd_event``. Devuelve True si pudo enviarse.
+        """
+        try:
+            import keyboard  # import tardío
+            nombre = self._NOMBRE_KEYBOARD.get(clave)
+            if nombre:
+                keyboard.send(nombre)
+                return True
+        except Exception:  # noqa: BLE001
+            pass  # seguimos con el fallback por ctypes
+
+        # Fallback: keybd_event de user32.
+        vk = self._VK.get(clave)
+        if vk is None:
+            return False
+        try:
+            user32 = ctypes.windll.user32
+            # Down + up para simular la pulsación.
+            user32.keybd_event(vk, 0, 0, 0)
+            time.sleep(0.02)
+            user32.keybd_event(vk, 0, 2, 0)  # KEYEVENTF_KEYUP = 2
+            return True
+        except Exception as e:  # noqa: BLE001
+            logger.error("No se pudo enviar la tecla virtual %s: %s", clave, e)
+            return False
+
+    def control_multimedia(self, accion: str) -> str:
+        """Pausa/reproduce, avanza o retrocede el audio/video global."""
+        accion = (accion or "").lower().strip()
+        alias = {
+            "play": "play_pausa", "pausa": "play_pausa",
+            "reproducir": "play_pausa", "play_pausa": "play_pausa",
+            "siguiente": "siguiente", "adelante": "siguiente",
+            "next": "siguiente",
+            "anterior": "anterior", "atras": "anterior",
+            "prev": "anterior",
+        }.get(accion, accion)
+
+        if alias not in self._VK:
+            return "No entendí la acción multimedia. Usá play, pausa, siguiente o anterior."
+
+        mensaje = {
+            "play_pausa": "Alterné play/pausa.",
+            "siguiente": "Pasé a la siguiente.",
+            "anterior": "Volví a la anterior.",
+        }.get(alias, "Listo.")
+
+        if self._enviar_tecla_virtual(alias):
+            return mensaje
+        return "No pude enviar el comando multimedia."
+
+    def ajustar_volumen(self, accion: str, paso: Optional[int] = None) -> str:
+        """Sube/baja o silencia el volumen del sistema (teclas multimedia)."""
+        accion = (accion or "").lower().strip()
+        if accion == "silenciar":
+            clave = "silenciar"
+        elif accion in ("subir", "mas", "arriba"):
+            clave = "subir_volumen"
+        elif accion in ("bajar", "menos", "abajo"):
+            clave = "bajar_volumen"
+        else:
+            return "No entendí. Usá subir, bajar o silenciar."
+
+        veces = max(1, int(paso or 5)) if clave != "silenciar" else 1
+        for _ in range(min(veces, 50)):
+            if not self._enviar_tecla_virtual(clave):
+                return "No pude ajustar el volumen."
+            time.sleep(0.02)
+        msj = {"subir_volumen": "Subí el volumen.", "bajar_volumen": "Bajé el volumen.",
+               "silenciar": "Silencié el audio."}.get(clave, "Listo.")
+        return msj
+
+    # ---------------- Búsqueda con Everything (es.exe) ---------------- #
+    def buscar_archivo(self, nombre: str, max_resultados: int = 8) -> str:
+        """Busca `nombre` mediante el indexador Everything (es.exe).
+
+        Requiere que el binario `es.exe` exista en `bin/` (o en la ruta
+        configurada `ruta_everything_es`). Si no está, devuelve un mensaje
+        claro en vez de fallar.
+        """
+        nombre = (nombre or "").strip()
+        if not nombre:
+            return "¿Qué archivo querés que busque?"
+
+        es = self._ruta_es_ejecutable()
+        if not es:
+            return ("No tengo el indexador Everything (es.exe) configurado. "
+                    "Copiá es.exe a la carpeta bin/ o definí su ruta y reintentá.")
+
+        try:
+            # -s = búsqueda sin interfaz; imprime resultados por consola.
+            resp = subprocess.run(
+                [str(es), "-s", "-n", str(max_resultados), nombre],
+                capture_output=True, text=True, timeout=15, shell=False)
+        except subprocess.TimeoutExpired:
+            return "La búsqueda tardó demasiado."
+        except Exception as e:  # noqa: BLE001
+            logger.error("Error buscando con Everything: %s", e)
+            return "No pude ejecutar la búsqueda con Everything."
+
+        lineas = [l.strip() for l in (resp.stdout or "").splitlines() if l.strip()]
+        if not lineas:
+            return f"No encontré resultados para '{nombre}'."
+        return "Resultados:\n- " + "\n- ".join(lineas[:max_resultados])
+
+    def _ruta_es_ejecutable(self) -> Optional[str]:
+        """Devuelve la ruta al es.exe si existe (bin/ o la de config)."""
+        import config as config_mod  # ruta segura, sin deps pesadas
+        base = config_mod.BASE_DIR
+
+        try:
+            ruta_conf = str(config_mod.config.get("ruta_everything_es", "") or "").strip()
+        except Exception:  # noqa: BLE001
+            ruta_conf = ""
+
+        candidatos: List[str] = []
+        if ruta_conf:
+            candidatos.append(ruta_conf)
+        # Fallback por convención: <raíz>/bin/es.exe
+        candidatos.append(str(base / "bin" / "es.exe"))
+
+        from pathlib import Path
+        for c in candidatos:
+            p = Path(c)
+            if not p.is_absolute():
+                p = base / p
+            if p.exists():
+                return str(p)
+        return None
 
     # ---------------- Brillo ---------------- #
     def controlar_brillo(self, accion: str, valor: Optional[int] = None) -> str:

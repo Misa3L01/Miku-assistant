@@ -152,13 +152,18 @@ class Asistente:
 # ===================================================================== #
 #                          MODO VOZ (wake word)                         #
 # ===================================================================== #
-def _preparar_voz(asistente: Asistente) -> Any:
-    """Crea (lazy) el motor de voz VOICEVOX con subtítulos activos."""
+def _preparar_voz(asistente: Asistente, subtitulos: bool = True) -> Any:
+    """Crea (lazy) el motor de voz VOICEVOX.
+
+    Args:
+        asistente: La instancia del asistente.
+        subtitulos: True para mostrar el overlay de subtítulos en pantalla.
+    """
     if asistente.voice is None:
         from core.text_to_speech import TextoAVoz  # import tardío
-        voz = TextoAVoz(asistente.cfg, subtitulos_activos=True)
+        voz = TextoAVoz(asistente.cfg, subtitulos_activos=subtitulos)
         asistente.voice = voz
-        logger.info("Voz (VOICEVOX) preparada con subtítulos.")
+        logger.info("Voz (VOICEVOX) preparada. Subtítulos: %s", subtitulos)
     return asistente.voice
 
 
@@ -300,9 +305,20 @@ def run_modo_push(asistente: Asistente) -> None:
 #                    MODO TEXTO (consola estándar)                      #
 # ===================================================================== #
 def run_modo_texto(asistente: Asistente) -> None:
-    """Bucle de texto. NO toca audio/subtítulos: sólo imprime respuesta."""
-    print("\n=== Miku lista (modo texto — sin sonido) ===")
-    print("Escribí tu mensaje y Enter. Escribí 'salir' para cerrar.\n")
+    """Bucle de texto con salida de VOZ (para probar el TTS sin micrófono).
+
+    - Carga el TTS de forma lazy pero FORZADA (opción 3), para poder
+      verificar el pipeline de voz (VOICEVOX + traducción ES->JA + pygame,
+      con fallback a pyttsx3) escribiendo comandos por consola.
+    - Además del texto, cada respuesta se habla (y, si está el overlay,
+      se muestran los subtítulos en español).
+    """
+    # Forzamos el motor de voz (lazy loading) con subtítulos activados.
+    _preparar_voz(asistente, subtitulos=True)
+
+    print("\n=== Miku lista (modo texto CON VOZ — probá el TTS) ===")
+    print("Escribí tu mensaje y Enter. Escribí 'salir' para cerrar.")
+    print("(Si no se oye, revisá que VOICEVOX esté en extern/ o mirá los logs.)\n")
 
     while True:
         try:
@@ -312,7 +328,7 @@ def run_modo_texto(asistente: Asistente) -> None:
             if comando.lower() in ("salir", "exit", "quit"):
                 print("Chau!")
                 break
-            # En modo texto self.voice es None -> responder imprime.
+            # responder() ahora habla porque self.voice ya no es None.
             asistente.responder(comando)
         except KeyboardInterrupt:
             print("\nChau!")
