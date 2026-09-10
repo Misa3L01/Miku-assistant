@@ -164,7 +164,23 @@ class Config:
 
     @property
     def ruta_everything_es(self) -> str:
-        return str(self.valores.get("ruta_everything_es", ""))
+        """Ruta ABSOLUTA al es.exe de Everything.
+
+        Se resuelve siempre contra ``BASE_DIR`` (la raíz real del proyecto),
+        sin importar desde qué directorio de trabajo se ejecute ``main.py``.
+        Admite override por config_local (p. ej. una ruta absoluta) o una
+        ruta relativa como ``bin/es.exe`` → se convierte en absoluta.
+        """
+        crudo = str(self.valores.get("ruta_everything_es", "")).strip()
+        if not crudo:
+            return ""
+        # Expandimos variables de entorno (~, %VAR% del estilo de config).
+        crudo = os.path.expandvars(os.path.expanduser(crudo))
+        p = Path(crudo)
+        if not p.is_absolute():
+            # Relativa => la asumimos desde la raíz del proyecto.
+            p = Path(BASE_DIR) / p
+        return str(p.resolve())
 
     @property
     def discos_buscar(self) -> List[str]:

@@ -42,6 +42,10 @@ pywin32>=306
 screen-brightness-control>=0.21.0
 # Teclado global (push-to-talk F22 en main).
 keyboard>=0.13.5
+# Control de volumen y MUTE real (no toggle) en el Sistema: lo usa
+# plugins/system_control.py vía IAudioEndpointVolume de pycaw.
+pycaw>=20181223
+comtypes>=1.1.12
 
 # ---------- Opcionales (comentados) ----------
 # TTS online alternativo (si preferís edge-tts a VOICEVOX):

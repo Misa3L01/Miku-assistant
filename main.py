@@ -19,6 +19,7 @@ Particularidades de esta refactorización:
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import threading
 from typing import Any, Dict, Optional
@@ -134,12 +135,20 @@ class Asistente:
 
     # ---------------- Cierre ----------------
     def cerrar(self) -> None:
-        """Limpia recursos (subtítulos y callbacks de teclado)."""
+        """Limpia recursos (subtítulos, voz lanzada por Miku y callbacks)."""
         if self.voice is not None:
             try:
                 self.voice._ocultar_subtitulos()  # noqa: evita ventana abierta
             except Exception:  # noqa: BLE001
                 pass
+            # Solo cerramos VOICEVOX si lo arrancó ESTA instancia del launcher.
+            try:
+                detener = getattr(self.voice,
+                                  "detener_voicevox_si_lo_arrancamos", None)
+                if callable(detener):
+                    detener()
+            except Exception:  # noqa: BLE001
+                logger.debug("No se pudo detener VOICEVOX lanzado por Miku.")
         try:
             import keyboard  # type: ignore
             keyboard.unhook_all()
@@ -304,21 +313,28 @@ def run_modo_push(asistente: Asistente) -> None:
 # ===================================================================== #
 #                    MODO TEXTO (consola estándar)                      #
 # ===================================================================== #
-def run_modo_texto(asistente: Asistente) -> None:
-    """Bucle de texto con salida de VOZ (para probar el TTS sin micrófono).
+def run_modo_texto(asistente: Asistente, con_voz: bool = False) -> None:
+    """Bucle de texto (consola).
 
-    - Carga el TTS de forma lazy pero FORZADA (opción 3), para poder
-      verificar el pipeline de voz (VOICEVOX + traducción ES->JA + pygame,
-      con fallback a pyttsx3) escribiendo comandos por consola.
-    - Además del texto, cada respuesta se habla (y, si está el overlay,
-      se muestran los subtítulos en español).
+    Args:
+        asistente: La instancia del asistente.
+        con_voz: Si True, se fuerza el TTS (idea para probar la voz sin
+            micrófono). Si False (default), es un modo texto 100% silencioso
+            que no carga librerías de audio ni subtítulos.
     """
-    # Forzamos el motor de voz (lazy loading) con subtítulos activados.
-    _preparar_voz(asistente, subtitulos=True)
+    if con_voz:
+        # Carga el motor de voz de forma lazy pero FORZADA (el usuario lo pidió).
+        _preparar_voz(asistente, subtitulos=True)
+        cabecera = "=== Miku lista (modo texto CON VOZ — probá el TTS) ==="
+        ayuda = ("(Si no oís nada, revisá que VOICEVOX esté en extern/ o mirá "
+                 "los logs; puede caer a pyttsx3.)")
+    else:
+        cabecera = "=== Miku lista (modo texto silencioso) ==="
+        ayuda = "(No se carga audio ni subtítulos en este modo.)"
 
-    print("\n=== Miku lista (modo texto CON VOZ — probá el TTS) ===")
+    print(f"\n{cabecera}")
     print("Escribí tu mensaje y Enter. Escribí 'salir' para cerrar.")
-    print("(Si no se oye, revisá que VOICEVOX esté en extern/ o mirá los logs.)\n")
+    print(ayuda + "\n")
 
     while True:
         try:
@@ -328,7 +344,8 @@ def run_modo_texto(asistente: Asistente) -> None:
             if comando.lower() in ("salir", "exit", "quit"):
                 print("Chau!")
                 break
-            # responder() ahora habla porque self.voice ya no es None.
+            # responder() habla si self.voice no es None (solo cuando con_voz)
+            # y en caso contrario imprime el texto por consola.
             asistente.responder(comando)
         except KeyboardInterrupt:
             print("\nChau!")
@@ -338,13 +355,39 @@ def run_modo_texto(asistente: Asistente) -> None:
         except Exception:  # noqa: BLE001
             logger.exception("Error en el bucle de texto.")
         finally:
-            # Aseguramos limpieza de teclado por si entró alguna vez con push.
             pass
 
 
 # ===================================================================== #
 #                    Selección de modo (al arrancar)                    #
 # ===================================================================== #
+def preguntar_submodo_texto() -> bool:
+    """Pregunta si en modo texto Miku debe hablar o quedarse silenciosa.
+
+    Returns:
+        True = con voz (forzar TTS, para probar sin micrófono).
+        False = solo texto (silencioso, sin audio ni subtítulos).
+    """
+    # Permite automatización: MIKU_TEXTO_SIN_VOZ=1 fuerza silencio.
+    env = os.getenv("MIKU_TEXTO_SIN_VOZ", "").strip().lower()
+    if env in ("1", "true", "sí", "si", "sin"):
+        return False
+    if env in ("0", "false", "con", "convoz"):
+        return True
+
+    print("\nModo texto: ¿querés que Miku hable?")
+    print("  [V] Con voz      (probar el TTS sin micrófono)")
+    print("  [T] Solo texto   (silencioso, sin audio ni subtítulos)")
+    opcion = input("Elegí V o T (Enter = V): ").strip().lower()
+    if opcion in ("t", "txt", "sil", "silencio", "no"):
+        return False
+    if opcion in ("texto", "te"):
+        # "te..." aclarativo -> tratamos como T solo si empieza con 't'
+        return False
+    # Default y cualquier valor "voz" -> con voz.
+    return True
+
+
 def seleccionar_modo(cfg: "config_mod.Config") -> str:
     """Pregunta cómo operar hoy. Usa config como default con Enter."""
     default = cfg.modo_entrada
@@ -394,7 +437,9 @@ def main() -> None:
         elif modo == "push":
             run_modo_push(asistente)
         else:
-            run_modo_texto(asistente)
+            # Modo texto: el usuario elige si con o sin voz.
+            con_voz = preguntar_submodo_texto()
+            run_modo_texto(asistente, con_voz=con_voz)
     except KeyboardInterrupt:
         print("\nChau!")
     finally:

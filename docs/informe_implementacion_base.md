@@ -19,12 +19,22 @@
 
 **Modificado:**
 - `_sintetizar_y_reproducir()` ahora llama a `_asegurar_voicevox()` en vez de solo `_verificar_voicevox()`. Es decir, intenta iniciar VOICEVOX automáticamente antes de rendirse al fallback.
+- **Fix de proceso huérfano:** `_asegurar_voicevox()` guarda el `Popen` lanzado en `self._proceso_voicevox` y marca `_voicevox_lo_lanzamos=True` **solo si fue esta instancia quien lo arrancó**. Se añadió `detener_voicevox_si_lo_arrancamos()`, que `Asistente.cerrar()` invoca: si VOICEVOX ya corriera porque lo abrió el usuario manualmente, NO se mata; solo se termina el proceso que lanzó el propio launcher.
 
 ### `main.py` *(orquestación)*
 **Modificado:**
-- `_preparar_voz()` ahora recibe `subtitulos: bool = True` (antes fijo).
-- `run_modo_texto()` (opción 3): ahora **fuerza el uso del motor de voz** llamando `_preparar_voz(asistente, subtitulos=True)`. De esta forma, cada respuesta procesada por `Asistente.responder()` se **habla** (TTS) y opcionalmente muestra subtítulos, permitiendo probar el pipeline de voz sin micrófono. Se actualizó la cabecera impresa para reflejarlo.
-- `responder()` no cambió de lógica: ya habla si `self.voice is not None`, lo cual ahora ocurre en modo texto.
+- `_preparar_voz()` recibe `subtitulos: bool` (por defecto True).
+- `run_modo_texto()` (opción 3) recibe `con_voz: bool` y **ya no fuerza la voz:
+  devolvió a ser opcional**. Al elegir el modo texto se pregunta si Miku debe
+  hablar ("[V] con voz / [T] solo texto"); si elige voz se llama
+  `_preparar_voz(asistente, subtitulos=True)` y cada respuesta se habla
+  (TTS) con subtítulos opcionales; sino corre 100% en silencio (sin audio ni
+  subtítulos), útil cuando no hay VOICEVOX/PyQt5/parlantes o no querés que hable.
+- Nueva función `preguntar_submodo_texto()` (respeta la env `MIKU_TEXTO_SIN_VOZ`
+  para automatizar).
+- `Asistente.cerrar()` ahora llama a `voice.detener_voicevox_si_lo_arrancamos()`
+  para no dejar procesos `run.exe` huérfanos (ver más abajo).
+- `responder()` no cambió de lógica: habla si `self.voice` no es None.
 
 ### `plugins/system_control.py` *(control de sistema)*
 **Añadido:**
@@ -36,9 +46,9 @@
 - Métodos:
   - `_enviar_tecla_virtual(clave)`: emula tecla multimedia/volumen. Intenta primero con la librería `keyboard` (ya en requirements) y, si falla, con `ctypes.user32.keybd_event` (VK). → evita dependencias nuevas y reduce flakiness.
   - `control_multimedia(accion)`.
-  - `ajustar_volumen(accion, paso)`.
+  - `ajustar_volumen(accion, paso)`: ahora usa **mute real (determinístico)** con `pycaw/SetMute` (silenciar siempre silencia; desmutear/reactivar devuelve el sonido) en lugar de la tecla "toggle" de mute, evitando desmutar por accidente. Para subir/bajar lee el nivel real por pycaw y, si estaba silenciado, reactiva el audio.
   - `buscar_archivo(nombre)`.
-  - `_ruta_es_ejecutable()`: busca `es.exe` (en `bin/` o en la ruta `ruta_everything_es` de config); si no existe devuelve un mensaje claro.
+  - `_ruta_es_ejecutable()`: usa `config.ruta_everything_es` (ya resuelta como ABSOLUTA contra `BASE_DIR`, sin depender del CWD).
 - Despachos en `manejar_tool()` para las 3 tools.
 
 ### `requirements.txt`
@@ -101,7 +111,7 @@ Lazy dentro de métodos (por lo tanto no generan rojo en import de módulo, sino
 | Control multimedia (play/pausa/siguiente/anterior) | ✅ **Añadido** en esta sesión (teclas VK) | Reproducir una canción y “siguiente” / “pausá” |
 | Volumen (subir/bajar/silenciar) | ✅ **Añadido** en esta sesión | “subí el volumen”, “silenciá” |
 | Control energía (apagar/reiniciar/suspender) | ✅ Implementado + confirmación obligatoria | “apagá la pc” → pedirá “sí/no” |
-| Búsqueda de archivos (Everything) | 🟡 **Preparado** (requiere `bin/es.exe`) | Copiar `es.exe` y “buscá <archivo>” |
+| Búsqueda de archivos (Everything) | ✅ Implementado (`es.exe`) | `buscá <algo>` |
 | Respuestas cotidianas vía Groq (tools) | ✅ Implementado en parser + tools de plugins | Requiere `GROQ_API_KEY` configurada |
 | Voz VOICEVOX | ✅ Implementado + auto-arranque (esta sesión) | Opción 3 (modo texto con voz) |
 | Subtítulos overlay | ✅ Implementado (requiere PyQt5) | Modo voz/push o texto si PyQt present | 
@@ -136,8 +146,9 @@ pip install -r requirements.txt
 - `apagá la pc` → Miku debe responder pidiendo confirmación. Respondé `sí`/`no`. *(En un equipo de pruebas, evitar confirmar para no apagar.)*
 
 ### D) Probar búsqueda con Everything
-- Copiá `es.exe` a la carpeta `bin/` (junto al proyecto) o setea `ruta_everything_es` en `config_local.py`.
-- `buscá informe` → devolverá los primeros resultados.
+- `bin/es.exe` ya viene incluido en el proyecto (y `ruta_everything_es` se resuelve
+  siempre contra `BASE_DIR`, no contra el CWD).
+- Escribí `buscá informe` → devolverá los primeros resultados.
 
 ### E) Probar respuesta cotidiana (LLM con tools)
 - Teniendo `GROQ_API_KEY` en `config_local.py`, preguntá algo cotidiano: “¿qué es un agujero negro?”, y después una acción: “abrímelo tal programa”. El parser usará function-calling para invocar la tool.
@@ -147,17 +158,21 @@ pip install -r requirements.txt
 ## 6. Tareas completadas y pendientes
 
 ### Completadas
-- Modo texto (opción 3) ahora reproduce voz (TTS), cargándolo lazy pero forzado.
-- Auto-arranque de VOICEVOX cuando el servidor no está (con cierre y fallback a pyttsx3).
+- Modo texto (opción 3): pregunta si con voz (forzar TTS, para probar) o solo
+  texto silencioso.
+- Auto-arranque de VOICEVOX cuando el servidor no está (con guardado del proceso y
+  cierre limpio en `Asistente.cerrar()` si lo lanzó Miku; no mata el VOICEVOX manual).
 - Control multimedia (play/pausa/siguiente/anterior) mediante teclas virtuales.
-- Ajuste de volumen (subir/bajar/silenciar).
-- Búsqueda preparada con Everything (`es.exe`), con manejo claro si no está.
+- Volumen determinístico (subir/bajar) y **mute real** (no toggle) vía `pycaw`.
+- Búsqueda de archivos con Everything (`es.exe`, incluido en `bin/`), con ruta
+  siempre resuelta contra `BASE_DIR`.
+- Lanzador `run.ps1` / `run.bat` (activa venv, arranca VOICEVOX si hace falta y corre main.py).
 - Verificación de imports/dependencias y de que `requirements.txt` cubre lo usado.
-- Compilación y smoke tests (10 tools registradas, voz instanciada).
+- Compilación y smoke tests.
 
 ### Pendientes / no realizado
-- **Verificación auditiva y de hardware** (volumen/multimedia/búsqueda) requiere correr en la máquina real; no pude validar salida de audio/allí.
-- **Disponibilidad de `es.exe`**: no viene incluido; hay que copiar el binario de Everything.
+- **Verificación auditiva y de hardware** (volumen/multimedia) requiere correr en la
+  máquina real; no pude validar salida de audio.
 - **Respuestas del LLM** sin clave de Groq no se prueban (solo fast-path locales). Se necesita `GROQ_API_KEY`.
 - **Calidad del español**: VOICEVOX está pensado para japonés → el texto se traduce ES→JA vía `deep-translator`; si la red/Google falla, se usa `pyttsx3`. La aceptación depende de la configuración del hablante (`voicevox_speaker_id`).
 
@@ -175,4 +190,4 @@ pip install -r requirements.txt
 4. **Interpolador de video y búsqueda Everything robusta** (enlazar rutas privadas a `config_local.py` y añadir el binario).
 5. **Calidad de voz**: testear distintos `speaker_id` de VOICEVOX y decidir persistencia.
 6. **Tests automatizados** para el flujo `procesar()` (fast-path, confirmación, tools) con un cerebro simulado, para blindar el refactor.
-7. **Empaquetado/instalación**: crear `run.ps1`/`.bat` que active el venv, arranque VOICEVOX si hace falta y lance `python main.py`.
+7. ~~Crear `run.ps1`/`.bat`~~ → **Hecho**: ya están en la raíz (`run.ps1` y `run.bat`) para activar el venv, arrancar VOICEVOX si hace falta y lanzar `python main.py`.

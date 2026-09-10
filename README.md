@@ -46,8 +46,9 @@ miku-assistant/
 │   └── VOICEVOX/vv-engine/       # Motor local de síntesis de voz (run.exe)
 │
 ├── docs/
-│   ├── CONTEXTO.md               # Bitácora de decisiones y sesiones de trabajo
-│   └── informe_implementacion_base.md
+│   └── informe_implementacion_base.md   # Bitácora técnica de la implementación
+│
+├── CONTEXTO.md                  # (raíz) Bitácora de decisiones / sesiones de trabajo
 │
 ├── .gitignore                    # Ignora config_local.py, data/, __pycache__, etc.
 └── README.md

@@ -81,6 +81,13 @@ class TextoAVoz:
         self._hilo_reproductor: Optional[threading.Thread] = None
         self._hablando = threading.Event()
 
+        # Control del proceso VOICEVOX que hubiéramos lanzado nosotros.
+        # Si VOICEVOX ya estaba corriendo NO lo tocamos (no lo matamos al
+        # cerrar); solo manejamos el Popen si fue esta instancia la que lo
+        # arrancó.
+        self._proceso_voicevox: Optional[subprocess.Popen] = None
+        self._voicevox_lo_lanzamos = False
+
     # ---------------- Subtítulos (lazy) ----------------
     def _obtener_subtitulos(self):
         """Crea el overlay de subtítulos la primera vez que se usa."""
@@ -112,9 +119,14 @@ class TextoAVoz:
         mejor, la ruta definida en config_local VOICEVOX_RUN_EXE), lo lanza
         en segundo plano y espera unos segundos a que quede operativo.
 
+        Si el servidor ya estaba activo al llegar aquí, NO guardamos ningún
+        Popen y NO marcamos ``_voicevox_lo_lanzamos``: significa que lo abrió
+        el usuario manualmente y por lo tanto no lo mataremos al cerrar.
+
         Returns:
             True si el servidor quedó accesible (o ya lo estaba).
         """
+        # Si ya está corriendo, respetamos el proceso externo del usuario.
         if self._verificar_voicevox():
             return True
 
@@ -132,14 +144,19 @@ class TextoAVoz:
 
         logger.info("Intentando arrancar VOICEVOX desde: %s", ruta_run)
         try:
-            subprocess.Popen([str(ruta_run)], cwd=str(ruta_run.parent),
-                             shell=False,  # sin shell por seguridad
-                             stdin=None, stdout=None, stderr=None,
-                             creationflags=subprocess.CREATE_NO_WINDOW
-                             if hasattr(subprocess, "CREATE_NO_WINDOW") else 0)
+            proc = subprocess.Popen(
+                [str(ruta_run)], cwd=str(ruta_run.parent),
+                shell=False,  # sin shell por seguridad
+                stdin=None, stdout=None, stderr=None,
+                creationflags=subprocess.CREATE_NO_WINDOW
+                if hasattr(subprocess, "CREATE_NO_WINDOW") else 0)
         except Exception as e:  # noqa: BLE001
             logger.error("No pude lanzar VOICEVOX: %s. Uso pyttsx3.", e)
             return False
+
+        # Guardamos el proceso: fue esta instancia quien lo arrancó.
+        self._proceso_voicevox = proc
+        self._voicevox_lo_lanzamos = True
 
         # Esperamos (con cortes) a que levante el puerto.
         for _ in range(6):  # hasta ~12 s
@@ -149,6 +166,28 @@ class TextoAVoz:
                 return True
         logger.warning("VOICEVOX tardó en responder; uso pyttsx3 por ahora.")
         return False
+
+    def detener_voicevox_si_lo_arrancamos(self) -> None:
+        """Cierra el run.exe de VOICEVOX SOLO si fue esta instancia quien lo lanzó.
+
+        Si VOICEVOX ya estaba corriendo (lo abriste vos manualmente), este
+        método no hace nada y no te mata el proceso.
+        """
+        if not self._voicevox_lo_lanzamos or self._proceso_voicevox is None:
+            return
+        proc = self._proceso_voicevox
+        if proc.poll() is None:  # aún en ejecución
+            try:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=3)
+                except Exception:  # noqa: BLE001
+                    proc.kill()
+                logger.info("VOICEVOX (lanzado por Miku) terminado al cerrar.")
+            except Exception as e:  # noqa: BLE001
+                logger.warning("No pude terminar VOICEVOX: %s", e)
+        self._proceso_voicevox = None
+        self._voicevox_lo_lanzamos = False
 
     def _buscar_run_voicevox(self):
         """Devuelve la ruta al run.exe de VOICEVOX (o None si no se halla).

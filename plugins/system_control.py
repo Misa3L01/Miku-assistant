@@ -200,20 +200,23 @@ class SystemControl(Plugin):
             "type": "function",
             "function": {
                 "name": "ajustar_volumen",
-                "description": "Sube o baja el volumen del sistema, o lo "
-                               "silencia. Ej: 'subí el volumen', 'mutear'.",
+                "description": "Sube o baja el volumen del sistema, silencia "
+                               "(mute real) o reactiva el sonido. "
+                               "Ej: 'subí el volumen', 'silenciá', 'reactivá "
+                               "el sonido'.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "accion": {
                             "type": "string",
-                            "enum": ["subir", "bajar", "silenciar"],
-                            "description": "Qué hacer con el volumen.",
+                            "enum": ["subir", "bajar",
+                                     "silenciar", "desmutear"],
+                            "description": "Qué hacer con el audio.",
                         },
                         "paso": {
                             "type": "integer",
-                            "description": "Opcional: cantidad de pasos "
-                                           "para subir/bajar (default 5).",
+                            "description": "Opcional: pasos/porcentaje para "
+                                           "subir o bajar (default 5).",
                         },
                     },
                     "required": ["accion"],
@@ -390,24 +393,25 @@ class SystemControl(Plugin):
             return "No pude ejecutar la acción de energía."
 
     # ---------------- Multimedia (teclas virtuales Windows) ---------------- #
-    # Códigos de VK (virtual key) para medios / volumen (Windows).
+    # Códigos de VK (virtual key) para reproducción multimedia.
+    # NOTA: el MUTE real NO se maneja por tecla "toggle" (0xAD): se hace con
+    # pycaw/SetMute en `ajustar_volumen()` para que sea una acción 100% predecible
+    # (silenciar SIEMPRE silencia, desmutear SIEMPRE devuelve el sonido).
     _VK = {
         "play_pausa": 0xB3, "siguiente": 0xB0, "anterior": 0xB1,
-        "subir_volumen": 0xAF, "bajar_volumen": 0xAE, "silenciar": 0xAD,
+        "subir_volumen": 0xAF, "bajar_volumen": 0xAE,
     }
-    # Nombres equivalentes que acepta el módulo `keyboard` (fallback).
     _NOMBRE_KEYBOARD = {
         "play_pausa": "play/pause media",
         "siguiente": "next track", "anterior": "previous track",
         "subir_volumen": "volume up", "bajar_volumen": "volume down",
-        "silenciar": "volume mute",
     }
 
     def _enviar_tecla_virtual(self, clave: str) -> bool:
-        """Envía una tecla multimedia/volumen por hardware.
+        """Envía una tecla multimedia/volumen por hardware (VK).
 
-        Intenta primero con `keyboard` (si está instalado) y, si no, con
-        ctypes ``keybd_event``. Devuelve True si pudo enviarse.
+        No se usa para silenciar (eso se resuelve con pycaw). Intenta
+        primero con `keyboard` y, si no, con ctypes ``keybd_event``.
         """
         try:
             import keyboard  # import tardío
@@ -418,20 +422,50 @@ class SystemControl(Plugin):
         except Exception:  # noqa: BLE001
             pass  # seguimos con el fallback por ctypes
 
-        # Fallback: keybd_event de user32.
         vk = self._VK.get(clave)
         if vk is None:
             return False
         try:
             user32 = ctypes.windll.user32
-            # Down + up para simular la pulsación.
-            user32.keybd_event(vk, 0, 0, 0)
+            user32.keybd_event(vk, 0, 0, 0)   # KEY down
             time.sleep(0.02)
-            user32.keybd_event(vk, 0, 2, 0)  # KEYEVENTF_KEYUP = 2
+            user32.keybd_event(vk, 0, 2, 0)   # KEYEVENTF_KEYUP = 2
             return True
         except Exception as e:  # noqa: BLE001
             logger.error("No se pudo enviar la tecla virtual %s: %s", clave, e)
             return False
+
+    # ---------------- Volumen con pycaw (determinístico) ---------------- #
+    def _volumen_pycaw(self):
+        """Devuelve el objeto de volumen del endpoint (IAudioEndpointVolume)
+        o None si pycaw no está disponible."""
+        try:
+            from pycaw.pycaw import AudioUtilities
+            dev = AudioUtilities.GetSpeakers()
+            return getattr(dev, "EndpointVolume", None)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("pycaw no disponible (%s).", e)
+            return None
+
+    def _aplicar_mute_real(self, silenciar: bool) -> str:
+        """Silencia (True) o reactiva el audio (False) de forma determinística.
+
+        No depende de una tecla toggle: usa la API de Windows vía pycaw
+        (`SetMute`), por lo que llamarlo dos veces no invierte el estado por
+        accidente.
+        """
+        vol = self._volumen_pycaw()
+        if vol is None:
+            return ("No pude silenciar de forma segura (falta pycaw). "
+                    "No uso la tecla de mute para evitar toggles ambiguos.")
+        try:
+            vol.SetMute(1 if silenciar else 0, None)
+            if silenciar:
+                return "Silencié la salida de audio."
+            return "Reactivé el sonido."
+        except Exception as e:  # noqa: BLE001
+            logger.error("Error aplicando mute real: %s", e)
+            return "No pude cambiar el estado de silencio."
 
     def control_multimedia(self, accion: str) -> str:
         """Pausa/reproduce, avanza o retrocede el audio/video global."""
@@ -459,25 +493,62 @@ class SystemControl(Plugin):
         return "No pude enviar el comando multimedia."
 
     def ajustar_volumen(self, accion: str, paso: Optional[int] = None) -> str:
-        """Sube/baja o silencia el volumen del sistema (teclas multimedia)."""
-        accion = (accion or "").lower().strip()
-        if accion == "silenciar":
-            clave = "silenciar"
-        elif accion in ("subir", "mas", "arriba"):
-            clave = "subir_volumen"
-        elif accion in ("bajar", "menos", "abajo"):
-            clave = "bajar_volumen"
-        else:
-            return "No entendí. Usá subir, bajar o silenciar."
+        """Sube/baja el volumen, silencia (mute real) o reactiva el audio.
 
-        veces = max(1, int(paso or 5)) if clave != "silenciar" else 1
-        for _ in range(min(veces, 50)):
+        - ``silenciar`` / ``desmutear``: mute determinístico vía pycaw
+          (no es un toggle; no puede invertirse por llamada accidental).
+        - ``subir``/``bajar``: ajusta el nivel y, si estaba silenciado,
+          lo reactiva (para poder oír el cambio).
+        """
+        accion = (accion or "").lower().strip()
+
+        # Mute real (no toggle): sin ambigüedad.
+        if accion in ("silenciar", "mutear", "mute", "sin sonido"):
+            return self._aplicar_mute_real(True)
+        if accion in ("desmutear", "sonido", "reactivar",
+                      "activar sonido", "activar_sonido"):
+            return self._aplicar_mute_real(False)
+
+        # Determinar subir/bajar.
+        if accion in ("subir", "mas", "arriba"):
+            direccion = 1
+        elif accion in ("bajar", "menos", "abajo"):
+            direccion = -1
+        else:
+            return "No entendí. Usá subir, bajar, silenciar o desmutear."
+
+        paso = max(1, min(100, int(paso or 5)))
+
+        # Preferimos pycaw: leemos nivel real, ajustamos y reactivamos si estaba mute.
+        vol = self._volumen_pycaw()
+        if vol is not None:
+            try:
+                actual = max(0.0, min(1.0, float(vol.GetMasterVolumeLevelScalar())))
+                if actual == 0.0 and direccion > 0:
+                    actual = 5.0 / 100.0  # punto de partida para "subir"
+                nuevo = max(0.0, min(1.0, actual + direccion * (paso / 100.0)))
+                vol.SetMasterVolumeLevelScalar(nuevo, None)
+                # Si estaba silenciado y el usuario pide subir/bajar, reactivamos.
+                try:
+                    if vol.GetMute() and direccion > 0:
+                        vol.SetMute(0, None)
+                except Exception:  # noqa: BLE001
+                    pass
+                pct = int(round(nuevo * 100))
+                return f"Volumen en {pct}%."
+            except Exception as e:  # noqa: BLE001
+                logger.error("Error ajustando volumen con pycaw. Usando VK: %s", e)
+                # caemos al fallback por teclas
+                vol = None
+
+        # Fallback por teclas multimedia (sin poder leer el nivel).
+        clave = "subir_volumen" if direccion > 0 else "bajar_volumen"
+        pasos = max(1, paso // 2)
+        for _ in range(min(pasos, 25)):
             if not self._enviar_tecla_virtual(clave):
                 return "No pude ajustar el volumen."
             time.sleep(0.02)
-        msj = {"subir_volumen": "Subí el volumen.", "bajar_volumen": "Bajé el volumen.",
-               "silenciar": "Silencié el audio."}.get(clave, "Listo.")
-        return msj
+        return ("Subí el volumen." if direccion > 0 else "Bajé el volumen.")
 
     # ---------------- Búsqueda con Everything (es.exe) ---------------- #
     def buscar_archivo(self, nombre: str, max_resultados: int = 8) -> str:
