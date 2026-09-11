@@ -38,8 +38,16 @@ except Exception as e:  # noqa: BLE001
 
 # Comandos aceptados por la cola.
 _VER = "ver"
+_ACTUALIZAR = "actualizar"
 _OCULTAR = "ocultar"
 _CERRAR = "cerrar"
+
+
+# Ancho MÁXIMO (px) del overlay de subtítulos. Se usa como ancho FIJO del
+# widget para evitar el resize horizontal dinámico (causa conocida de glitches
+# de repintado con WA_TranslucentBackground en Windows) y para que el texto
+# haga word-wrap en varias líneas en vez de recortarse.
+_ANCHO_MAX = 1100
 
 
 class _WorkerQt(threading.Thread):
@@ -83,6 +91,8 @@ class _WorkerQt(threading.Thread):
     def _ejecutar(self, comando: str, args: tuple) -> None:
         if comando == _VER:
             self._mostrar_sync(args[0] if args else "")
+        elif comando == _ACTUALIZAR:
+            self._actualizar_sync(args[0] if args else "")
         elif comando == _OCULTAR:
             self._ocultar_sync()
         elif comando == _CERRAR:
@@ -103,6 +113,9 @@ class _WorkerQt(threading.Thread):
 
         label = QtWidgets.QLabel(widget)
         label.setAlignment(Qt.AlignCenter)
+        # Word-wrap: frases largas se envuelven en varias líneas en lugar de
+        # recortarse (era la causa del efecto "rendija"/clipping).
+        label.setWordWrap(True)
 
         from PyQt5.QtGui import QColor, QFont
         from PyQt5.QtWidgets import QGraphicsDropShadowEffect
@@ -133,31 +146,96 @@ class _WorkerQt(threading.Thread):
             painter = QPainter(label)
             painter.setRenderHint(QPainter.Antialiasing)
             color_borde = QColor(0, 0, 0, 255)
+            # Flags con word-wrap + centrado: el contorno debe envolver igual
+            # que el label para no dibujar el borde recortado.
+            flags = int(Qt.AlignCenter) | int(Qt.TextWordWrap)
             for dx, dy in direcciones:
                 painter.save()
                 painter.translate(dx, dy)
                 painter.setPen(color_borde)
-                painter.drawText(label.rect(), Qt.AlignCenter, label.text())
+                painter.drawText(label.rect(), flags, label.text())
                 painter.restore()
             painter.setPen(QColor(255, 255, 255, 255))
-            painter.drawText(label.rect(), Qt.AlignCenter, label.text())
+            painter.drawText(label.rect(), flags, label.text())
             painter.end()
 
         label.paintEvent = nuevo_paint
 
+    def _ajustar_tamano(self, texto: str) -> None:
+        """Ajusta el texto y la ALTURA del widget con word-wrap.
+
+        Estrategia anti-"rendija" (clipping):
+          - El ANCHO es FIJO (_ANCHO_MAX): NO se redimensiona horizontalmente en
+            cada frase. Esto evita el glitch de repintado de Qt con
+            WA_TranslucentBackground + resize dinámico en Windows.
+          - El TEXTO se envuelve en varias líneas (setWordWrap).
+          - La ALTURA se recalcula según las líneas reales que ocupa.
+
+        Tras el resize se fuerza update()/repaint() para asegurar el redibujado
+        (opción (a) del diagnóstico).
+        """
+        from PyQt5.QtCore import QRect, Qt as _Qt
+        from PyQt5.QtGui import QFontMetrics
+
+        texto_n = (texto or "").replace("\n", " ").strip()
+        self._label.setText(texto_n)
+
+        fm = QFontMetrics(self._label.font())
+        # Ancho fijo (menos un pequeño padding interno).
+        ancho = _ANCHO_MAX
+        ancho_texto = max(1, ancho - 40)
+
+        # Altura necesaria para el texto envuelto a ese ancho.
+        rect = fm.boundingRect(
+            QRect(0, 0, ancho_texto, 0),
+            int(_Qt.AlignCenter) | int(_Qt.TextWordWrap), texto_n)
+        alto = max(fm.lineSpacing() + 24, rect.height() + 24)
+
+        self._label.resize(ancho, alto)
+        self._widget.resize(ancho, alto)
+
+        # Forzar el repintado explícito (evita superficies compuestas viejas).
+        try:
+            self._label.update()
+            self._widget.update()
+            self._widget.repaint()
+            # Refuerzo (opción 2 del diagnóstico): bombear los eventos de Qt YA
+            # para que el repintado se entregue aunque el compositor (DWM) haya
+            # perdido el evento tras mostrar la ventana translúcida.
+            if self._app is not None:
+                self._app.processEvents()
+        except Exception:  # noqa: BLE001
+            pass
+
     def _mostrar_sync(self, texto: str) -> None:
         if self._widget is None:
             self._crear_widget()
-        from PyQt5.QtGui import QFontMetrics
-        texto_n = (texto or "").replace("\n", " ").strip()
-        self._label.setText(texto_n)
-        fm = QFontMetrics(self._label.font())
-        ancho = min(1100, fm.boundingRect(texto_n).width() + 60)
-        alto = fm.lineSpacing() + 24
-        self._label.resize(ancho, alto)
-        self._widget.resize(ancho, alto)
+        self._ajustar_tamano(texto)
         self._posicionar()
         self._widget.show()
+        self._widget.raise_()
+        # Bombear eventos para asegurar el primer repintado inmediato.
+        if self._app is not None:
+            self._app.processEvents()
+
+    def _actualizar_sync(self, texto: str) -> None:
+        """Cambia el texto/tamaño SIN parpadeos dentro de un mismo turno.
+
+        IMPORTANTE: si el widget existe pero está OCULTO (porque el turno
+        anterior terminó con _ocultar_subtitulos() -> hide()), hay que
+        volver a mostrarlo. Si no, el subtítulo aparece UNA vez y después
+        nunca más (bug real detectado en pruebas: cada turno terminaba en
+        hide() y el siguiente _actualizar_sync no re-mostraba la ventana).
+        """
+        if self._widget is None:
+            # Todavía no se mostró nunca: comportarse como mostrar().
+            self._mostrar_sync(texto)
+            return
+        self._ajustar_tamano(texto)
+        self._posicionar()  # re-centra (altura puede haber cambiado)
+        # Si quedó oculto (fin del turno anterior), lo mostramos de nuevo.
+        if not self._widget.isVisible():
+            self._widget.show()
         self._widget.raise_()
 
     def _ocultar_sync(self) -> None:
@@ -203,7 +281,16 @@ class SubtitulosOverlay:
         self._worker._listo.wait(timeout=5.0)  # espera a que Qt esté listo
 
     def mostrar(self, texto: str) -> None:
+        """Crea (si hace falta) y muestra el overlay con `texto`."""
         self._worker.emitir(_VER, texto)
+
+    def actualizar_texto(self, texto: str) -> None:
+        """Reemplaza SOLO el contenido del label, sin ocultar/mostrar la ventana.
+
+        Pensado para subtítulos progresivos (frase por frase): evita el
+        parpadeo de hide/show y ajusta el tamaño al nuevo texto.
+        """
+        self._worker.emitir(_ACTUALIZAR, texto)
 
     def ocultar(self) -> None:
         self._worker.emitir(_OCULTAR)

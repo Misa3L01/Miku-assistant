@@ -10,9 +10,11 @@ Punto de entrada de la app. Responsabilidades:
 Particularidades de esta refactorización:
     - **Lazy loading por modo**: el reconocimiento de voz (STT) y la voz de
       Miku (TTS / VOICEVOX) se importan/fabrican SOLO si se entra a modo
-      "voz" o "push". En modo "texto" no se toca nada de audio.
-    - **Modo texto 100% limpio**: sólo se lee por consola y se imprime la
-      respuesta (no subtítulos, no sonido).
+      "voz" o "push" (o si en modo texto se elige "con voz"). En modo texto
+      silencioso no se toca nada de audio.
+    - **Modo texto con o sin voz**: al elegir texto se pregunta si Miku debe
+      hablar; con voz se verifica/arranca VOICEVOX antes del primer decir() y
+      se informa por consola qué motor se usará; sin voz es 100% limpio.
     - Push-to-talk corregido: arranca con ``on_press_key`` y termina con
       ``on_release_key``, con flag anti-reentrada, y ``unhook_all()`` al salir.
 """
@@ -28,6 +30,7 @@ from typing import Any, Dict, Optional
 import config as config_mod
 from core.event_bus import EventBus
 from core.command_parser import BrainGroq, CommandParser
+from core import tono
 
 # El plugin de control de sistema es ligero (imports heavy son dentro de
 # métodos), así que puede importarse al inicio sin penalizar el modo texto.
@@ -113,6 +116,11 @@ class Asistente:
             logger.exception("Error procesando el comando.")
             respuesta = "Disculpá, tuve un problema interno."
 
+        # Variamos el tono de respuestas CORTAS conocidas ("Listo", "Ya está")
+        # para que Miku no suene repetitiva. Las respuestas largas del LLM
+        # pasan intactas (variar() solo toca frases del catálogo).
+        respuesta = tono.variar(respuesta)
+
         # Emisión.
         if self.voice is not None:
             try:
@@ -125,6 +133,7 @@ class Asistente:
 
     def decir(self, texto: str) -> None:
         """Habla (o imprime) un texto suelto, p. ej. el saludo de wake."""
+        texto = tono.variar(texto)
         if self.voice is not None:
             try:
                 self.voice.decir(texto)
@@ -324,10 +333,18 @@ def run_modo_texto(asistente: Asistente, con_voz: bool = False) -> None:
     """
     if con_voz:
         # Carga el motor de voz de forma lazy pero FORZADA (el usuario lo pidió).
-        _preparar_voz(asistente, subtitulos=True)
+        voz = _preparar_voz(asistente, subtitulos=True)
+        # Verificamos/arrancamos VOICEVOX ANTES del primer decir() y avisamos
+        # por consola qué motor se va a usar (VOICEVOX o pyttsx3).
+        try:
+            asegurar = getattr(voz, "asegurar_voicevox_inicial", None)
+            if callable(asegurar):
+                asegurar()
+        except Exception:  # noqa: BLE001
+            logger.exception("No pude verificar VOICEVOX al entrar al modo voz.")
         cabecera = "=== Miku lista (modo texto CON VOZ — probá el TTS) ==="
-        ayuda = ("(Si no oís nada, revisá que VOICEVOX esté en extern/ o mirá "
-                 "los logs; puede caer a pyttsx3.)")
+        ayuda = ("(Si no oís nada, mirá los mensajes [VOICEVOX]/[Voz] de arriba "
+                 "y los logs; si VOICEVOX no está, cae a pyttsx3.)")
     else:
         cabecera = "=== Miku lista (modo texto silencioso) ==="
         ayuda = "(No se carga audio ni subtítulos en este modo.)"

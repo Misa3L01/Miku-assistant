@@ -5,7 +5,7 @@
 # Solo figuran las librerías que se IMPORTAN/usarán en el código activo.
 # Se ELIMINARON deps pesadas no usadas (torch, rvc-python, kokoro,
 # chromadb, sentence-transformers, numpy, soundfile).
-# IMPORTANTE: PyQt5, pyttsx3, deep-translator, pygame, pywin32 y demás
+# IMPORTANTE: PyQt5, pyttsx3, pygame, pywin32 y demás
 # se importan de forma LAZY (dentro de funciones) para no romper el
 # arranque en modo texto.
 # ============================================================
@@ -25,9 +25,8 @@ pyaudio>=0.2.13
 pygame>=2.5.0
 # Fallback de voz del sistema cuando VOICEVOX no está corriendo.
 pyttsx3>=2.90
-# Traduce la respuesta (español -> japonés) para enviar a VOICEVOX.
-# Requiere conexión a Google Translate.
-deep-translator>=1.11.4
+# La traducción español -> japonés (para VOICEVOX) se hace con la API de Groq
+# (cuenta de STT), reutilizando `requests`. Ya NO se usa deep-translator.
 
 # ---------- Subtítulos en pantalla (overlay) ----------
 # Ventana transparente "siempre encima" (solo en modo voz-push).

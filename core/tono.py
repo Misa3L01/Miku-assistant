@@ -1,0 +1,153 @@
+"""
+tono.py - Variantes de tono para las respuestas CORTAS de Miku.
+
+Problema que resuelve:
+    Cuando Miku confirma algo rápido ("Listo", "Ya está", "Dale"), hoy siempre
+    dice EXACTAMENTE la misma frase. Al ser frases cortas y frecuentes suenan
+    robóticas y repetitivas.
+
+Solución:
+    Un catálogo de ``frase canónica -> lista de variantes equivalentes``.
+    ``variar(texto)`` busca el texto (normalizado) en el catálogo y devuelve
+    una variante AL AZAR, evitando repetir la última que se usó para esa clave
+    (así dos "Listo" seguidos no salen idénticos).
+
+Notas de diseño:
+    - Sólo afecta respuestas CORTAS que coincidan EXACTAMENTE con una clave
+      del catálogo. Las respuestas largas del LLM pasan intactas.
+    - Las variantes están elegidas para que el sentido y el tono (alegre,
+      juguetón de Miku) se mantengan y para que el subtítulo en español quede
+      natural.
+    - Es independiente del TTS: devuelve un string; quien lo use decide si lo
+      habla o lo imprime.
+"""
+from __future__ import annotations
+
+import logging
+import random
+import re
+from typing import Dict, List
+
+logger = logging.getLogger("miku.tono")
+
+# --------------------------------------------------------------------------- #
+# Catálogo de variantes.
+#   clave: forma canónica NORMALIZADA (minúsculas, sin puntuación al final).
+#   valor: lista de variantes (al menos 2). Se elige una al azar.
+# --------------------------------------------------------------------------- #
+_VARIANTES: Dict[str, List[str]] = {
+    # Confirmaciones genéricas de "acción hecha".
+    "listo": [
+        "Listo.",
+        "Ya está.",
+        "Hecho.",
+        "Listo, ya fue.",
+        "Ahí está.",
+        "Marchando.",
+    ],
+    "ya está": [
+        "Ya está.",
+        "Listo.",
+        "Hecho.",
+        "Todo listo.",
+    ],
+    "dale": [
+        "Dale.",
+        "Vamos.",
+        "Ahí va.",
+        "Marchando.",
+    ],
+    # Confirmación tras resolver algo.
+    "cancelado, no hice nada": [
+        "Cancelado, no hice nada.",
+        "Listo, lo dejé pasar.",
+        "Ok, no hice nada.",
+    ],
+    "listo, lo dejo": [
+        "Listo, lo dejo.",
+        "Ok, lo dejo.",
+        "Bueno, lo dejo.",
+    ],
+    # Saludos / respuestas rápidas frecuentes del fast-path.
+    "¡hola! ¿en qué te ayudo?": [
+        "¡Hola! ¿En qué te ayudo?",
+        "¡Hola! ¿Qué necesitás?",
+        "¡Hey! ¿En qué te doy una mano?",
+        "¡Holi! ¿Qué hacemos?",
+    ],
+    "sí? no escuché nada": [
+        "Sí? No escuché nada.",
+        "¿Mm? No te escuché.",
+        "No llegué a escucharte, repetime.",
+    ],
+    "anotado, no me olvido": [
+        "Anotado, no me olvido.",
+        "Listo, lo tengo presente.",
+        "Ya lo guardé en mi memoria.",
+    ],
+    # Wake word ("¿Sí? Decime."), lo setea main.py.
+    "¿sí? decime": [
+        "¿Sí? Decime.",
+        "¿Qué necesitás?",
+        "Te escucho.",
+        "¿Sí, decime?",
+    ],
+}
+
+# Anti-repetición: última variante usada por clave.
+_ultima_por_clave: Dict[str, str] = {}
+
+# Puntuación final que ignoramos al normalizar (para que "Listo" y "Listo."
+# sean la misma clave).
+_PUNTUACION_FINAL = re.compile(r"[.!?…\s]+$")
+
+
+def _normalizar_clave(texto: str) -> str:
+    """Normaliza para buscar en el catálogo.
+
+    Recorta, pasa a minúsculas y quita puntuación final. NO quita signos de
+    apertura (¡¿) porque forman parte del tono elegido.
+    """
+    t = (texto or "").strip().lower()
+    t = _PUNTUACION_FINAL.sub("", t)
+    return t
+
+
+def variar(texto: str) -> str:
+    """Devuelve una variante de tono para `texto` si es una frase conocida.
+
+    Reglas:
+      - Si `texto` (normalizado) NO está en el catálogo, se devuelve tal cual.
+      - Si está, se elige una variante al azar DISTINTA de la última usada para
+        esa clave (cuando hay más de una opción).
+
+    Esto mantiene el significado pero evita que Miku suene repetitiva.
+    """
+    if not texto:
+        return texto
+
+    clave = _normalizar_clave(texto)
+    opciones = _VARIANTES.get(clave)
+    if not opciones:
+        return texto  # no es una frase corta conocida: no la tocamos.
+
+    if len(opciones) == 1:
+        return opciones[0]
+
+    ultima = _ultima_por_clave.get(clave)
+    # Candidatas: todas menos la última usada (para no repetir).
+    candidatas = [o for o in opciones if o != ultima] or opciones
+    elegida = random.choice(candidatas)
+    _ultima_por_clave[clave] = elegida
+    logger.debug("[Tono] '%s' -> variante: %r", clave, elegida)
+    return elegida
+
+
+def registrar_variantes(clave: str, variantes: List[str]) -> None:
+    """Permite ampliar el catálogo en runtime (útil para tests/plugins).
+
+    `clave` se normaliza igual que en ``variar`` para no duplicar entradas.
+    """
+    if not variantes:
+        return
+    _VARIANTES[_normalizar_clave(clave)] = list(variantes)

@@ -205,6 +205,13 @@ class CommandParser:
         self._espera_confirmacion = False
         self._pendiente_energia: Optional[Dict[str, Any]] = None
 
+        # ---- Estado persistente de DESAMBIGUACIÓN (genérico) ----
+        # Cuando una tool devuelve {"desambiguar": True, "opciones": [...]},
+        # guardamos ese estado acá para que el SIGUIENTE mensaje del usuario
+        # ("el tercero", "3", o parte del nombre) pueda resolverse sin LLM.
+        # Estructura: {tool: str, args_base: dict, opciones: list[dict]}
+        self._pendiente_desambiguacion: Optional[Dict[str, Any]] = None
+
     # ---------------- Construcción de tools desde plugins ----------------
     def recopilar_tools(self) -> List[dict]:
         """Junta los schemas de tools declaradas por todos los plugins."""
@@ -252,6 +259,16 @@ class CommandParser:
             if resultado is not None:
                 return resultado
 
+        # 1b) DESAMBIGUACIÓN pendiente: si hay una tool esperando que el usuario
+        #     elija entre opciones, intentamos resolver ESTE mensaje contra esa
+        #     lista ANTES de ir al LLM. Si no se puede resolver con confianza,
+        #     se cancela y el mensaje se trata como nuevo (no nos trabamos).
+        if self._pendiente_desambiguacion is not None:
+            resultado = self._manejar_desambiguacion(texto, contexto)
+            if resultado is not None:
+                return resultado
+            # Si devolvió None, ya se canceló internamente: seguimos como normal.
+
         # 2) Fast path sin LLM: comandos locales triviales (hora, saludo...).
         respuesta_memoria = self._comandos_inmediatos(texto, contexto)
         if respuesta_memoria is not None:
@@ -288,6 +305,12 @@ class CommandParser:
             args = call["args"]
             logger.debug("Tool invocada: %s(%s)", nombre, args)
             extra = self.despachar_tool(nombre, args, contexto)
+
+            # ¿La tool pide DESAMBIGUAR (lista de opciones para elegir)?
+            # En ese caso guardamos el estado pendiente y mostramos la pregunta.
+            if self._es_resultado_desambiguacion(extra):
+                return self._guardar_desambiguacion(extra)
+
             if isinstance(extra, str) and extra.strip():
                 extras.append(extra)
 
@@ -355,6 +378,155 @@ class CommandParser:
                             pendiente.get("accion", ""), pendiente.get("accion", ""))
         return (f"Todavía no me confirmaste. ¿{texto_accion}? "
                 f"Decime 'sí' o 'no'.")
+
+    # ---------------- Desambiguación (mecanismo genérico) ----------------
+    @staticmethod
+    def _es_resultado_desambiguacion(resultado: Any) -> bool:
+        """¿El resultado de una tool es una petición de desambiguación?
+
+        Convención: un dict con ``desambiguar=True`` y una lista ``opciones``.
+        Cualquier otro tipo (str, None, etc.) NO lo es.
+        """
+        return (isinstance(resultado, dict)
+                and resultado.get("desambiguar") is True
+                and isinstance(resultado.get("opciones"), list)
+                and len(resultado.get("opciones")) > 0)
+
+    def _guardar_desambiguacion(self, resultado: Dict[str, Any]) -> str:
+        """Guarda el estado pendiente y devuelve la PREGUNTA para el usuario.
+
+        Estructura guardada (esperada por el resto del mecanismo):
+            {tool: str, args_base: dict, opciones: list[dict]}
+        """
+        self._pendiente_desambiguacion = {
+            "tool": resultado.get("tool_origen", ""),
+            "args_base": resultado.get("args_origen", {}) or {},
+            "opciones": resultado.get("opciones", []),
+        }
+        logger.info("Desambiguación pendiente de '%s' con %d opciones.",
+                    self._pendiente_desambiguacion["tool"],
+                    len(self._pendiente_desambiguacion["opciones"]))
+        return self._formatear_pregunta(self._pendiente_desambiguacion)
+
+    def _formatear_pregunta(self, pendiente: Dict[str, Any]) -> str:
+        """Arma el texto de la pregunta con las opciones numeradas."""
+        lineas = []
+        for op in pendiente.get("opciones", []):
+            idx = op.get("indice")
+            etiqueta = op.get("etiqueta", "?")
+            lineas.append(f"{idx}. {etiqueta}")
+        listado = "\n".join(lineas)
+        return (f"Encontré varias opciones, ¿cuál querés?\n{listado}\n"
+                f"Decime el número, 'el primero'… o parte del nombre.")
+
+    def _cancelar_desambiguacion(self) -> None:
+        """Borra el estado de desambiguación pendiente."""
+        self._pendiente_desambiguacion = None
+
+    # Ordinales en texto -> índice (1-based).
+    _ORDINALES = {
+        "primero": 1, "primera": 1, "primer": 1,
+        "segundo": 2, "segunda": 2,
+        "tercero": 3, "tercera": 3, "tercer": 3,
+        "cuarto": 4, "cuarta": 4,
+        "quinto": 5, "quinta": 5,
+    }
+
+    def _resolver_opcion(self, texto: str,
+                         opciones: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Intenta resolver el texto del usuario contra las opciones.
+
+        Acepta:
+          - Números directos: "3", "el 2", "opción 1".
+          - Ordinales en texto: "el tercero", "la segunda".
+          - Coincidencia parcial con la etiqueta (parte del nombre del archivo).
+
+        Devuelve la opción elegida o None si no hay match con confianza.
+        """
+        bajo = (texto or "").lower().strip()
+        if not bajo:
+            return None
+
+        def _op_por_indice(idx: int) -> Optional[Dict[str, Any]]:
+            for op in opciones:
+                if int(op.get("indice", -1)) == idx:
+                    return op
+            return None
+
+        # 1) Ordinal en texto ("el tercero").
+        for palabra, idx in self._ORDINALES.items():
+            if palabra in bajo:
+                op = _op_por_indice(idx)
+                if op:
+                    return op
+
+        # 2) Número directo ("3", "opción 2"). Tomamos el PRIMER entero del texto
+        #    y verificamos que exista una opción con ese índice.
+        import re as _re
+        m = _re.search(r"\d+", bajo)
+        if m:
+            op = _op_por_indice(int(m.group()))
+            if op:
+                return op
+
+        # 3) Coincidencia parcial con la etiqueta (parte del nombre del archivo).
+        #    Ignoramos palabras muy cortas para no matchear de más.
+        palabras = [w for w in _re.findall(r"\w+", bajo) if len(w) >= 3]
+        candidatas = []
+        for op in opciones:
+            etiqueta = str(op.get("etiqueta", "")).lower()
+            etiqueta_sin_ext = etiqueta.rsplit(".", 1)[0]
+            if any(w in etiqueta or w in etiqueta_sin_ext for w in palabras):
+                candidatas.append(op)
+        # Solo resolvemos si hay UNA sola candidata (si hay varias, es ambiguo).
+        if len(candidatas) == 1:
+            return candidatas[0]
+        return None
+
+    def _manejar_desambiguacion(self, texto: str,
+                                contexto: Dict[str, Any]) -> Optional[str]:
+        """Resuelve (o cancela) una desambiguación pendiente.
+
+        Returns:
+            - str con la respuesta si se pudo resolver o si se canceló por
+              pedido explícito.
+            - None si NO se pudo resolver con confianza: en ese caso cancela
+              la desambiguación y devuelve None para que el mensaje se procese
+              como uno nuevo (no nos quedamos trabados).
+        """
+        pendiente = self._pendiente_desambiguacion
+        if not pendiente:
+            return None
+
+        bajo = (texto or "").lower().strip()
+
+        # Cancelación explícita.
+        if bajo in ("cancelar", "cancela", "cancelá", "olvidalo", "olvídalo",
+                    "nada", "dejalo", "dejá"):
+            self._cancelar_desambiguacion()
+            return "Listo, lo dejo."
+
+        opcion = self._resolver_opcion(texto, pendiente.get("opciones", []))
+        if opcion is None:
+            # No se pudo resolver: cancelamos y tratamos el mensaje como nuevo.
+            logger.info("Desambiguación no resuelta con '%s'; se cancela.", texto)
+            self._cancelar_desambiguacion()
+            return None
+
+        # Resolvemos: completamos args_base con el "valor" de la opción elegida
+        # y ejecutamos la tool de origen DIRECTAMENTE (sin LLM).
+        tool = pendiente.get("tool", "")
+        args = dict(pendiente.get("args_base", {}) or {})
+        valor = opcion.get("valor", {}) or {}
+        if isinstance(valor, dict):
+            args.update(valor)
+        self._cancelar_desambiguacion()
+        logger.info("Desambiguación resuelta: %s %s -> %s",
+                    tool, args, opcion.get("etiqueta"))
+        res = self.despachar_tool(tool, args, contexto)
+        if isinstance(res, str) and res.strip():
+            return res
+        return "Listo."
 
     # ---------------- Comandos inmediatos (sin LLM) ----------------
     def _comandos_inmediatos(self, texto: str, contexto: Dict[str, Any]) -> Optional[str]:

@@ -44,6 +44,16 @@ logger = logging.getLogger("miku.tts")
 VOICEVOX_RUN_EXE = (config_mod.BASE_DIR / "extern" / "VOICEVOX"
                     / "vv-engine" / "run.exe")
 
+# URL de Groq (chat completions), para traducción ES->JA con la cuenta de STT.
+_GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
+# Modelo liviano y determinístico para traducir frases cortas.
+_MODELO_TRADUCCION = "openai/gpt-oss-20b"
+
+# Cache de traducciones (clave = texto EXACTO a traducir -> japonés).
+# Vive a nivel de módulo para sobrevivir entre instancias y aprovechar que las
+# frases de tono ("Listo", "Ya está", "Dale") se repiten mucho.
+_CACHE_TRADUCCIONES: dict = {}
+
 
 def limpiar_texto_para_voz(texto: Optional[str]) -> str:
     """Quita markdown y emojis para que la voz no los lea literalmente."""
@@ -55,6 +65,93 @@ def limpiar_texto_para_voz(texto: Optional[str]) -> str:
     t = re.sub(r"`+", "", t)          # backticks (código)
     t = re.sub(r"\s+", " ", t).strip()
     return t
+
+
+def normalizar_para_traducir(texto: Optional[str]) -> str:
+    """Prepara el texto para el traductor (NO afecta lo que se dice/subtitula).
+
+    deep-translator/Google a veces devuelve "No translation was found" con
+    signos de apertura y otros símbolos que no usa el japonés. Los reemplazamos
+    por equivalentes neutros SOLO en la copia que se manda a traducir:
+      - "¿" -> "" y "?" se mantiene (el "?" de cierre ya cierra la pregunta).
+      - "¡" -> "" (el "!" de cierre ya está).
+      - "…" -> "..." (puntos suspensivos ASCII).
+      - comillas tipográficas -> comillas rectas.
+      - espacios múltiples colapsados.
+    """
+    if not texto:
+        return ""
+    t = texto
+    t = t.replace("¿", "").replace("¡", "")
+    t = t.replace("…", "...")
+    t = (t.replace("\u201c", "\"").replace("\u201d", "\"")
+         .replace("\u2018", "'").replace("\u2019", "'"))
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+# Puntuación FUERTE: siempre corta frase (cierra oración).
+_FIN_FRASE_FUERTE = re.compile(r"(?<=[.!?;…])\s+")
+# Puntuación DÉBIL: corta solo si el fragmento acumulado supera ~80 caracteres.
+_FIN_FRASE_DEBIL = re.compile(r"(?<=[,:])\s+")
+_LARGO_MAX_SIN_CORTE = 80
+
+
+def dividir_en_frases(texto: str) -> list:
+    """Divide un texto en "frases hablables" para subtitular/reproducir.
+
+    Reglas:
+      - Corta siempre tras puntuación fuerte: ``.`` ``!`` ``?`` ``;`` ``…``.
+      - Corta tras ``,`` ``:`` solo si el fragmento acumulado supera ~80 chars.
+      - Si tras todo el proceso queda un fragmento muy largo sin puntuación,
+        lo parte por palabras para no mostrar/decir líneas kilométricas.
+
+    Devuelve una lista de frases (sin vacíos), preservando el orden.
+    """
+    texto = (texto or "").strip()
+    if not texto:
+        return []
+
+    # 1) Juntamos oraciones separadas por puntuación fuerte.
+    oraciones = [o.strip() for o in _FIN_FRASE_FUERTE.split(texto) if o.strip()]
+
+    # 2) Dentro de cada oración, partimos por ','/':' si quedó larga.
+    fragmentos: list = []
+    for oracion in oraciones:
+        if len(oracion) <= _LARGO_MAX_SIN_CORTE:
+            fragmentos.append(oracion)
+            continue
+        partes = _FIN_FRASE_DEBIL.split(oracion)
+        actual = ""
+        for parte in partes:
+            if not parte:
+                continue
+            if actual and len(actual) + 1 + len(parte) > _LARGO_MAX_SIN_CORTE:
+                fragmentos.append(actual.strip())
+                actual = parte
+            else:
+                actual = f"{actual} {parte}".strip() if actual else parte
+        if actual.strip():
+            fragmentos.append(actual.strip())
+
+    # 3) Red de seguridad: fragmentos aún larguísimos sin puntuación -> por palabras.
+    resultado: list = []
+    for frag in fragmentos:
+        if len(frag) <= _LARGO_MAX_SIN_CORTE * 2:
+            resultado.append(frag)
+            continue
+        palabras = frag.split(" ")
+        buffer = ""
+        for palabra in palabras:
+            if buffer and len(buffer) + 1 + len(palabra) > _LARGO_MAX_SIN_CORTE:
+                resultado.append(buffer.strip())
+                buffer = palabra
+            else:
+                buffer = f"{buffer} {palabra}".strip() if buffer else palabra
+        if buffer.strip():
+            resultado.append(buffer.strip())
+
+    return [f for f in resultado if f]
 
 
 class TextoAVoz:
@@ -72,6 +169,10 @@ class TextoAVoz:
         self.voicevox_url = cfg.voicevox_url.rstrip("/")
         self.speaker_id = cfg.voicevox_speaker_id
 
+        # Lista de URLs a probar: la configurada primero y luego el fallback
+        # localhost <-> 127.0.0.1 (en Windows a veces uno resuelve y el otro no).
+        self._urls_a_probar = self._construir_urls_a_probar(self.voicevox_url)
+
         # Subtítulos (cargado de forma perezosa vía core.subtitles).
         self._subs_enabled = subtitulos_activos
         self._subtitulos = None
@@ -88,27 +189,81 @@ class TextoAVoz:
         self._proceso_voicevox: Optional[subprocess.Popen] = None
         self._voicevox_lo_lanzamos = False
 
+        # URL que efectivamente responde (se fija en la primera verificación ok).
+        self._voicevox_url_activa: Optional[str] = None
+
+    @staticmethod
+    def _construir_urls_a_probar(url_config: str) -> list:
+        """Arma la lista de URLs base a probar para VOICEVOX.
+
+        Devuelve, sin duplicados y en orden:
+          1. La URL configurada (ej. http://localhost:50021).
+          2. Su variante localhost <-> 127.0.0.1 (fallback por si Windows
+             resuelve distinto entre ambos nombres).
+        """
+        urls = [url_config]
+        try:
+            if "localhost" in url_config:
+                urls.append(url_config.replace("localhost", "127.0.0.1"))
+            elif "127.0.0.1" in url_config:
+                urls.append(url_config.replace("127.0.0.1", "localhost"))
+        except Exception:  # noqa: BLE001
+            pass
+        # Sin duplicados, preservando el orden.
+        return list(dict.fromkeys(u for u in urls if u))
+
     # ---------------- Subtítulos (lazy) ----------------
     def _obtener_subtitulos(self):
-        """Crea el overlay de subtítulos la primera vez que se usa."""
+        """Crea el overlay de subtítulos la primera vez que se usa.
+
+        Si la creación falla, se cachea como False para no reintentar en cada
+        frase, pero se AVISA una vez (log con traceback COMPLETO + mensaje en
+        consola) para que el fallo no pase inadvertido.
+        """
         if self._subtitulos is None and self._subs_enabled:
             try:
                 from core.subtitles import SubtitulosOverlay  # import tardío
                 self._subtitulos = SubtitulosOverlay()
+                logger.info("Overlay de subtítulos creado correctamente.")
             except Exception:  # noqa: BLE001
-                logger.exception("No se pudo cargar el overlay de subtítulos.")
+                logger.exception(
+                    "No se pudo cargar el overlay de subtítulos (se desactivan "
+                    "para esta sesión).")
+                # Aviso en CONSOLA (no solo logger): ayuda a diagnosticar en vivo.
+                print("[Subtítulos] No se pudo crear el overlay; no habrá "
+                      "subtítulos en pantalla. Revisá el log para el detalle.")
                 self._subtitulos = False  # no reintentar con errores cada vez
         return self._subtitulos
 
     # ---------------- Comprobación de VOICEVOX ----------------
+    def _url_activa(self) -> str:
+        """Devuelve la URL de VOICEVOX que respondió (o la configurada)."""
+        return self._voicevox_url_activa or self.voicevox_url
+
     def _verificar_voicevox(self) -> bool:
-        """Devuelve True si el servidor VOICEVOX responde en su puerto."""
-        # Podría cachearse; por ahora consulta rápida con timeout corto.
-        try:
-            resp = requests.get(f"{self.voicevox_url}/speakers", timeout=2)
-            return resp.status_code == 200
-        except Exception:  # noqa: BLE001
-            return False
+        """Devuelve True si el servidor VOICEVOX responde en alguna URL.
+
+        Prueba la URL configurada y su variante localhost <-> 127.0.0.1.
+        Loguea a nivel INFO la URL consultada y el status (o el error).
+        """
+        for url in self._urls_a_probar:
+            endpoint = f"{url}/speakers"
+            try:
+                resp = requests.get(endpoint, timeout=2)
+                if resp.status_code == 200:
+                    self._voicevox_url_activa = url
+                    logger.info("[VOICEVOX] OK en %s (HTTP %s).",
+                                endpoint, resp.status_code)
+                    return True
+                logger.info("[VOICEVOX] %s respondió HTTP %s (no 200). "
+                            "Cuerpo: %s", endpoint, resp.status_code,
+                            (resp.text or "")[:200])
+            except Exception as e:  # noqa: BLE001
+                logger.info("[VOICEVOX] No pude conectar a %s: %s",
+                            endpoint, e)
+        logger.info("[VOICEVOX] Ninguna URL respondió (probadas: %s).",
+                    ", ".join(self._urls_a_probar))
+        return False
 
     # ---------------- Auto-arranque de VOICEVOX ----------------
     def _asegurar_voicevox(self) -> bool:
@@ -128,30 +283,44 @@ class TextoAVoz:
         """
         # Si ya está corriendo, respetamos el proceso externo del usuario.
         if self._verificar_voicevox():
+            logger.info("[VOICEVOX] Ya estaba activo en %s.", self._url_activa())
             return True
 
         # No reintentamos arrancarlo si ya estuvimos en ese intento (cache).
         if getattr(self, "_voicevox_intento_lanzado", False):
+            logger.info("[VOICEVOX] Ya intenté arrancarlo antes; reintento solo "
+                        "la verificación.")
             return self._verificar_voicevox()
         self._voicevox_intento_lanzado = True
 
         ruta_run = self._buscar_run_voicevox()
         if ruta_run is None:
             logger.warning(
-                "VOICEVOX no responde en %s y no encontré su run.exe. "
-                "Usaré pyttsx3 como fallback (voz del sistema).", self.voicevox_url)
+                "[VOICEVOX] No responde en %s y no encontré su run.exe "
+                "(busqué en config_local.VOICEVOX_RUN_EXE y en %s). "
+                "Usaré pyttsx3 como fallback (voz del sistema).",
+                self.voicevox_url, VOICEVOX_RUN_EXE)
             return False
 
-        logger.info("Intentando arrancar VOICEVOX desde: %s", ruta_run)
+        logger.info("[VOICEVOX] Intentando arrancar el ENGINE desde: %s",
+                    ruta_run)
+        if not self._es_engine_voicevox(ruta_run):
+            logger.warning(
+                "[VOICEVOX] AVISO: la ruta '%s' no parece el ENGINE HTTP de "
+                "VOICEVOX (no encontré engine_manifest.json ni "
+                "voicevox_core.dll junto a run.exe). Si lanzaste el editor con "
+                "GUI, este proceso NO expondrá el puerto 50021.", ruta_run)
+
         try:
             proc = subprocess.Popen(
-                [str(ruta_run)], cwd=str(ruta_run.parent),
+                [str(ruta_run)], cwd=os.path.dirname(str(ruta_run)),
                 shell=False,  # sin shell por seguridad
                 stdin=None, stdout=None, stderr=None,
                 creationflags=subprocess.CREATE_NO_WINDOW
                 if hasattr(subprocess, "CREATE_NO_WINDOW") else 0)
         except Exception as e:  # noqa: BLE001
-            logger.error("No pude lanzar VOICEVOX: %s. Uso pyttsx3.", e)
+            logger.error("[VOICEVOX] No pude lanzar run.exe (%s): %s. "
+                         "Uso pyttsx3.", ruta_run, e)
             return False
 
         # Guardamos el proceso: fue esta instancia quien lo arrancó.
@@ -159,13 +328,53 @@ class TextoAVoz:
         self._voicevox_lo_lanzamos = True
 
         # Esperamos (con cortes) a que levante el puerto.
-        for _ in range(6):  # hasta ~12 s
+        logger.info("[VOICEVOX] Esperando a que levante el puerto (hasta ~12 s)...")
+        for intento in range(6):  # hasta ~12 s
             time.sleep(2)
             if self._verificar_voicevox():
-                logger.info("VOICEVOX quedó activo.")
+                logger.info("[VOICEVOX] Quedó activo tras %d s.",
+                            (intento + 1) * 2)
                 return True
-        logger.warning("VOICEVOX tardó en responder; uso pyttsx3 por ahora.")
+        logger.warning("[VOICEVOX] No respondió tras ~12 s. PID del proceso "
+                       "lanzado: %s (sigue vivo: %s). Uso pyttsx3 por ahora.",
+                       getattr(proc, "pid", "?"), proc.poll() is None)
         return False
+
+    def _es_engine_voicevox(self, ruta_run: str) -> bool:
+        """Heurística: ¿la carpeta de `run.exe` es el ENGINE (server), no el editor?
+
+        El engine HTTP de VOICEVOX trae junto a ``run.exe`` los archivos
+        ``engine_manifest.json`` y/o ``voicevox_core.dll``. El editor con GUI
+        no. Se usa solo para AVISAR en el log, no para bloquear.
+        """
+        try:
+            carpeta = os.path.dirname(str(ruta_run))
+            marcadores = ("engine_manifest.json", "voicevox_core.dll")
+            return any(os.path.exists(os.path.join(carpeta, m))
+                       for m in marcadores)
+        except Exception:  # noqa: BLE001
+            return False
+
+    def asegurar_voicevox_inicial(self) -> bool:
+        """Verifica/arranca VOICEVOX y AVISA por consola qué motor se usará.
+
+        Pensado para llamarse UNA vez al entrar a un modo con voz, antes del
+        primer ``decir()``. Devuelve True si VOICEVOX quedó disponible.
+
+        Muestra en consola (feedback directo al usuario, no solo logger):
+        - "VOICEVOX detectado ✓, usando voz VOICEVOX"
+        - "VOICEVOX no disponible, usando pyttsx3 (voz del sistema)"
+        """
+        ok = self._asegurar_voicevox()
+        if ok:
+            # Feedback directo en consola (además del log). ASCII plano para no
+            # romper consolas Windows en cp1252 (evita UnicodeEncodeError).
+            print("[Voz] VOICEVOX detectado OK, usando voz VOICEVOX "
+                  f"({self._url_activa()}).")
+        else:
+            print("[Voz] VOICEVOX no disponible, usando pyttsx3 "
+                  "(voz del sistema).")
+        return ok
 
     def detener_voicevox_si_lo_arrancamos(self) -> None:
         """Cierra el run.exe de VOICEVOX SOLO si fue esta instancia quien lo lanzó.
@@ -208,14 +417,16 @@ class TextoAVoz:
 
     # ---------------- API pública ----------------
     def decir(self, texto: str) -> None:
-        """Encola `texto` para ser hablado sin bloquear al llamador."""
+        """Encola `texto` para ser hablado sin bloquear al llamador.
+
+        NOTA: la división en frases y la actualización del subtítulo ocurren
+        DENTRO del hilo reproductor (para poder sincronizar cada frase con su
+        audio real). Acá solo se encola el texto completo.
+        """
         texto_limpio = limpiar_texto_para_voz(texto)
         if not texto_limpio:
             return
         print(f"\nMiku: {texto_limpio}")
-
-        # Mostrar subtítulos con el TEXTO EN ESPAÑOL (no la traducción).
-        self._mostrar_subtitulos(texto_limpio)
 
         self._cola.put(texto_limpio)
 
@@ -236,6 +447,24 @@ class TextoAVoz:
             except Exception:  # noqa: BLE001
                 logger.exception("Error mostrando subtítulos.")
 
+    def _actualizar_subtitulos(self, texto: str) -> None:
+        """Actualiza el subtítulo SIN ocultar/mostrar (anti-parpadeo).
+
+        Usa ``actualizar_texto`` si el overlay lo soporta; si no, cae a
+        ``mostrar`` para no romper con versiones anteriores.
+        """
+        overlay = self._obtener_subtitulos()
+        if not overlay:
+            return
+        try:
+            actualizar = getattr(overlay, "actualizar_texto", None)
+            if callable(actualizar):
+                actualizar(texto)
+            else:
+                overlay.mostrar(texto)
+        except Exception:  # noqa: BLE001
+            logger.exception("Error actualizando subtítulos.")
+
     def _ocultar_subtitulos(self) -> None:
         """Oculta los subtítulos cuando termina la reproducción."""
         if self._subtitulos:
@@ -250,7 +479,7 @@ class TextoAVoz:
 
     # ---------------- Hilo reproductor ----------------
     def _bucle_reproductor(self) -> None:
-        """Consume la cola y reproduce de a una la frase encolada."""
+        """Consume la cola y reproduce el texto EN FRASES, en orden."""
         while True:
             try:
                 texto = self._cola.get(timeout=0.5)
@@ -258,86 +487,229 @@ class TextoAVoz:
                 continue  # daemon: queda esperando nuevas frases
             self._hablando.set()
             try:
-                self._sintetizar_y_reproducir(texto)
+                self._reproducir_texto_por_frases(texto)
             except Exception:  # noqa: BLE001
                 logger.exception("Error reproduciendo frase.")
             finally:
                 self._hablando.clear()
                 self._ocultar_subtitulos()
 
+    def _reproducir_texto_por_frases(self, texto_es: str) -> None:
+        """Divide `texto_es` en frases y las reproduce en orden, con prefetch.
+
+        Flujo por frase:
+          1. Sintetizar el audio de la frase (con VOICEVOX o pyttsx3).
+          2. Actualizar el subtítulo a esa frase JUSTO antes de reproducir.
+          3. Reproducir.
+          4. Pasar a la siguiente (ya pre-sintetizada en background).
+
+        Para evitar cortes entre frases por la latencia de VOICEVOX, mientras
+        se reproduce la frase N se va pre-sintetizando la N+1 en OTRO hilo
+        (prefetch de un paso).
+        """
+        frases = dividir_en_frases(limpiar_texto_para_voz(texto_es))
+        if not frases:
+            return
+        logger.debug("Reproduciendo en %d frase(s).", len(frases))
+
+        # Pre-sintetizamos la PRIMERA frase antes de entrar al bucle.
+        actual = (frases[0], self._preparar_audio_frase(frases[0]))
+
+        for i, frase in enumerate(frases):
+            texto_frase, artefacto = actual
+
+            # Prefetch: arrancamos la síntesis de la SIGUIENTE en background
+            # mientras se reproduce la actual.
+            siguiente_holder: dict = {}
+            hilo_prefetch = None
+            if i + 1 < len(frases):
+                siguiente = frases[i + 1]
+
+                def _prefetch(frase_sig: str = siguiente) -> None:
+                    try:
+                        siguiente_holder["artefacto"] = \
+                            self._preparar_audio_frase(frase_sig)
+                    except Exception:  # noqa: BLE001
+                        logger.exception("Error en prefetch de la frase siguiente.")
+                        siguiente_holder["artefacto"] = None
+
+                hilo_prefetch = threading.Thread(
+                    target=_prefetch, daemon=True, name="tts_prefetch")
+                hilo_prefetch.start()
+
+            # Subtítulo sincronizado a ESTA frase, justo antes de reproducir.
+            self._actualizar_subtitulos(texto_frase)
+
+            # Reproductor (bloqueante hasta que termina la frase).
+            self._reproducir_frase(texto_frase, artefacto)
+
+            # Esperar el prefetch y preparar la siguiente iteración.
+            if hilo_prefetch is not None:
+                hilo_prefetch.join()
+                actual = (frases[i + 1], siguiente_holder.get("artefacto"))
+
     # ---------------- Pipeline de síntesis ----------------
-    def _sintetizar_y_reproducir(self, texto_es: str) -> None:
-        """Sintetiza (traduce->VOICEVOX) y reproduce. Con fallbacks."""
+    def _preparar_audio_frase(self, texto_es: str) -> dict:
+        """Sintetiza UNA frase y devuelve un "artefacto" reproducible.
+
+        Artefacto: dict ``{"motor": "voicevox"|"sistema", "wav": bytes|None}``.
+
+        - VOICEVOX: traduce ES->JA y sintetiza; devuelve los bytes WAV.
+        - Cualquier fallo (servidor, traducción, HTTP): cae a pyttsx3
+          (motor="sistema"), que se reproduce con ``say()+runAndWait()``.
+        """
         texto_es = limpiar_texto_para_voz(texto_es)
         if not texto_es:
-            return
+            return {"motor": "sistema", "wav": None}
 
-        # Aseguramos que el servidor esté (lo arranca solo si hace falta).
+        # Sin VOICEVOX disponible -> voz del sistema.
         if not self._asegurar_voicevox():
-            logger.warning("Voicevox no activo, usando voz del sistema.")
-            self._hablar_sistema(texto_es)
-            return
+            logger.warning("[TTS] VOICEVOX no activo -> fallback pyttsx3.")
+            return {"motor": "sistema", "wav": None}
 
         # 1) Traducir a japonés.
         texto_ja = self._traducir_a_japones(texto_es)
         if texto_ja is None:
-            # La traducción falló -> usamos voz del sistema con el original.
-            logger.warning("Falló la traducción; usando voz del sistema.")
-            self._hablar_sistema(texto_es)
-            return
+            logger.warning("[TTS] Falló la traducción ES->JA -> fallback pyttsx3.")
+            return {"motor": "sistema", "wav": None}
 
-        # 2) Obtener WAV de VOICEVOX (si vino vacío, fallback a sistema).
+        # 2) Obtener WAV de VOICEVOX.
         wav_bytes = self._sintetizar_voicevox(texto_ja)
         if not wav_bytes:
-            logger.warning("Voicevox no generó audio; usando voz del sistema.")
-            self._hablar_sistema(texto_es)
-            return
+            logger.warning(
+                "[TTS] _asegurar_voicevox() dio True pero la síntesis devolvió "
+                "None (revisá los logs [VOICEVOX]: HTTP/estado/cuerpo). "
+                "Uso pyttsx3 para esta frase.")
+            return {"motor": "sistema", "wav": None}
 
-        # 3) Reproducir con pygame.
-        self._reproducir_bytes(wav_bytes)
+        return {"motor": "voicevox", "wav": wav_bytes}
+
+    def _reproducir_frase(self, texto_es: str, artefacto: Optional[dict]) -> None:
+        """Reproduce UNA frase ya preparada (VOICEVOX=bytes o pyttsx3)."""
+        if artefacto is None:
+            # El prefetch pudo fallar; re-preparamos en línea (sin prefetch).
+            artefacto = self._preparar_audio_frase(texto_es)
+        motor = artefacto.get("motor")
+        wav_bytes = artefacto.get("wav")
+        if motor == "voicevox" and wav_bytes:
+            self._reproducir_bytes(wav_bytes)
+        else:
+            self._hablar_sistema(texto_es)
 
     # ---------------- Traducción ----------------
     def _traducir_a_japones(self, texto_es: str) -> Optional[str]:
-        """Traduce a japonés con deep-translator. Devuelve None si falla."""
+        """Traduce a japonés usando la cuenta STT de Groq (con cache).
+
+        Orden del pipeline:
+          1. Normalizar símbolos raros (¿ ¡ … comillas) — 4.2c.
+          2. Cache en memoria (clave = texto normalizado exacto).
+          3. Llamada a Groq (chat/completions) con la cuenta de STT, temp=0.
+          4. Si Groq falla o devuelve vacío -> None (el caller cae a pyttsx3).
+
+        Devuelve None si no hay traducción disponible.
+        """
+        texto_limpio = normalizar_para_traducir(texto_es)
+        if not texto_limpio:
+            return None
+
+        # 2) Cache: si ya lo traducimos, no llamamos a la API.
+        cacheado = _CACHE_TRADUCCIONES.get(texto_limpio)
+        if cacheado:
+            logger.debug("[TTS] Traducción desde CACHE: %r", texto_limpio[:40])
+            return cacheado
+
+        # 3) Groq con la cuenta de STT (NO la del cerebro).
+        key = str(self.cfg.groq_api_key_stt).strip()
+        if not key:
+            logger.info("[TTS] No hay groq_api_key_stt para traducir; "
+                        "voy a pyttsx3.")
+            return None
+
+        prompt = ("Traducí el siguiente texto al japonés. Devolvé SOLO la "
+                  "traducción, sin comillas, sin comentarios, sin texto "
+                  "adicional: " + texto_limpio)
         try:
-            from deep_translator import GoogleTranslator  # import tardío
-            traductor = GoogleTranslator(source="es", target="ja")
-            return traductor.translate(texto_es)
+            resp = requests.post(
+                _GROQ_CHAT_URL,
+                headers={"Authorization": f"Bearer {key}",
+                         "Content-Type": "application/json"},
+                json={
+                    "model": _MODELO_TRADUCCION,
+                    "temperature": 0,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+                timeout=20,
+            )
+            if resp.status_code != 200:
+                # Logueamos el error REAL (nivel INFO) para diagnóstico.
+                logger.info("[TTS] Traducción Groq (STT) falló: HTTP %s. "
+                            "Cuerpo: %s", resp.status_code,
+                            (resp.text or "")[:200])
+                return None
+            data = resp.json()
+            trad = (data.get("choices", [{}])[0]
+                    .get("message", {}).get("content") or "").strip()
+            if not trad:
+                logger.info("[TTS] Traducción Groq (STT) vacía para %r",
+                            texto_limpio[:40])
+                return None
+            # Guardamos en cache para próximas repeticiones de la frase.
+            _CACHE_TRADUCCIONES[texto_limpio] = trad
+            logger.debug("[TTS] Traducción Groq (STT) OK: %r -> %r",
+                         texto_limpio[:40], trad[:40])
+            return trad
         except Exception as e:  # noqa: BLE001
-            logger.warning("No se pudo traducir a japonés: %s", e)
+            logger.info("[TTS] Error de red traduciendo con Groq (STT): %s",
+                        str(e)[:160])
             return None
 
     # ---------------- VOICEVOX ----------------
     def _sintetizar_voicevox(self, texto_ja: str) -> Optional[bytes]:
-        """Genera y devuelve el WAV para `texto_ja` con VOICEVOX."""
+        """Genera y devuelve el WAV para `texto_ja` con VOICEVOX.
+
+        Loguea explícitamente por qué falla si no hay audio (status HTTP,
+        cuerpo del error, o excepción de red) — no falla en silencio.
+        """
         speaker = self.speaker_id
+        base = self._url_activa()
         try:
             # Paso 1: audio_query.
+            url_q = f"{base}/audio_query"
             rq = requests.post(
-                f"{self.voicevox_url}/audio_query",
+                url_q,
                 params={"text": texto_ja, "speaker": speaker},
                 timeout=60,
             )
             if rq.status_code != 200:
-                logger.error("audio_query falló: HTTP %s - %s",
-                             rq.status_code, rq.text[:200])
+                logger.error("[VOICEVOX] audio_query Falló: %s -> HTTP %s. "
+                             "Cuerpo: %s", url_q, rq.status_code,
+                             (rq.text or "")[:300])
                 return None
 
             # Paso 2: synthesis con el JSON resultado.
+            url_s = f"{base}/synthesis"
             rs = requests.post(
-                f"{self.voicevox_url}/synthesis",
+                url_s,
                 params={"speaker": speaker},
                 headers={"Content-Type": "application/json"},
                 data=rq.content,
                 timeout=90,
             )
             if rs.status_code != 200:
-                logger.error("synthesis falló: HTTP %s - %s",
-                             rs.status_code, rs.text[:200])
+                logger.error("[VOICEVOX] synthesis falló: %s -> HTTP %s. "
+                             "Cuerpo: %s", url_s, rs.status_code,
+                             (rs.text or "")[:300])
                 return None
+
+            logger.debug("[VOICEVOX] Síntesis OK (%d bytes) vía %s.",
+                         len(rs.content), base)
             return rs.content
-        except Exception:  # noqa: BLE001
-            logger.exception("Error en la síntesis con VOICEVOX.")
+        except requests.exceptions.RequestException as e:
+            logger.error("[VOICEVOX] Error de red en la síntesis vía %s: %s",
+                         base, e)
+            return None
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[VOICEVOX] Error inesperado en la síntesis: %s", e)
             return None
 
     # ---------------- Reproducción / fallback ----------------
@@ -360,8 +732,11 @@ class TextoAVoz:
                 self._hablar_sistema("[audio no reproducido]")
                 return
 
-        # Escribir a un archivo temporal.
-        archivo_tmp = os.path.join(tempfile.gettempdir(), "miku_tts.wav")
+        # Escribir a un archivo temporal ÚNICO por reproducción (evita que dos
+        # reproducciones concurrentes se pisen el mismo archivo).
+        archivo_tmp = os.path.join(
+            tempfile.gettempdir(),
+            f"miku_tts_{threading.get_ident()}_{int(time.time() * 1000)}.wav")
         try:
             with open(archivo_tmp, "wb") as f:
                 f.write(wav_bytes)
@@ -379,8 +754,15 @@ class TextoAVoz:
         except Exception:  # noqa: BLE001
             logger.exception("Error reproduciendo con pygame.")
         finally:
-            # No borramos de inmediato (a veces pygame mantiene el archivo).
-            pass
+            # Borramos el temporal (mejor esfuerzo; pygame pudo haberlo soltado).
+            try:
+                pygame.mixer.music.unload()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                os.remove(archivo_tmp)
+            except Exception:  # noqa: BLE001
+                pass
 
     def _hablar_sistema(self, texto: str) -> None:
         """Fallback final con pyttsx3 (voz del sistema). No bloquea audio."""
