@@ -321,6 +321,61 @@ class SystemControl(Plugin):
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "programar_accion",
+                "description": "Programa una acción DIFERIDA en el tiempo: "
+                               "apagar/reiniciar/suspender la PC o un "
+                               "recordatorio hablado, dentro de N minutos. "
+                               "ACCIÓN IMPORTANTE: el sistema pedirá "
+                               "confirmación. Ej: 'suspendé la pc en 5 "
+                               "minutos', 'recordame sacar la basura en 10 "
+                               "minutos'.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "accion": {
+                            "type": "string",
+                            "enum": ["apagar", "reiniciar", "suspender",
+                                     "recordatorio"],
+                            "description": "Qué programar.",
+                        },
+                        "en_minutos": {
+                            "type": "integer",
+                            "description": "Dentro de cuántos minutos "
+                                           "disparar la acción.",
+                        },
+                        "mensaje": {
+                            "type": "string",
+                            "description": "Texto del recordatorio (solo "
+                                           "para accion='recordatorio').",
+                        },
+                    },
+                    "required": ["accion", "en_minutos"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "cancelar_accion_programada",
+                "description": "Cancela la última acción programada (apagado/"
+                               "suspensión/recordatorio diferido). Ej: "
+                               "'cancelá el apagado'.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "integer",
+                            "description": "Opcional: id de la tarea a "
+                                           "cancelar. Si se omite, cancela "
+                                           "la última programada.",
+                        },
+                    },
+                },
+            },
+        },
     ]
 
     # ---------------------------------------------------------- #
@@ -364,6 +419,14 @@ class SystemControl(Plugin):
             return self.minimizar_ventana(str(args.get("nombre", "")))
         if nombre_tool == "control_energia":
             return self.control_energia(str(args.get("accion", "")))
+        if nombre_tool == "programar_accion":
+            return self.programar_accion(
+                str(args.get("accion", "")),
+                args.get("en_minutos"),
+                str(args.get("mensaje", "") or ""),
+                contexto)
+        if nombre_tool == "cancelar_accion_programada":
+            return self.cancelar_accion_programada(args.get("id"), contexto)
         if nombre_tool == "control_multimedia":
             return self.control_multimedia(str(args.get("accion", "")))
         if nombre_tool == "ajustar_volumen":
@@ -479,6 +542,98 @@ class SystemControl(Plugin):
         except Exception as e:  # noqa: BLE001
             logger.error("Error en control_energia(%s): %s", accion, e)
             return "No pude ejecutar la acción de energía."
+
+    # ---------------- Acciones DIFERIDAS (scheduler) ---------------- #
+    def programar_accion(self, accion: str, en_minutos: Any, mensaje: str,
+                         contexto: Dict[str, Any]) -> str:
+        """Programa una acción diferida usando el Scheduler del contexto.
+
+        SOLO se llega acá tras la confirmación del usuario (el gating lo hace
+        el CommandParser). `accion` ∈ {apagar, reiniciar, suspender,
+        recordatorio}.
+
+        El scheduler vive en ``contexto["scheduler"]`` (lo inyecta main.py). Si
+        no está disponible, devolvemos un mensaje claro en vez de romper.
+        """
+        accion = (accion or "").lower().strip()
+        scheduler = (contexto or {}).get("scheduler")
+        if scheduler is None:
+            logger.error("No hay scheduler en el contexto; no puedo programar.")
+            return "No tengo el programador de tareas disponible ahora."
+
+        # Convertimos minutos a segundos de forma robusta.
+        try:
+            minutos = float(en_minutos)
+        except (TypeError, ValueError):
+            return "Decime en cuántos minutos lo programo (por ejemplo, 5)."
+        if minutos < 0:
+            minutos = 0
+        segundos = minutos * 60.0
+        minutos_txt = int(minutos) if minutos == int(minutos) else minutos
+
+        if accion == "recordatorio":
+            texto = mensaje or "un recordatorio"
+            descripcion = f"Recordatorio: {texto}"
+            callback = self._crear_callback_recordatorio(contexto, texto)
+            scheduler.programar(segundos, callback, descripcion)
+            return f"Dale, en {minutos_txt} minutos te aviso: {texto}."
+
+        if accion not in ("apagar", "reiniciar", "suspender"):
+            return ("No entendí qué programar. Puedo apagar, reiniciar, "
+                    "suspender o poner un recordatorio.")
+
+        mapa = {"apagar": "apago la PC", "reiniciar": "reinicio la PC",
+                "suspender": "suspendo la PC"}
+        descripcion = f"{accion.capitalize()} diferido"
+
+        def _callback() -> None:
+            # Al disparar, ejecutamos la MISMA acción de energía.
+            logger.info("[Scheduler] Ejecutando '%s' programado.", accion)
+            self.control_energia(accion)
+
+        scheduler.programar(segundos, _callback, descripcion)
+        return f"Dale, en {minutos_txt} minutos {mapa[accion]}."
+
+    def _crear_callback_recordatorio(self, contexto: Dict[str, Any],
+                                     mensaje: str):
+        """Devuelve un callback que hace decir el recordatorio por voz.
+
+        El `voice` viene en ``contexto["voice"]`` (lo inyecta main.py). Si no
+        hay voz, el recordatorio se imprime por consola igual.
+        """
+        def _callback() -> None:
+            frase = f"¡Recordatorio! {mensaje}"
+            voice = (contexto or {}).get("voice")
+            if voice is not None:
+                try:
+                    voice.decir(frase)
+                    return
+                except Exception:  # noqa: BLE001
+                    logger.exception("No pude decir el recordatorio por voz.")
+            # Fallback: consola.
+            print(f"[Recordatorio] {mensaje}")
+        return _callback
+
+    def cancelar_accion_programada(self, tarea_id: Any,
+                                   contexto: Dict[str, Any]) -> str:
+        """Cancela una acción diferida (por id, o la última si no se da id)."""
+        scheduler = (contexto or {}).get("scheduler")
+        if scheduler is None:
+            return "No tengo el programador de tareas disponible ahora."
+
+        pendientes = scheduler.listar_pendientes()
+        if not pendientes:
+            return "No hay ninguna acción programada para cancelar."
+
+        tarea_id = None if tarea_id in (None, "", 0) else tarea_id
+        try:
+            tarea_id = int(tarea_id) if tarea_id is not None else None
+        except (TypeError, ValueError):
+            tarea_id = None
+
+        if scheduler.cancelar(tarea_id):
+            return "Listo, cancelé la acción programada."
+        return "No encontré esa acción programada."
 
     # ---------------- Multimedia (teclas virtuales Windows) ---------------- #
     # Códigos de VK (virtual key) para reproducción multimedia.

@@ -74,7 +74,10 @@ if (-not $SinVoicevox) {
         $RunExe = Join-Path $Raiz "extern\VOICEVOX\vv-engine\run.exe"
         if (Test-Path $RunExe) {
             Write-Host "[2/3] Arrancando VOICEVOX (run.exe)..." -ForegroundColor Yellow
-            Start-Process -FilePath $RunExe -WorkingDirectory (Split-Path $RunExe) -WindowStyle Minimized
+            # -WindowStyle Hidden lanza run.exe SIN ventana visible, en segundo
+            # plano (mismo objetivo que `start "" /B` en run.bat). Antes era
+            # Minimized, que igual dejaba ver la ventana en la barra de tareas.
+            Start-Process -FilePath $RunExe -WorkingDirectory (Split-Path $RunExe) -WindowStyle Hidden
             $ok = $false
             for ($i = 0; $i -lt 6; $i++) {
                 Start-Sleep -Seconds 2

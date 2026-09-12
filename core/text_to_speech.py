@@ -3,7 +3,8 @@ text_to_speech.py - Síntesis de voz (TTS) usando VOICEVOX.
 
 Estrategia (cambio de arquitectura: ya NO se usa RVC/Kokoro/torch):
     1. El texto de la respuesta está en español (viene del LLM).
-    2. Se traduce a japonés con ``deep-translator`` (GoogleTranslator).
+    2. Se traduce a japonés con la API de Groq (cuenta de STT, ``GROQ_API_KEY_STT``),
+       con cache en memoria por frase exacta (ver ``_CACHE_TRADUCCIONES``).
     3. Se le pide a VOICEVOX (API HTTP local en ``localhost:50021``) que
        genere el WAV de esa frase en japonés.
     4. Se reproduce el WAV con pygame.
@@ -19,6 +20,8 @@ Subtítulos:
     anime) mientras se reproduce el audio. Para eso se conecta con el módulo
     ``core.subtitles`` (PyQt5). Los subtítulos NO se muestran en modo texto
     (eso lo decide main.py al no instanciar TTS).
+    El subtítulo se SINCRONIZA POR FRASE: cada frase se sintetiza y se
+    subtitula de a una, con prefetch de la siguiente.
 """
 from __future__ import annotations
 
@@ -70,9 +73,9 @@ def limpiar_texto_para_voz(texto: Optional[str]) -> str:
 def normalizar_para_traducir(texto: Optional[str]) -> str:
     """Prepara el texto para el traductor (NO afecta lo que se dice/subtitula).
 
-    deep-translator/Google a veces devuelve "No translation was found" con
-    signos de apertura y otros símbolos que no usa el japonés. Los reemplazamos
-    por equivalentes neutros SOLO en la copia que se manda a traducir:
+    El traductor (Groq) a veces se confunde con signos de apertura y otros
+    símbolos que no usa el japonés. Los reemplazamos por equivalentes neutros
+    SOLO en la copia que se manda a traducir:
       - "¿" -> "" y "?" se mantiene (el "?" de cierre ya cierra la pregunta).
       - "¡" -> "" (el "!" de cierre ya está).
       - "…" -> "..." (puntos suspensivos ASCII).
@@ -311,13 +314,32 @@ class TextoAVoz:
                 "voicevox_core.dll junto a run.exe). Si lanzaste el editor con "
                 "GUI, este proceso NO expondrá el puerto 50021.", ruta_run)
 
+        # Flags/refuerzos para que el motor quede REALMENTE oculto:
+        #   - CREATE_NO_WINDOW: no crea consola para el proceso.
+        #   - STARTUPINFO + SW_HIDE: refuerzo extra (en algunas versiones de
+        #     Windows / .exe de consola, CREATE_NO_WINDOW solo no alcanza).
+        #   - stdout/stderr -> DEVNULL: evita que el motor escriba en la
+        #     consola del asistente (y descarta su salida verbosa).
+        creationflags = 0
+        startupinfo = None
+        try:
+            if hasattr(subprocess, "CREATE_NO_WINDOW"):
+                creationflags |= subprocess.CREATE_NO_WINDOW
+            # STARTUPINFO con SW_HIDE (solo en Windows).
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+        except Exception:  # noqa: BLE001
+            startupinfo = None  # no bloquear si algo no existe (no-Windows)
+
         try:
             proc = subprocess.Popen(
                 [str(ruta_run)], cwd=os.path.dirname(str(ruta_run)),
                 shell=False,  # sin shell por seguridad
-                stdin=None, stdout=None, stderr=None,
-                creationflags=subprocess.CREATE_NO_WINDOW
-                if hasattr(subprocess, "CREATE_NO_WINDOW") else 0)
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=creationflags,
+                startupinfo=startupinfo)
         except Exception as e:  # noqa: BLE001
             logger.error("[VOICEVOX] No pude lanzar run.exe (%s): %s. "
                          "Uso pyttsx3.", ruta_run, e)

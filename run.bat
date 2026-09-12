@@ -51,7 +51,11 @@ if /I not "%1"=="sinvoicevox" (
     if errorlevel 1 (
         if exist "%VOICEVOX_RUN%" (
             echo [2/3] Arrancando VOICEVOX ^(run.exe^)...
-            start "" "%VOICEVOX_RUN%"
+            rem /B lanza el proceso SIN abrir una ventana de consola nueva ni
+            rem crear un nuevo grupo de proceso. Con `start "" "ruta"` (sin /B)
+            rem Windows igual mostraba una consola. Acá usamos start "" /B para
+            rem que el motor quede realmente oculto en segundo plano.
+            start "" /B "%VOICEVOX_RUN%"
             powershell -NoProfile -Command ^
               "$ok=$false; for($i=0;$i -lt 6;$i++){Start-Sleep -Seconds 2; try{$r=Invoke-WebRequest -Uri 'http://localhost:50021/speakers' -UseBasicParsing -TimeoutSec 2; if($r.StatusCode -eq 200){$ok=$true;break}}catch{}}; exit $(if($ok){0}else{1})"
             if errorlevel 1 ( echo [2/3] VOICEVOX no respondio a tiempo. Fallback pyttsx3. ) else ( echo [2/3] VOICEVOX activo. )

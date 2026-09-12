@@ -92,6 +92,13 @@ _VARIANTES: Dict[str, List[str]] = {
         "Te escucho.",
         "¿Sí, decime?",
     ],
+    # Saludo de arranque del modo voz ("Ya estoy lista").
+    "ya estoy lista": [
+        "Ya estoy lista.",
+        "¡Ya estoy lista!",
+        "Acá estoy.",
+        "Estoy lista para escucharte.",
+    ],
 }
 
 # Anti-repetición: última variante usada por clave.

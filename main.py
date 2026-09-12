@@ -30,12 +30,14 @@ from typing import Any, Dict, Optional
 import config as config_mod
 from core.event_bus import EventBus
 from core.command_parser import BrainGroq, CommandParser
+from core.scheduler import Scheduler
 from core import tono
 
 # El plugin de control de sistema es ligero (imports heavy son dentro de
 # métodos), así que puede importarse al inicio sin penalizar el modo texto.
 from plugins import Plugin, registrar_plugins
 from plugins.system_control import SystemControl
+from plugins.web_search import WebSearch
 
 logger = logging.getLogger("miku.main")
 
@@ -69,6 +71,9 @@ class Asistente:
         self.voice = None
         # Manejadores por modo: se instalan cuando entran a correr.
         self.stt = None
+        # Programador de acciones diferidas (timers). Vive con el asistente y
+        # se pasa a las tools vía contexto["scheduler"].
+        self.scheduler = Scheduler()
 
     # ---------------- Setup (no toca audio) ----------------
     def instalar_core(self) -> None:
@@ -81,7 +86,7 @@ class Asistente:
         self.parser = CommandParser(self.cfg, brain, self.bus, memoria=None)
 
         # Plugins.
-        candidatos: list[Plugin] = [SystemControl()]
+        candidatos: list[Plugin] = [SystemControl(), WebSearch()]
         activos = registrar_plugins(candidatos, self.bus)
         for plugin in activos:
             self.bus.registrar_plugin(plugin)
@@ -99,6 +104,7 @@ class Asistente:
         return {
             "cfg": self.cfg,
             "voice": self.voice,
+            "scheduler": self.scheduler,
         }
 
     def responder(self, texto_usuario: str) -> None:
@@ -145,6 +151,15 @@ class Asistente:
     # ---------------- Cierre ----------------
     def cerrar(self) -> None:
         """Limpia recursos (subtítulos, voz lanzada por Miku y callbacks)."""
+        # Cancelamos cualquier acción diferida pendiente (no dejamos timers
+        # vivos que puedan disparar un apagado/suspensión al cerrar).
+        try:
+            canceladas = self.scheduler.cancelar_todos()
+            if canceladas:
+                logger.info("Cancelé %d acción(es) programada(s) al cerrar.",
+                            canceladas)
+        except Exception:  # noqa: BLE001
+            logger.debug("No se pudieron cancelar las acciones programadas.")
         if self.voice is not None:
             try:
                 self.voice._ocultar_subtitulos()  # noqa: evita ventana abierta
@@ -210,6 +225,10 @@ def run_modo_voz(asistente: Asistente) -> None:
     except Exception:  # noqa: BLE001
         logger.exception("No se pudo empezar la escucha continua.")
         return
+
+    # Saludo de arranque: confirmación AUDIBLE de que la escucha continua quedó
+    # activa. Se dice UNA sola vez, aquí (no en push-to-talk ni por hotkey).
+    asistente.decir("Ya estoy lista")
 
     mostrar_microfonos(stt)
     try:
