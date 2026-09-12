@@ -158,3 +158,65 @@ def registrar_variantes(clave: str, variantes: List[str]) -> None:
     if not variantes:
         return
     _VARIANTES[_normalizar_clave(clave)] = list(variantes)
+
+
+# --------------------------------------------------------------------------- #
+# Variantes registradas de respuestas ANTES hardcodeadas (plugins).
+#
+# Estas frases las produce `plugins/system_control.py` y quedaban siempre
+# EXACTAMENTE iguales (el bug reportado: "canción anterior" -> "Volví a la
+# anterior" repetitivo). Se registran acá, con el mismo tono informal de
+# "listo"/"dale", para que `variar()` las intercepte. Se llama DESPUÉS de
+# definir `registrar_variantes` (requisito de orden de ejecución en Python).
+# --------------------------------------------------------------------------- #
+# Multimedia (control_multimedia).
+registrar_variantes("alterné play/pausa.", [
+    "Alterné play/pausa.",
+    "Dale, le di al play/pausa.",
+    "Listo, play o pausa.",
+    "Ahí va el play/pausa.",
+])
+registrar_variantes("pasé a la siguiente.", [
+    "Pasé a la siguiente.",
+    "Siguiente tema.",
+    "Dale, salté a la siguiente.",
+    "Ahí va la que sigue.",
+])
+registrar_variantes("volví a la anterior.", [
+    "Volví a la anterior.",
+    "Tema anterior.",
+    "Dale, volví a la de antes.",
+    "Ahí va la anterior.",
+])
+# Volumen (ajustar_volumen).
+registrar_variantes("subí el volumen.", [
+    "Subí el volumen.",
+    "Dale, más ruido.",
+    "Listo, subí el volumen.",
+    "Ahí subí el volumen.",
+])
+registrar_variantes("bajé el volumen.", [
+    "Bajé el volumen.",
+    "Listo, más bajito.",
+    "Dale, bajé el volumen.",
+    "Ahí lo bajé.",
+])
+registrar_variantes("silencié la salida de audio.", [
+    "Silencié la salida de audio.",
+    "Listo, silencio total.",
+    "Dale, sin sonido.",
+    "Ahí quedó en mute.",
+])
+registrar_variantes("reactivé el sonido.", [
+    "Reactivé el sonido.",
+    "Listo, sonido de vuelta.",
+    "Dale, ya se escucha.",
+    "Ahí volvió el sonido.",
+])
+# Energía (control_energia) — respuestas fijas que también quedaban sueltas.
+registrar_variantes("voy a suspender la pc.", [
+    "Voy a suspender la PC.",
+    "Listo, suspendo la PC.",
+    "Dale, a dormir la PC.",
+    "Ahí suspendo la PC.",
+])
