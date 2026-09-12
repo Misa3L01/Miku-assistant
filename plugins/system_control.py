@@ -115,6 +115,28 @@ def _clave_compacta(texto: Optional[str]) -> str:
                    if ch.isalnum())
 
 
+# Alias de TÍTULO de ventana: el usuario dice el nombre corto ("VSCode") pero
+# el título real es distinto ("... - Visual Studio Code"). Mapeamos el nombre
+# normalizado del alias -> fragmentos (normalizados) que SÍ aparecen en el título.
+_ALIAS_TITULO: Dict[str, tuple] = {
+    "vscode": ("visual studio code",),
+    "code": ("visual studio code",),
+    "visual studio": ("visual studio code",),
+    "brave": ("brave",),
+    "chrome": ("google chrome",),
+    "edge": ("microsoft edge",),
+    "explorador": ("explorador de archivos", "file explorer"),
+    "explorer": ("explorador de archivos", "file explorer"),
+    "tidal": ("tidal",),
+    "spotify": ("spotify",),
+    "discord": ("discord",),
+    "steam": ("steam",),
+    "notepad": ("bloc de notas", "notepad"),
+    "bloc de notas": ("bloc de notas", "notepad"),
+    "calculadora": ("calculadora", "calculator"),
+}
+
+
 class SystemControl(Plugin):
     """Control básico del sistema (abrir/cerrar, brillo, ventanas)."""
 
@@ -184,7 +206,9 @@ class SystemControl(Plugin):
             "type": "function",
             "function": {
                 "name": "mover_ventana",
-                "description": "Mueve una ventana abierta a otro monitor.",
+                "description": "Mueve una ventana abierta a otro monitor "
+                               "(maximizada). Para ocupar solo una mitad del "
+                               "monitor, usá posicionar_ventana.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -192,6 +216,55 @@ class SystemControl(Plugin):
                         "monitor": {"type": "integer"},
                     },
                     "required": ["nombre", "monitor"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "posicionar_ventana",
+                "description": "Coloca una ventana en una posición del "
+                               "monitor: mitad izquierda/derecha/arriba/"
+                               "abajo, o completa (maximizada). Ej: 'ponéme "
+                               "Brave a la mitad izquierda', 'poné Discord a "
+                               "la derecha'.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "nombre": {"type": "string",
+                                   "description": "Nombre de la app/ventana."},
+                        "posicion": {
+                            "type": "string",
+                            "enum": ["izquierda", "derecha", "arriba",
+                                     "abajo", "completa"],
+                            "description": "Dónde ubicarla dentro del monitor.",
+                        },
+                        "monitor": {"type": "integer",
+                                    "description": "Monitor (1-based, default 1)."},
+                    },
+                    "required": ["nombre", "posicion"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "dividir_pantalla",
+                "description": "Divide la pantalla en dos mitades: una app en "
+                               "la izquierda y otra en la derecha del mismo "
+                               "monitor (como el Snap de Windows). Ej: 'dividí "
+                               "la pantalla entre Brave y VSCode'.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "app_izquierda": {"type": "string",
+                                          "description": "App para la mitad izquierda."},
+                        "app_derecha": {"type": "string",
+                                        "description": "App para la mitad derecha."},
+                        "monitor": {"type": "integer",
+                                    "description": "Monitor (1-based, default 1)."},
+                    },
+                    "required": ["app_izquierda", "app_derecha"],
                 },
             },
         },
@@ -385,6 +458,16 @@ class SystemControl(Plugin):
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "actualizar_biblioteca_juegos",
+                "description": "Re-escanea la biblioteca de Steam a demanda "
+                               "(para cuando instalás un juego nuevo sin "
+                               "reiniciar el asistente). Sin parámetros.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
     ]
 
     # ---------------------------------------------------------- #
@@ -393,6 +476,10 @@ class SystemControl(Plugin):
         super().initialize(event_bus)
         self._w = None  # cache de módulos win32
         self._importar_windows()
+        # Cache de la biblioteca de Steam {nombre_normalizado: appid}. Se
+        # rellena al arrancar (lazy, no bloquea si Steam no está) y se puede
+        # refrescar con la tool actualizar_biblioteca_juegos.
+        self._juegos_steam: Optional[Dict[str, str]] = None
         logger.info("Plugin system_control listo.")
 
     def _importar_windows(self) -> None:
@@ -424,6 +511,16 @@ class SystemControl(Plugin):
         if nombre_tool == "mover_ventana":
             return self.mover_ventana(str(args.get("nombre", "")),
                                       args.get("monitor", 1))
+        if nombre_tool == "posicionar_ventana":
+            return self.posicionar_ventana(str(args.get("nombre", "")),
+                                           str(args.get("posicion", "")),
+                                           args.get("monitor", 1))
+        if nombre_tool == "dividir_pantalla":
+            return self.dividir_pantalla(str(args.get("app_izquierda", "")),
+                                         str(args.get("app_derecha", "")),
+                                         args.get("monitor", 1))
+        if nombre_tool == "actualizar_biblioteca_juegos":
+            return self.actualizar_biblioteca_juegos()
         if nombre_tool == "minimizar_ventana":
             return self.minimizar_ventana(str(args.get("nombre", "")))
         if nombre_tool == "control_energia":
@@ -458,24 +555,60 @@ class SystemControl(Plugin):
 
     # ---------------- Acciones: programas ---------------- #
     def abrir_programa(self, nombre: str) -> str:
-        """Abre un programa por nombre/alias (usa AppOpener diferido)."""
+        """Abre un programa por nombre/alias.
+
+        Orden de búsqueda:
+          1. ``_APPS`` + AppOpener (programas instalados / menú Inicio).
+          2. Biblioteca de Steam detectada (``steam://rungameid/<appid>``).
+          3. Juegos de Epic configurados a mano (``JUEGOS_EPIC`` en config).
+        Si no lo encuentra en ninguno, lo dice con una pista útil.
+        """
         nombre = nombre.lower().strip()
         app = _APPS.get(nombre) or self._buscar_alias(nombre)
-        if app is None:
-            return f"No sé qué programa es '{nombre}'."
 
-        try:
-            from AppOpener import open as app_open  # lazy
-        except Exception:  # noqa: BLE001
-            logger.exception("Falta la librería AppOpener.")
-            return "No tengo el módulo AppOpener para abrir programas."
+        if app is not None:
+            try:
+                from AppOpener import open as app_open  # lazy
+            except Exception:  # noqa: BLE001
+                logger.exception("Falta la librería AppOpener.")
+                return "No tengo el módulo AppOpener para abrir programas."
+            try:
+                app_open(app, match_closest=True)
+                return f"Abriendo {nombre}."
+            except Exception as e:  # noqa: BLE001
+                logger.error("Error abriendo %s: %s", app, e)
+                return f"No pude abrir {nombre}."
 
-        try:
-            app_open(app, match_closest=True)
-            return f"Abriendo {nombre}."
-        except Exception as e:  # noqa: BLE001
-            logger.error("Error abriendo %s: %s", app, e)
-            return f"No pude abrir {nombre}."
+        # 2) Biblioteca de Steam.
+        appid = self._buscar_en_biblioteca_steam(nombre)
+        if appid:
+            try:
+                os.startfile(f"steam://rungameid/{appid}")  # type: ignore[attr-defined]
+                logger.info("Lanzando juego de Steam '%s' (appid=%s).",
+                            nombre, appid)
+                return f"Dale, abriendo {nombre}."
+            except Exception as e:  # noqa: BLE001
+                logger.error("No pude lanzar el juego de Steam '%s': %s",
+                             nombre, e)
+                return f"Encontré {nombre} en Steam pero no pude abrirlo."
+
+        # 3) Epic configurado a mano (JUEGOS_EPIC en config_local.py).
+        item_epic = self._buscar_en_juegos_epic(nombre)
+        if item_epic:
+            try:
+                os.startfile(  # type: ignore[attr-defined]
+                    f"com.epicgames.launcher://apps/{item_epic}?action=launch")
+                logger.info("Lanzando juego de Epic '%s' (id=%s).",
+                            nombre, item_epic)
+                return f"Dale, abriendo {nombre}."
+            except Exception as e:  # noqa: BLE001
+                logger.error("No pude lanzar el juego de Epic '%s': %s",
+                             nombre, e)
+                return f"Encontré {nombre} en Epic pero no pude abrirlo."
+
+        # 4) Nada: mensaje con pista (ni programa ni juego detectado).
+        return (f"No sé qué programa es '{nombre}': no lo tengo ni como "
+                f"programa instalado ni en tu biblioteca de Steam detectada.")
 
     def _buscar_alias(self, nombre: str) -> Optional[str]:
         """Coincidencia parcial del nombre dentro del mapa de apps."""
@@ -483,6 +616,204 @@ class SystemControl(Plugin):
             if clave in nombre or nombre in clave:
                 return valor
         return None
+
+    # ---------------- Biblioteca de juegos (Steam / Epic) ---------------- #
+    def _rutas_steam_candidatas(self) -> List[str]:
+        """Devuelve las rutas candidatas a la carpeta de instalación de Steam.
+
+        Prioriza ``STEAM_RUTA`` de ``config_local.py`` si está definida; si
+        no, prueba las ubicaciones típicas de Windows. NO hardcodea rutas de
+        usuario: solo las convencionales de Steam.
+        """
+        candidatas: List[str] = []
+        # 1) Rutas de config (config_local.py pisa con update directo).
+        try:
+            import config as config_mod  # ruta segura
+            config_mod.cargar()
+            for clave in ("steam_ruta", "ruta_steam", "steam_install"):
+                val = str(config_mod.config.get(clave, "") or "").strip()
+                if val:
+                    candidatas.append(val)
+        except Exception:  # noqa: BLE001
+            pass
+
+        # 2) Ubicaciones típicas (no dependen del usuario).
+        candidatas += [
+            r"C:\Program Files (x86)\Steam",
+            r"C:\Program Files\Steam",
+            "C:\\Steam",
+        ]
+        return candidatas
+
+    def _carpeta_steam(self) -> Optional[str]:
+        """Primera carpeta de Steam existente entre las candidatas."""
+        from pathlib import Path
+        for c in self._rutas_steam_candidatas():
+            try:
+                p = Path(c)
+                if (p / "steamapps").is_dir() or (p / "steam.exe").exists():
+                    return str(p)
+            except Exception:  # noqa: BLE001
+                continue
+        return None
+
+    def _escanear_biblioteca_steam(self) -> Dict[str, str]:
+        """Escanea las bibliotecas de Steam y arma {nombre_norm: appid}.
+
+        Pasos:
+          1. Encontrar la instalación de Steam (config o típicas).
+          2. Leer ``steamapps/libraryfolders.vdf`` para TODAS las bibliotecas
+             (parseo por regex simple; el usuario puede tener juegos en varios
+             discos).
+          3. Recorrer ``appmanifest_*.acf`` de cada biblioteca y extraer
+             ``appid`` + ``name`` (texto plano).
+
+        Devuelve {} si Steam no está instalado (loguea y sigue, no rompe).
+        """
+        import re
+        from pathlib import Path
+
+        steam = self._carpeta_steam()
+        if not steam:
+            logger.info("No encontré instalación de Steam; sin biblioteca de "
+                        "juegos.")
+            return {}
+
+        bibliotecas: List[Path] = []
+        base = Path(steam)
+        # La instalación principal siempre tiene su propio steamapps.
+        bibliotecas.append(base / "steamapps")
+
+        # libraryfolders.vdf lista las bibliotecas adicionales (otros discos).
+        vdf = base / "steamapps" / "libraryfolders.vdf"
+        if vdf.exists():
+            try:
+                texto = vdf.read_text(encoding="utf-8", errors="ignore")
+                # Nos interesan las claves "path" del VDF; tolera escapes \\.
+                for ruta in re.findall(r'"path"\s+"([^"]+)"', texto):
+                    ruta = ruta.replace("\\\\", "\\")
+                    bibliotecas.append(Path(ruta) / "steamapps")
+            except Exception as e:  # noqa: BLE001
+                logger.warning("No pude leer libraryfolders.vdf: %s", e)
+
+        juegos: Dict[str, str] = {}
+        vistas = set()  # evita recorrer la misma carpeta dos veces
+        for lib in bibliotecas:
+            try:
+                if not lib.is_dir():
+                    continue
+                real = str(lib.resolve()).lower()
+                if real in vistas:
+                    continue
+                vistas.add(real)
+            except Exception:  # noqa: BLE001
+                continue
+
+            try:
+                acfs = list(lib.glob("appmanifest_*.acf"))
+            except Exception as e:  # noqa: BLE001
+                logger.debug("No pude listar appmanifest en %s: %s", lib, e)
+                continue
+
+            for acf in acfs:
+                try:
+                    datos = acf.read_text(encoding="utf-8", errors="ignore")
+                    m_appid = re.search(r'"appid"\s+"(\d+)"', datos)
+                    m_name = re.search(r'"name"\s+"([^"]+)"', datos)
+                    if not m_appid or not m_name:
+                        continue
+                    appid = m_appid.group(1)
+                    nombre = m_name.group(1)
+                    # Normalizamos igual que el resto del archivo.
+                    clave = _normalizar_texto(nombre)
+                    if clave:
+                        juegos[clave] = appid
+                except Exception as e:  # noqa: BLE001
+                    logger.debug("No pude leer %s: %s", acf, e)
+
+        logger.info("Biblioteca de Steam escaneada: %d juego(s).", len(juegos))
+        return juegos
+
+    def _biblioteca_steam(self) -> Dict[str, str]:
+        """Devuelve la biblioteca de Steam cacheada (la escanea si hace falta)."""
+        if self._juegos_steam is None:
+            try:
+                self._juegos_steam = self._escanear_biblioteca_steam()
+            except Exception as e:  # noqa: BLE001
+                logger.error("Fallo escaneando la biblioteca de Steam: %s", e)
+                self._juegos_steam = {}
+        return self._juegos_steam
+
+    def _buscar_en_biblioteca_steam(self, nombre: str) -> Optional[str]:
+        """Busca un juego por nombre (tolerante) en la biblioteca de Steam.
+
+        Matching: exacto (normalizado), luego compacto (sin separadores), y por
+        último substring en cualquier dirección. Devuelve el appid o None.
+        """
+        biblioteca = self._biblioteca_steam()
+        if not biblioteca:
+            return None
+        objetivo = _normalizar_texto(nombre)
+        objetivo_compacto = _clave_compacta(nombre)
+
+        # 1) Exacto / compacto.
+        if objetivo in biblioteca:
+            return biblioteca[objetivo]
+        for clave, appid in biblioteca.items():
+            if _clave_compacta(clave) == objetivo_compacto:
+                return appid
+        # 2) Substring (tolerante a "el peak" -> "peak").
+        for clave, appid in biblioteca.items():
+            if objetivo and (objetivo in clave or clave in objetivo):
+                return appid
+        for clave, appid in biblioteca.items():
+            ck = _clave_compacta(clave)
+            if objetivo_compacto and (objetivo_compacto in ck
+                                      or ck in objetivo_compacto):
+                return appid
+        return None
+
+    def _juegos_epic_config(self) -> Dict[str, str]:
+        """Lee ``JUEGOS_EPIC`` (dict opcional) desde config_local.py."""
+        try:
+            import config as config_mod  # ruta segura
+            config_mod.cargar()
+            valor = config_mod.config.get("juegos_epic", {}) or {}
+            if isinstance(valor, dict):
+                return {str(k): str(v) for k, v in valor.items()}
+        except Exception as e:  # noqa: BLE001
+            logger.debug("No pude leer JUEGOS_EPIC de config: %s", e)
+        return {}
+
+    def _buscar_en_juegos_epic(self, nombre: str) -> Optional[str]:
+        """Busca un juego en el dict manual de Epic (config_local)."""
+        juegos = self._juegos_epic_config()
+        if not juegos:
+            return None
+        objetivo = _normalizar_texto(nombre)
+        objetivo_compacto = _clave_compacta(nombre)
+        for clave, item_id in juegos.items():
+            ck = _normalizar_texto(clave)
+            if ck == objetivo or _clave_compacta(clave) == objetivo_compacto:
+                return item_id
+        for clave, item_id in juegos.items():
+            ck = _normalizar_texto(clave)
+            if objetivo and (objetivo in ck or ck in objetivo):
+                return item_id
+        return None
+
+    def actualizar_biblioteca_juegos(self) -> str:
+        """Re-escanea la biblioteca de Steam a demanda (tool sin parámetros)."""
+        try:
+            self._juegos_steam = self._escanear_biblioteca_steam()
+        except Exception as e:  # noqa: BLE001
+            logger.error("Error re-escaneando la biblioteca de Steam: %s", e)
+            return "No pude escanear la biblioteca de Steam."
+        cantidad = len(self._juegos_steam or {})
+        if cantidad == 0:
+            return ("No encontré juegos en tu biblioteca de Steam (¿está "
+                    "instalado Steam?).")
+        return f"Encontré {cantidad} juegos en tu biblioteca de Steam."
 
     def cerrar_programa(self, nombre: str) -> str:
         """Cierra (mata) el proceso asociado a un programa (seguro).
@@ -1335,10 +1666,26 @@ class SystemControl(Plugin):
         return "Ventanas abiertas:\n- " + "\n- ".join(nombres)
 
     def _hwnd_de(self, nombre_app: str) -> Optional[Any]:
-        """Busca el hwnd de la primera ventana cuyo título coincide."""
-        nombre_l = nombre_app.lower().strip()
+        """Busca el hwnd de la primera ventana cuyo título coincide.
+
+        El título de la ventana raramente es el nombre corto ("VSCode" -> la
+        ventana se llama "archivo - Visual Studio Code"). Por eso, además del
+        substring directo, probamos alias de título conocidos (ver
+        ``_ALIAS_TITULO``). La comparación es tolerante a acentos.
+        """
+        objetivo = _normalizar_texto(nombre_app).strip()
+        if not objetivo:
+            return None
+
+        # Conjunto de fragmentos a buscar en el título.
+        fragmentos = [objetivo]
+        for clave, titulos in _ALIAS_TITULO.items():
+            if objetivo == _normalizar_texto(clave) or clave in objetivo:
+                fragmentos.extend(_normalizar_texto(t) for t in titulos)
+
         for hwnd, titulo in self._enumerar_ventanas():
-            if nombre_l in titulo.lower():
+            titulo_n = _normalizar_texto(titulo)
+            if any(f and f in titulo_n for f in fragmentos):
                 return hwnd
         return None
 
@@ -1359,26 +1706,194 @@ class SystemControl(Plugin):
         if not hwnd:
             return f"No encontré ninguna ventana de {nombre_app}."
 
+        rect = self._rect_monitor(monitor)
+        if rect is None:
+            return "No encontré ese monitor."
+        x1, y1, x2, y2 = rect
+
+        # Al mover a otro monitor, la dejamos MAXIMIZADA ocupando todo el
+        # rectángulo (comportamiento original).
+        if self._mover_a_rect(hwnd, x1, y1, x2, y2, maximizar=True):
+            return f"Llevé {nombre_app} al monitor {monitor}."
+        return f"No pude mover {nombre_app}."
+
+    # ---------------- Split de pantalla (Snap estilo Windows 11) ----------------
+    def _rect_monitor(self, monitor: int = 1) -> Optional[tuple]:
+        """Devuelve (x1, y1, x2, y2) del monitor indicado (1-based).
+
+        Reusado por `mover_ventana` y por las funciones de split. Devuelve
+        None si no hay monitores detectables o win32 no está disponible.
+        """
+        self._importar_windows()
+        if not self._w:
+            return None
         try:
             monitores = self._w["api"].EnumDisplayMonitors()
         except Exception:  # noqa: BLE001
             monitores = []
-
         if not monitores:
-            return "No encontré otro monitor."
+            return None
 
         idx = int(monitor) - 1
         if idx < 0 or idx >= len(monitores):
             idx = 0
-
         info = self._w["api"].GetMonitorInfo(monitores[idx][0])
         x1, y1, x2, y2 = info["Monitor"]
+        return (x1, y1, x2, y2)
 
+    def _mover_a_rect(self, hwnd: Any, x1: int, y1: int, x2: int, y2: int,
+                      maximizar: bool = False) -> bool:
+        """Coloca `hwnd` en el rectángulo (x1,y1)-(x2,y2).
+
+        Restaura la ventana ANTES de moverla (si estaba maximizada, Windows a
+        veces ignora el MoveWindow directo). Si `maximizar` es True, la
+        maximiza DENTRO del rect (mover a monitor); si es False, queda con el
+        tamaño EXACTO del rect (split de pantalla).
+
+        Devuelve True si pudo, False ante error.
+        """
+        self._importar_windows()
+        if not self._w:
+            return False
+        ancho, alto = int(x2 - x1), int(y2 - y1)
         try:
             gui, con = self._w["gui"], self._w["con"]
             gui.ShowWindow(hwnd, con.SW_RESTORE)
-            gui.MoveWindow(hwnd, x1, y1, x2 - x1, y2 - y1, True)
-            gui.ShowWindow(hwnd, con.SW_MAXIMIZE)
-            return f"Llevé {nombre_app} al monitor {monitor}."
-        except Exception:  # noqa: BLE001
-            return f"No pude mover {nombre_app}."
+            gui.MoveWindow(hwnd, int(x1), int(y1), ancho, alto, True)
+
+            # Compensación del "borde invisible" (DWM): al pedir un rect crudo,
+            # Windows puede agregar ~7px de sombra/marco que dejan un gap entre
+            # las dos mitades. Corregimos re-moviendo según la diferencia entre
+            # lo pedido y el marco VISUAL real (DWMWA_EXTENDED_FRAME_BOUNDS).
+            # Solo aplica al split (no al maximizar); si DWM no responde,
+            # seguimos sin compensar (mejor eso que romper por otra resolución).
+            if not maximizar:
+                self._compensar_marco_dwm(hwnd, int(x1), int(y1), ancho, alto)
+
+            if maximizar:
+                gui.ShowWindow(hwnd, con.SW_MAXIMIZE)
+            return True
+        except Exception as e:  # noqa: BLE001
+            logger.error("No pude mover la ventana al rect: %s", e)
+            return False
+
+    def _compensar_marco_dwm(self, hwnd: Any, x: int, y: int,
+                             ancho: int, alto: int) -> None:
+        """Ajusta el rect para que el marco VISUAL caiga donde lo pedimos.
+
+        Windows dibuja una sombra/borde que NO forma parte del rect de la
+        ventana; el `MoveWindow` con valores crudos deja un gap de unos px
+        entre las dos mitades de un split. Acá medimos el rect visual real con
+        ``DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)`` y re-movemos la
+        ventana compensando ese delta. Es best-effort: si DWM falla, no hace
+        nada (no rompe el movimiento ya aplicado).
+        """
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class _RECT(ctypes.Structure):
+                _fields_ = [("left", wintypes.LONG), ("top", wintypes.LONG),
+                            ("right", wintypes.LONG), ("bottom", wintypes.LONG)]
+
+            DWMWA_EXTENDED_FRAME_BOUNDS = 9
+            rect = _RECT()
+            dwm = ctypes.windll.dwmapi
+            hr = dwm.DwmGetWindowAttribute(
+                ctypes.c_void_p(int(hwnd)), DWMWA_EXTENDED_FRAME_BOUNDS,
+                ctypes.byref(rect), ctypes.sizeof(rect))
+            if hr != 0:  # 0 = S_OK; el resto => sin info fiable, no compensamos
+                return
+            # El marco visual difiere del rect pedido: corregimos la posición y
+            # el tamaño por ese delta (una sola pasada; suele bastar).
+            dx = x - rect.left
+            dy = y - rect.top
+            dancho = (rect.right - rect.left) - ancho
+            dalto = (rect.bottom - rect.top) - alto
+            if dx == 0 and dy == 0 and dancho == 0 and dalto == 0:
+                return
+            gui = self._w["gui"]
+            gui.MoveWindow(int(hwnd), int(x - dx), int(y - dy),
+                           int(ancho - dancho), int(alto - dalto), True)
+        except Exception as e:  # noqa: BLE001
+            # Cosmético: si falla, dejamos el rect tal cual (sin compensar).
+            logger.debug("Sin compensación de marco DWM: %s", e)
+
+    def posicionar_ventana(self, nombre_app: str, posicion: str,
+                           monitor: int = 1) -> str:
+        """Coloca una ventana en una mitad/posición del monitor.
+
+        `posicion` ∈ {izquierda, derecha, arriba, abajo, completa}. Para
+        "completa" se comporta como `mover_ventana` (maximizada en todo el
+        monitor); para el resto, ocupa EXACTAMENTE la mitad (sin maximizar
+        dentro de ella).
+        """
+        hwnd = self._hwnd_de(nombre_app)
+        if not hwnd:
+            return f"No encontré ninguna ventana de {nombre_app}."
+
+        rect = self._rect_monitor(monitor)
+        if rect is None:
+            return "No encontré ese monitor."
+        x1, y1, x2, y2 = rect
+
+        pos = (posicion or "").lower().strip()
+        # Sinónimos tolerantes.
+        if pos in ("izquierda", "izq", "left", "mitad izquierda"):
+            dx = (x2 - x1) // 2
+            rx1, ry1, rx2, ry2 = x1, y1, x1 + dx, y2
+            maximizar = False
+        elif pos in ("derecha", "der", "right", "mitad derecha"):
+            dx = (x2 - x1) // 2
+            rx1, ry1, rx2, ry2 = x1 + dx, y1, x2, y2
+            maximizar = False
+        elif pos in ("arriba", "top", "mitad superior"):
+            dy = (y2 - y1) // 2
+            rx1, ry1, rx2, ry2 = x1, y1, x2, y1 + dy
+            maximizar = False
+        elif pos in ("abajo", "bottom", "mitad inferior"):
+            dy = (y2 - y1) // 2
+            rx1, ry1, rx2, ry2 = x1, y1 + dy, x2, y2
+            maximizar = False
+        elif pos in ("completa", "completo", "entera", "entero", "full",
+                     "pantalla completa"):
+            rx1, ry1, rx2, ry2 = x1, y1, x2, y2
+            maximizar = True  # igual que mover_ventana
+        else:
+            return ("No entendí la posición. Usá izquierda, derecha, "
+                    "arriba, abajo o completa.")
+
+        if self._mover_a_rect(hwnd, rx1, ry1, rx2, ry2, maximizar=maximizar):
+            if pos in ("completa", "completo", "entera", "entero", "full",
+                       "pantalla completa"):
+                return f"Puse {nombre_app} a pantalla completa."
+            return f"Puse {nombre_app} a la {pos}."
+        return f"No pude posicionar {nombre_app}."
+
+    def dividir_pantalla(self, app_izquierda: str, app_derecha: str,
+                         monitor: int = 1) -> str:
+        """Divide el monitor: `app_izquierda` a la mitad izquierda y
+        `app_derecha` a la derecha.
+
+        Si una de las dos no se encuentra, posiciona la que SÍ encontró y
+        avisa específicamente CUÁL faltó (no un mensaje genérico).
+        """
+        res_izq = self.posicionar_ventana(app_izquierda, "izquierda", monitor)
+        res_der = self.posicionar_ventana(app_derecha, "derecha", monitor)
+
+        izq_ok = not res_izq.startswith("No encontré") and \
+            not res_izq.startswith("No pude")
+        der_ok = not res_der.startswith("No encontré") and \
+            not res_der.startswith("No pude")
+
+        if izq_ok and der_ok:
+            return (f"Listo, {app_izquierda} a la izquierda y "
+                    f"{app_derecha} a la derecha.")
+        if izq_ok and not der_ok:
+            return (f"Puse {app_izquierda} a la izquierda, pero no encontré "
+                    f"ninguna ventana de {app_derecha}.")
+        if der_ok and not izq_ok:
+            return (f"Puse {app_derecha} a la derecha, pero no encontré "
+                    f"ninguna ventana de {app_izquierda}.")
+        return (f"No encontré ninguna ventana ni de {app_izquierda} "
+                f"ni de {app_derecha}.")

@@ -183,6 +183,46 @@ class SpeechToText:
         t = texto.lower()
         return any(v in t for v in _VARIANTES_MIKU)
 
+    def _extraer_comando_en_linea(self, texto: str) -> str:
+        """Extrae lo que el usuario dijo DESPUÉS de la wake word, si hay algo.
+
+        Soporta el flujo "todo junto en una sola frase" ("Miku, qué hora es"):
+        busca la PRIMERA variante de Miku que aparezca en `texto`, toma el
+        resto del string desde el final de esa variante, y limpia separadores
+        sueltos al principio (comas, dos puntos, puntos, guiones, espacios).
+
+        Devuelve el comando (limpio) si quedó contenido significativo (>2
+        caracteres útiles). Devuelve "" si:
+          - no se encontró la wake word, o
+          - después de la wake word no quedó nada útil (el usuario dijo solo
+            "Miku" / "Miku." / "Miku,"), y en ese caso se sigue con el flujo
+            de dos pasos.
+        """
+        if not texto:
+            return ""
+        t = texto.strip()
+        bajo = t.lower()
+
+        # Buscamos la variante que aparezca ANTES (posición más a la izquierda).
+        idx = -1
+        largo = 0
+        for v in _VARIANTES_MIKU:
+            pos = bajo.find(v)
+            if pos != -1 and (idx == -1 or pos < idx):
+                idx = pos
+                largo = len(v)
+        if idx == -1:
+            return ""
+
+        resto = t[idx + largo:]
+        # Limpiamos separadores/puntuación sueltos al principio.
+        resto = resto.lstrip(" \t,.:;-—–¡!¿?\"'")
+        resto = resto.strip()
+        # Si queda contenido útil (>2 caracteres), es un comando en línea.
+        if len(resto) > 2:
+            return resto
+        return ""
+
     # ---------------------------------------------------------------- #
     #             API pública: capturas que no bloquean                #
     # ---------------------------------------------------------------- #
@@ -423,13 +463,35 @@ class SpeechToText:
                     continue  # no era la palabra; se sigue escuchando
 
                 logger.info("Activación detectada: %r", texto_wake)
+
+                # ¿El usuario dijo TODO JUNTO ("Miku, qué hora es")? Si después
+                # de la wake word quedó contenido significativo, lo usamos como
+                # comando directo y SALTAMOS la segunda escucha. En este caso NO
+                # saludamos con "¿Sí? Decime.": el saludo es solo para el flujo
+                # de dos pasos (cuando el usuario dijo "Miku" en solitario), así
+                # no le respondemos "¿en qué puedo ayudar?" a algo que ya pidió.
+                comando_en_linea = self._extraer_comando_en_linea(texto_wake)
+                if comando_en_linea:
+                    logger.info("Comando en la MISMA frase del wake: %r",
+                                comando_en_linea)
+                    if self.on_comando:
+                        try:
+                            self.on_comando(comando_en_linea)
+                        except Exception:  # noqa: BLE001
+                            logger.exception("Error en on_comando.")
+                    # Ya procesamos el comando; no pedimos un audio nuevo.
+                    if self._stop.is_set():
+                        break
+                    continue
+
+                # Flujo de DOS PASOS: el usuario dijo solo "Miku". Recién acá
+                # saludamos ("¿Sí? Decime.") y pedimos el comando en una toma
+                # nueva (comportamiento original).
                 if self.on_wake:
                     try:
                         self.on_wake("activation")
                     except Exception:  # noqa: BLE001
                         logger.exception("Error en on_wake.")
-
-                # Pedimos el comando completo tras despertar.
                 if not self._stop.is_set():
                     self._capturar_y_reportar_comando(source)
 

@@ -45,7 +45,9 @@ def _defaults() -> Dict[str, Any]:
 
         # --- Voz: VOICEVOX ---
         "voicevox_url": VOICEVOX_URL,
-        "voicevox_speaker_id": 1,
+
+        # ID de hablante por defecto: 6 (voz elegida por el usuario).
+        "voicevox_speaker_id": 6,
         "microfono_index": None,
 
         # --- Modelos STT (whisper de Groq) ---
@@ -98,6 +100,16 @@ def _defaults() -> Dict[str, Any]:
         #   MENSAJES_JUEGO = {"gg": "buena partida", "gracias": "gracias"}
         "idioma_juego": "",
         "mensajes_juego": {},
+
+        # --- Juegos (Steam / Epic) ---
+        # Ruta de instalación de Steam (opcional). Si está vacía, se prueban
+        # ubicaciones típicas (C:\Program Files (x86)\Steam, etc.). Se define
+        # típicamente en config_local.py.
+        "steam_ruta": "",
+        # Mapa opcional de juegos de Epic (nombre -> id_del_item). Epic no se
+        # auto-detecta por ahora (sus manifiestos JSON son más frágiles).
+        #   JUEGOS_EPIC = {"nombre": "id_del_item"}
+        "juegos_epic": {},
     }
 
 
@@ -141,9 +153,9 @@ class Config:
     def voicevox_speaker_id(self) -> int:
         """ID de hablante por defecto de VOICEVOX."""
         try:
-            return int(self.valores.get("voicevox_speaker_id", 1))
+            return int(self.valores.get("voicevox_speaker_id", 6))
         except (TypeError, ValueError):
-            return 1
+            return 6
 
     @property
     def modelo_miku(self) -> str:

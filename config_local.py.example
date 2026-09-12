@@ -29,8 +29,8 @@ GROQ_API_KEY_STT = ""
 # ============================================================================ #
 # URL del servidor VOICEVOX (suele ser el default).
 VOICEVOX_URL = "http://localhost:50021"
-# ID del hablante/VOICEBOX a usar (prueba 1, 2, 3...).
-VOICEVOX_SPEAKER_ID = 1
+# ID del hablante/VOICEBOX a usar (por defecto 6).
+VOICEVOX_SPEAKER_ID = 6
 
 # ============================================================================ #
 # Microfono - índice del dispositivo de entrada (propio de tu máquina)
@@ -79,3 +79,15 @@ MENSAJES_JUEGO = {
     # "gracias": "gracias por jugar",
     # "nuevo": "perdón, soy nuevo",
 }
+
+# ============================================================================ #
+# Juegos (Steam / Epic)
+# ============================================================================ #
+# Ruta de instalación de Steam (opcional). Si la dejás vacía, se prueban las
+# ubicaciones típicas (C:\Program Files (x86)\Steam, C:\Program Files\Steam).
+# STEAM_RUTA = r"C:\Program Files (x86)\Steam"
+
+# Juegos de Epic (opcional, MANUAL): nombre -> id_del_item del juego.
+# Epic aún no se auto-detecta (sus manifiestos son más frágiles).
+#   JUEGOS_EPIC = {"fortnite": "fn", "rocket league": "sugar"}
+JUEGOS_EPIC = {}

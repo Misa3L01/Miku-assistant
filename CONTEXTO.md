@@ -1,4 +1,4 @@
-# 📋 CONTEXTO DEL PROYECTO - MIKU ASSISTANT
+﻿# 📋 CONTEXTO DEL PROYECTO - MIKU ASSISTANT
 
 ## 🎯 Objetivo del Proyecto
 Asistente virtual personal para PC con IA, orientado a:
@@ -7,7 +7,7 @@ Asistente virtual personal para PC con IA, orientado a:
 - Uso diario
 - Comunicación en Discord
 
-## 📅 Última actualización: Sesión 3
+## 📅 Última actualización: Sesión 4
 
 ## 🏗️ Estado Actual del Proyecto
 
@@ -122,3 +122,11 @@ docs/    -> Documentación
 - **Bloque 9 — VOICEVOX oculto + saludo de arranque:** `run.bat` ahora usa `start "" /B`; `_asegurar_voicevox()` reforzado con `STARTUPINFO/SW_HIDE` + stdout/stderr a `DEVNULL`; `run.ps1` con `-WindowStyle Hidden`. Miku dice "Ya estoy lista" una vez tras arrancar la escucha continua (modo voz).
 - **Bloque 10 — Documentación de cierre:** README (tabla de tools + secciones de traducción/subtítulos/tono/scheduler), CONTEXTO (esta sesión), `docs/informe_sesion_3.md`. requirements.txt confirmado (pycaw/comtypes ya estaban; sin deps nuevas).
 - Ideas de lanzador/escritorio dejadas **explícitamente** para una sesión aparte (bandeja, `always_on`, hotkey F22 toggle, ventanita de modo, `.exe` con PyInstaller).
+
+### Sesión 4 (Memoria SQLite, traducción compartida, volumen por app, video, traductor de juegos, wake word):
+- **Bloque 13 — Interpolación de video:** nuevo `plugins/video_interpolador.py` con la tool `interpolar_video`. Lista videos de `CARPETA_VIDEOS`, elige por nombre o "el último", y dispara `RUTA_BAT_INTERPOLAR` **en segundo plano** (sin ventana), en un hilo aparte, pasando la ruta completa del video como argumento. Al terminar **avisa por voz** (o consola) según el código de salida. Desambigua si hay varios. Respuestas honestas si falta config.
+- **Bloque 13 (fix del .bat):** comparado contra el `interpolar_miku.bat` real del usuario, se corrigió el **desacople de formato de argumento** (el `.bat` ahora recibe la **RUTA COMPLETA** y se eliminó `VIDEOS_DIR` hardcodeado; `TARGET_VIDEO=%%~fV` directo) y la **extensión de 5 caracteres** (`.webm`): se usa `%%~nV` (nombre sin extensión) en vez del offset fijo `~0,-4`. Además se sacaron los `::` dentro del bloque `for` (pasados a `rem`) y los emojis (ASCII puro, sin BOM). Python **no** se tocó (ya pasaba la ruta completa). Verificado con simulación `echo` (mkv/webm/espacios/varios).
+- **Bloque 14 — Traductor de juegos + traducción compartida:** nuevo `core/traduccion.py` (cliente Groq único: `traducir_con_groq` + `normalizar_para_traducir`). `text_to_speech.py` refactorizado para delegar (re-exporta `normalizar_para_traducir`). Nuevo `plugins/traductor_juegos.py` (`traducir_mensaje_juego`): resuelve la frase desde `MENSAJES_JUEGO`, la traduce a `IDIOMA_JUEGO` (cuenta principal) y la copia al **portapapeles** (`win32clipboard`). Config nueva `idioma_juego`/`mensajes_juego`.
+- **Bloque 15 — Volumen por app:** `ajustar_volumen` acepta el parámetro opcional `app`: ajusta **todas las sesiones de audio** de esa app (pycaw `GetAllSessions`, matching tolerante a acentos y `.exe`); sin `app` se comporta como antes (volumen general). Base para el futuro Game Booster.
+- **Bloque 11 — Wake word en una sola frase:** `core/speech_to_text.py` ahora soporta AMBOS flujos. Nuevo helper `_extraer_comando_en_linea()`: tras detectar la wake word, toma lo que vino DESPUÉS (primera variante de `_VARIANTES_MIKU`), limpia separadores sueltos y, si queda contenido significativo (>2 chars), lo usa como **comando directo** en `_bucle_escucha_permanente()` vía `on_comando(...)` **sin** segunda escucha. Si el usuario dijo solo "Miku" (o "Miku."/"Miku,"), sigue el flujo de dos pasos sin cambios. Se mantiene `on_wake()` ("¿Sí? Decime.") en ambos flujos por consistencia. Probado con 17 casos de parsing + 4 escenarios de flujo completo con STT simulado (audio real no disponible en el entorno de desarrollo).
+- **Nota:** plugins `video_interpolador` y `traductor_juegos` registrados en `main.instalar_core()`. requirements.txt: pywin32 ya cubría `win32clipboard`; sin deps nuevas.

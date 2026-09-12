@@ -121,7 +121,11 @@ python main.py
 
 Al arrancar pregunta el **modo de entrada** (Enter usa el default de `config.py`):
 
-1. **Hablando** — escucha continua; decís "Miku" para activarla y luego el comando.
+1. **Hablando** — escucha continua con wake word. Podés decir **"Miku"** y
+   esperar a que responda "¿Sí? Decime." y recién ahí dar el comando (flujo en
+   dos pasos), **o** decir **"Miku, qué hora es"** todo junto en una sola frase
+   (en ese caso Miku usa directo el contenido posterior a "Miku" y salta la
+   segunda escucha).
 2. **Push-to-talk** — mantenés apretada la tecla F22: graba mientras la tenés
    presionada y corta al soltarla (implementación real, no depende solo del
    timeout de silencio).
@@ -173,11 +177,14 @@ cerebro "ve" esas tools y puede invocarlas por voz o texto.
 
 | Tool | Qué hace |
 |---|---|
-| `abrir_programa` | Abre un programa por nombre/alias (AppOpener) |
+| `abrir_programa` | Abre un programa por nombre/alias (AppOpener). Si no es un programa instalado, busca en la **biblioteca de Steam** (`steam://rungameid/<appid>`) o en los juegos de Epic configurados (`JUEGOS_EPIC`) |
 | `cerrar_programa` | Cierra un proceso vía `taskkill`, solo si está en la whitelist (coincidencia exacta) |
 | `controlar_brillo` | Sube, baja o fija el brillo de la pantalla |
 | `listar_ventanas` | Lista las ventanas visibles actualmente |
-| `mover_ventana` | Mueve una ventana a otro monitor |
+| `mover_ventana` | Mueve una ventana a otro monitor (maximizada) |
+| `posicionar_ventana` | Coloca una ventana en una mitad del monitor (izquierda/derecha/arriba/abajo) o completa |
+| `dividir_pantalla` | Parte la pantalla en dos: una app a la izquierda, otra a la derecha (estilo Snap 11) |
+| `actualizar_biblioteca_juegos` | Re-escanea la biblioteca de Steam a demanda (juego nuevo sin reiniciar) |
 | `minimizar_ventana` | Minimiza la ventana de un programa |
 | `control_multimedia` | Play / pausa / siguiente / anterior (teclas virtuales) |
 | `ajustar_volumen` | Sube, baja, **fija** un nivel exacto (0-100), o silencia/desmutea (mute real, no toggle). Con `app` ajusta el volumen de **una app puntual** (ej. "bajá el volumen de Brave") |
