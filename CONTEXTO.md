@@ -26,6 +26,12 @@ Asistente virtual personal para PC con IA, orientado a:
 - **Scheduler genérico (core/scheduler.py)** para acciones diferidas + cancelación
 - **Tono anti-repetición (core/tono.py)** para respuestas cortas
 - Confirmación **genérica** de acciones peligrosas (persistente entre turnos)
+- **Memoria persistente (core/memoria.py)** reactivada con backend **SQLite** (stdlib), con degradación elegante y activable con `memoria_activa`
+- **Traducción compartida (core/traduccion.py)**: cliente único de Groq que usan el TTS (ES→JA) y el traductor de juegos
+- Plugin `macros.py` (lee `data/macros_config.json`: `listar_macros` / `ejecutar_macro`)
+- Plugin `video_interpolador.py` (`interpolar_video`): dispara el `.bat` de interpolación en segundo plano + aviso por voz al terminar + desambiguación
+- Plugin `traductor_juegos.py` (`traducir_mensaje_juego`): traduce mensajes predefinidos y los copia al portapapeles (`win32clipboard`)
+- **Volumen por app** en `ajustar_volumen` (parámetro `app`, ajusta todas las sesiones de audio de la app vía pycaw)
 - requirements.txt depurado (solo libs realmente usadas, imports lazy documentados)
 
 ### 🚧 En Progreso:
@@ -44,7 +50,8 @@ Asistente virtual personal para PC con IA, orientado a:
 ```
 core/    -> Núcleo del sistema (voz, parsing, eventos)
 plugins/ -> Funcionalidades específicas (discord, gaming, etc)
-data/    -> Preferencias y configuraciones (preferences.json, macros_config.json)
+
+data/    -> Preferencias y configuraciones (preferences.json, macros_config.json, miku_memoria.db)
 docs/    -> Documentación
 ```
 
@@ -56,8 +63,6 @@ docs/    -> Documentación
 - **Subtítulos**: overlay transparente con PyQt5, siempre encima, en hilo dedicado, **sincronizados por frase** (prefetch de la siguiente)
 - **Scheduler**: `threading.Timer` (`core/scheduler.py`) para acciones diferidas/cancelables
 - **Discord**: discord.py *(pendiente de integrar)*
-- **Control de ventanas**: pywin32 (win32gui/con/api)
-- **Control de sistema**: AppOpener (abrir programas), screen-brightness-control (brillo), keyboard (push-to-talk)
 - **Config privada**: `config_local.py` (no versionado) para API keys y rutas específicas de la máquina (interpolación de video, Brave, Tidal, etc.)
 
 ### Convenciones de Código:
@@ -72,9 +77,11 @@ docs/    -> Documentación
 - (Ninguno crítico abierto.) Los bugs de Sesión 1/2 (contexto de confirmación que se reseteaba, `control_energia` sin implementar, push-to-talk que no cortaba, rutas privadas en `config.py`) quedaron **resueltos** en Sesión 2/3.
 
 ## 📝 Próximos Pasos Inmediatos
-1. Abordar los plugins "grandes" pendientes (Discord, Game Booster, traductor de juegos, macros).
-2. Decidir si se reactiva el sistema de memoria con un backend liviano (SQLite).
-3. Evaluar las ideas de lanzador/experiencia de escritorio (bandeja, `always_on`, hotkey F22 toggle, ventanita de modo, `.exe`) en una sesión dedicada — ver `docs/informe_sesion_3.md`.
+
+
+
+1. Abordar los plugins "grandes" pendientes (Discord, Game Booster, navegador por CDP).
+2. Evaluar las ideas de lanzador/experiencia de escritorio (bandeja, `always_on`, hotkey F22 toggle, ventanita de modo, `.exe`) en una sesión dedicada — ver `docs/informe_sesion_3.md`.
 
 ## 💡 Ideas Futuras
 - OCR para lectura de pantalla

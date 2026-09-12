@@ -6,11 +6,12 @@ Arquitectura modular: un núcleo (`core/`) + plugins enchufables (`plugins/`).
 
 > **Estado actual:** base funcional operativa — control de sistema, voz (VOICEVOX),
 > confirmación de acciones peligrosas, push-to-talk real, búsqueda de archivos y
-> control multimedia/volumen, **acciones diferidas programadas (scheduler)**,
-> **búsqueda web**, **variantes de tono** y **subtítulos sincronizados por frase**.
-> Quedan pendientes los plugins "grandes" heredados del sistema anterior (Discord,
-> Game Booster, traductor de juegos, macros) — el framework de plugins
-> (`Plugin` + `tools`) ya está listo para sumarlos.
+> control multimedia/volumen (**general y por app**), **acciones diferidas programadas
+> (scheduler)**, **búsqueda web**, **variantes de tono**, **subtítulos sincronizados por
+> frase**, **memoria persistente (SQLite)**, **macros personalizadas**, **interpolación
+> de video** y **traductor para juegos**. Quedan pendientes los plugins "grandes"
+> heredados del sistema anterior (Discord, Game Booster, navegador por CDP) — el
+> framework de plugins (`Plugin` + `tools`) ya está listo para sumarlos.
 
 ---
 
@@ -33,16 +34,21 @@ miku-assistant/
 │   ├── subtitles.py             # Overlay de subtítulos estilo anime (PyQt5)
 │   ├── scheduler.py             # Programador de acciones diferidas (timers) + cancelación
 │   ├── tono.py                  # Variantes de tono para respuestas cortas (anti-repetición)
-│   └── memoria.py               # Memoria persistente — DESACTIVADA a propósito (stub sin backend)
+│   ├── traduccion.py            # Traducción por API de Groq, COMPARTIDA (TTS ES→JA y traductor de juegos)
+│   └── memoria.py               # Memoria persistente de recuerdos (SQLite, stdlib)
 │
 ├── plugins/                     # Capacidades enchufables
 │   ├── __init__.py               # Base Plugin + registro
-│   ├── system_control.py         # Programas, brillo, ventanas, multimedia, volumen, energía, búsqueda
-│   └── web_search.py             # Búsqueda/apertura de sitios web en el navegador
+│   ├── system_control.py         # Programas, brillo, ventanas, multimedia, volumen (general y por app), energía, búsqueda
+│   ├── web_search.py             # Búsqueda/apertura de sitios web en el navegador
+│   ├── video_interpolador.py     # Dispara el pipeline de interpolación de video (.bat) y avisa al terminar
+│   ├── traductor_juegos.py       # Traduce mensajes de juego predefinidos y los copia al portapapeles
+│   └── macros.py                 # Ejecuta macros/alias definidos en data/macros_config.json
 │
 ├── data/                         # Datos persistentes del usuario (gitignored)
 │   ├── preferences.json          # Preferencias (juegos, programas favoritos, notas)
-│   └── macros_config.json        # Macros/alias configurables (aún sin plugin que los lea)
+│   ├── macros_config.json        # Macros/alias configurables (los consume plugins/macros.py)
+│   └── miku_memoria.db           # Base SQLite de la memoria persistente (recuerdos)
 │
 ├── bin/                          # Binarios externos
 │   └── es.exe                    # Everything CLI (búsqueda instantánea de archivos)
@@ -88,6 +94,8 @@ Requiere **Python 3.10+** sobre **Windows**.
    - `MICROFONO_INDEX` — si tenés varios micrófonos y querés fijar uno.
    - `BRAVE_RUTA_EXE`, `BRAVE_PERFIL_DIR`, `TIDAL_RUTA_EXE` — rutas de instalación (para cuando se implementen esos plugins).
    - `CARPETA_VIDEOS`, `RUTA_BAT_INTERPOLAR` — rutas del pipeline de interpolación de video.
+   - `MEMORIA_ACTIVA` — `False` para desactivar la memoria persistente (default `True`).
+   - `IDIOMA_JUEGO`, `MENSAJES_JUEGO` — idioma destino y diccionario de mensajes del traductor de juegos.
 
    **`config_local.py` nunca se sube al repo** (está en `.gitignore`). `config.py`
    trae todos los defaults públicos vacíos o genéricos, sin ningún dato real.
@@ -158,8 +166,8 @@ Se registra en `main.instalar_core()` dentro de `candidatos`. El framework
 (`core.event_bus.EventBus` y `plugins.registrar_plugins`) hace el resto: el
 cerebro "ve" esas tools y puede invocarlas por voz o texto.
 
-**Disponible hoy:** `plugins/system_control.py` y `plugins/web_search.py`, con
-las siguientes tools:
+**Disponible hoy:** `system_control`, `web_search`, `video_interpolador`,
+`traductor_juegos` y `macros`, con las siguientes tools:
 
 ### `system_control` (control del sistema)
 
@@ -172,7 +180,7 @@ las siguientes tools:
 | `mover_ventana` | Mueve una ventana a otro monitor |
 | `minimizar_ventana` | Minimiza la ventana de un programa |
 | `control_multimedia` | Play / pausa / siguiente / anterior (teclas virtuales) |
-| `ajustar_volumen` | Sube, baja, **fija** un nivel exacto (0-100), o silencia/desmutéa (mute real, no toggle) |
+| `ajustar_volumen` | Sube, baja, **fija** un nivel exacto (0-100), o silencia/desmutea (mute real, no toggle). Con `app` ajusta el volumen de **una app puntual** (ej. "bajá el volumen de Brave") |
 | `buscar_archivo` | Búsqueda instantánea con Everything (`bin/es.exe`), con filtro por extensión, apertura directa y desambiguación cuando hay varias coincidencias |
 | `control_energia` | Apagar / reiniciar / suspender — **siempre pide confirmación** antes de ejecutar |
 | `programar_accion` | Programa una acción **diferida**: apagar/reiniciar/suspender la PC o un **recordatorio hablado**, dentro de N minutos. **Siempre pide confirmación** |
@@ -183,6 +191,31 @@ las siguientes tools:
 | Tool | Qué hace |
 |---|---|
 | `buscar_en_web` | Abre el navegador con una **búsqueda o sitio**: `mercadolibre`, `youtube`, `google` (default), `wikipedia`, `github`, o un dominio/URL directo. **Solo envía la búsqueda; no lee los resultados** |
+
+### `video_interpolador` (pipeline de interpolación de video)
+
+Requiere `CARPETA_VIDEOS` y `RUTA_BAT_INTERPOLAR` en `config_local.py`.
+
+| Tool | Qué hace |
+|---|---|
+| `interpolar_video` | Lista los videos (`mp4/mkv/avi/mov/wmv/webm/flv`) de la carpeta y dispara el `.bat` de interpolación **en segundo plano** (sin ventana). Si hay varios y no se aclara cuál, **pregunta** (desambiguación, reutilizando el mecanismo de `buscar_archivo`). Al terminar, **avisa por voz** (o consola) con el resultado. Si falta config, lo dice claro (no adivina rutas) |
+
+### `traductor_juegos` (traductor + portapapeles)
+
+Requiere `IDIOMA_JUEGO` y `MENSAJES_JUEGO` en `config_local.py`.
+
+| Tool | Qué hace |
+|---|---|
+| `traducir_mensaje_juego` | Toma un mensaje predefinido (por clave, parte de la clave, o la propia frase), lo traduce al `IDIOMA_JUEGO` con **Groq** y lo **copia al portapapeles** para pegar con Ctrl+V en el chat del juego. Reutiliza `core/traduccion.py` (misma lógica que el TTS) con cache |
+
+### `macros` (macros/alias configurables)
+
+Lee `data/macros_config.json`.
+
+| Tool | Qué hace |
+|---|---|
+| `listar_macros` | Lista las macros/alias definidas |
+| `ejecutar_macro` | Ejecuta la macro pedida (secuencia de acciones predefinidas) |
 
 ---
 
@@ -201,12 +234,14 @@ las siguientes tools:
   con `voicevox_speaker_id`), no una voz clonada de Miku. Si VOICEVOX no
   responde, el asistente intenta arrancarlo automáticamente (oculto, sin
   ventana); si eso también falla, cae a `pyttsx3` (voz del sistema).
-- **Traducción ES→JA:** se hace con la **API de Groq** (cuenta de STT,
-  `GROQ_API_KEY_STT`) — NO con `deep-translator`. Hay una **cache en memoria**
-  (dict) por frase exacta dentro de la sesión, así las frases repetidas (p. ej.
-  las de tono: "Listo", "Ya está") se traducen **una sola vez**. La traducción
-  actúa sobre el **texto final** de *cualquier* respuesta (LLM, fast-path o tool
-  hardcodeada) sin tocar cómo se genera ese texto.
+- **Traducción ES→JA (y compartida):** la traducción se hace con la **API de
+  Groq** — NO con `deep-translator`. La lógica vive en `core/traduccion.py` y la
+  comparten el **TTS** (ES→JA con la cuenta de STT, `GROQ_API_KEY_STT`) y el
+  **traductor de juegos** (con la cuenta principal, `GROQ_API_KEY`). Hay una
+  **cache en memoria** (dict) por frase exacta dentro de la sesión, así las
+  frases repetidas (p. ej. las de tono: "Listo", "Ya está") se traducen **una
+  sola vez**. La traducción actúa sobre el **texto final** de *cualquier*
+  respuesta (LLM, fast-path o tool hardcodeada) sin tocar cómo se genera ese texto.
 - **Subtítulos sincronizados por frase:** una respuesta larga se divide en
   frases; cada frase se **sintetiza y se subtitula de a una** (con *prefetch*
   de la siguiente) para que el subtítulo coincida con el audio que suena, en
@@ -223,9 +258,20 @@ las siguientes tools:
   con `threading.Timer`. El `Scheduler` vive en el `Asistente` y se pasa a las
   tools vía `contexto["scheduler"]`. Al **cerrar** el asistente se cancelan
   todas las pendientes (no se deja un timer que apague la PC al salir).
-- **Memoria:** `core/memoria.py` existe como interfaz pero está **desactivada
-  a propósito** (no hay backend conectado todavía). Se puede reactivar más
-  adelante con algo liviano como SQLite.
+- **Memoria:** `core/memoria.py` es una memoria persistente sobre **SQLite**
+  (stdlib, sin dependencias). Guarda "recuerdos" (`data/miku_memoria.db`) y los
+  consulta por coincidencia de texto (LIKE, sin embeddings por ahora). Se
+  activa/desactiva con `memoria_activa` en `config.py`/`config_local.py` y se
+  degrada sola (no tumba el arranque) si SQLite falla.
+- **Volumen por app:** `ajustar_volumen` acepta un parámetro `app`; cuando se
+  indica, ajusta **todas las sesiones de audio** de esa app (vía pycaw
+  `GetAllSessions`), no el volumen general. Útil para el "Game Booster".
+- **Traductor de juegos:** reutiliza `core/traduccion.py` y copia el resultado
+  al portapapeles con `win32clipboard` (pywin32). El diccionario de mensajes y
+  el idioma salen de `config_local.py`.
+- **Interpolación de video:** `plugins/video_interpolador.py` lanza el `.bat`
+  configurado en un hilo aparte (sin ventana), pasándole la ruta del video como
+  argumento, y avisa por voz/consola al terminar (según el código de salida).
 - **Seguridad:** ningún comando de sistema usa `shell=True`; `cerrar_programa`
   valida contra una whitelist exacta antes de matar un proceso; `buscar_archivo`
   y `buscar_en_web` se ejecutan por `subprocess`/`webbrowser` sin shell.
@@ -235,12 +281,16 @@ las siguientes tools:
 ## 🛠️ Próximos pasos (roadmap)
 
 - **Discord**: silenciar/desilenciar, volumen por usuario, expulsar, traducción al chat.
-- **Game Booster**: bajar volumen del navegador, pausar Wallpaper Engine, monitorear temperatura.
+- **Game Booster**: bajar volumen del navegador (**ya existe volumen por app**), pausar Wallpaper Engine, monitorear temperatura.
 - **Navegador (Brave) por CDP**: abrir/cerrar pestañas, buscar, autocompletar (más profundo que el `buscar_en_web` actual, que solo abre la búsqueda).
-- **Traductor para juegos**: mensajes predefinidos para CS:GO (portugués) y Genshin Impact (inglés).
-- **Macros personalizadas**: conectar `data/macros_config.json` a un plugin real ("modo Fortnite", "comedor", etc.).
-- **Memoria persistente**: decidir si se reactiva con un backend liviano.
-- **Interpolación de video**: conectar `carpeta_videos` / `ruta_bat_interpolar` de `config_local.py` a un comando real.
+
+### Hecho recientemente (ya no son "próximos pasos")
+
+- **Volumen por app** (`ajustar_volumen` con `app`) — base del futuro Game Booster.
+- **Traductor para juegos** (`traductor_juegos`): mensajes predefinidos traducidos + portapapeles.
+- **Macros personalizadas** (`macros`): conectadas a `data/macros_config.json`.
+- **Memoria persistente**: reactivada con backend liviano (SQLite).
+- **Interpolación de video** (`video_interpolador`): conecta `carpeta_videos` / `ruta_bat_interpolar` a un comando real, con aviso por voz al terminar.
 
 ### Ideas de lanzador / experiencia de escritorio (sesión aparte, NO implementadas)
 

@@ -35,7 +35,8 @@ PyQt5>=5.15.10
 # ---------- Control del sistema (plugins) ----------
 # Abrir programas por nombre (usado por el plugin SystemControl).
 AppOpener>=1.7
-# Control de ventanas nativo de Windows (win32gui/con/api).
+# Control de ventanas nativo de Windows (win32gui/con/api) y copiado al
+# portapapeles del traductor de juegos (win32clipboard).
 pywin32>=306
 # Control de brillo de la pantalla (plugin SystemControl).
 screen-brightness-control>=0.21.0

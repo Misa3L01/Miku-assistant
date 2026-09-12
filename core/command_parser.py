@@ -84,6 +84,10 @@ class BrainGroq:
             "- Si pide buscar o abrir algo en INTERNET (MercadoLibre, YouTube, "
             "Google, Wikipedia, GitHub o un sitio), usá buscar_en_web, NO "
             "abrir_programa.\n"
+            "- Si el usuario menciona el nombre de una MACRO configurada "
+            "(por ejemplo 'modo fortnite', 'comedor' u otro atajo conocido), "
+            "usá ejecutar_macro con ese nombre. Si no sabés qué macros hay, "
+            "podés usar listar_macros.\n"
             "- Si es una pregunta de conocimiento, charla, chiste o curiosidad: "
             "respondé directo SIN herramientas.\n"
             "- Nunca inventes parámetros de las tools.\n"
@@ -638,16 +642,20 @@ class CommandParser:
                 return None  # que lo maneje la tool programar_accion
             if self.memoria:
                 dato = t.replace("acordate", "").replace("recorda", "")
-                dato = _quitar_preposicion(dato)
-                self.memoria.guardar_recuerdo(dato.strip())
+                dato = _quitar_preposicion(dato).strip()
+                if dato:
+                    self.memoria.guardar_recuerdo(dato)
                 return "Anotado, no me olvido."
             return "No tengo memoria activa en este modo."
 
         return None
 
     # Expresión de tiempo diferido: "en 5 minutos", "en 2 horas", "en 30 seg".
+    # OJO con el plural: el sufijo opcional "s?" va ANTES del \b para que
+    # "minutos"/"horas"/"segundos" también matcheen (antes "minutos" no
+    # matcheaba por el \b entre 'o' y 's').
     _RE_TIEMPO_DIFERIDO = re.compile(
-        r"\ben\s+\d+\s*(minuto|min|hora|hs?|segundo|seg|s)\b")
+        r"\ben\s+\d+\s*(minutos?|mins?|horas?|hs?|segundos?|segs?|s)\b")
 
     def _parece_recordatorio_diferido(self, t: str) -> bool:
         """True si el texto parece "recordame X en N minutos/horas" (diferido)."""
@@ -669,9 +677,15 @@ class CommandParser:
 
 
 def _quitar_preposicion(dato: str) -> str:
-    """Limpia una frase de memoria de las preposiciones iniciales típicas."""
-    for pre in ("que ", "que tengas "):
+    """Limpia una frase de memoria de las preposiciones iniciales típicas.
+
+    Nota: se hace ``strip()`` ANTES de comparar porque el reemplazo de
+    "acordate"/"recorda" suele dejar un espacio inicial (" que X"), que hacía
+    fallar el ``startswith("que ")``.
+    """
+    dato = (dato or "").strip()
+    for pre in ("que tengas ", "que ", "que tengo ", "tengo "):
         if dato.startswith(pre):
             dato = dato[len(pre):]
             break
-    return dato
+    return dato.strip()

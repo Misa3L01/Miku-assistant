@@ -255,13 +255,14 @@ class SystemControl(Plugin):
             "type": "function",
             "function": {
                 "name": "ajustar_volumen",
-                "description": "Controla el volumen del sistema. "
-                               "Usá accion='subir'/'bajar' para cambios "
-                               "RELATIVOS (ej: 'subí el volumen', 'bajá un "
-                               "poco'); usá accion='fijar' (con 'valor' 0-100) "
-                               "para poner un nivel EXACTO (ej: 'poné el "
-                               "volumen en 10', 'dejalo al 50%'); usá "
-                               "'silenciar' o 'desmutear' para el mute real.",
+                "description": "Controla el volumen del sistema o de una APP "
+                               "específica. Usá accion='subir'/'bajar' para "
+                               "cambios RELATIVOS (ej: 'subí el volumen'); "
+                               "usá accion='fijar' (con 'valor' 0-100) para un "
+                               "nivel EXACTO (ej: 'poné el volumen en 10'); "
+                               "usá 'silenciar'/'desmutear' para el mute real. "
+                               "Para el volumen de UNA app, pasá 'app' (ej: "
+                               "'bajá el volumen de Brave' -> app='brave').",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -280,6 +281,14 @@ class SystemControl(Plugin):
                             "type": "integer",
                             "description": "Opcional: pasos/porcentaje para "
                                            "subir o bajar (default 5).",
+                        },
+                        "app": {
+                            "type": "string",
+                            "description": "Opcional: nombre de la app cuyo "
+                                           "volumen ajustar (ej: 'brave', "
+                                           "'discord', 'tidal'). Si se omite, "
+                                           "se ajusta el volumen GENERAL del "
+                                           "sistema.",
                         },
                     },
                     "required": ["accion"],
@@ -432,7 +441,8 @@ class SystemControl(Plugin):
         if nombre_tool == "ajustar_volumen":
             return self.ajustar_volumen(str(args.get("accion", "")),
                                         args.get("paso"),
-                                        args.get("valor"))
+                                        args.get("valor"),
+                                        args.get("app"))
         if nombre_tool == "buscar_archivo":
             # Caso especial: si viene una "ruta_elegida" (de una desambiguación
             # ya resuelta), abrimos ESO directo sin volver a buscar.
@@ -736,19 +746,27 @@ class SystemControl(Plugin):
         return "No pude enviar el comando multimedia."
 
     def ajustar_volumen(self, accion: str, paso: Optional[int] = None,
-                        valor: Optional[int] = None) -> str:
-        """Controla el volumen del sistema.
+                        valor: Optional[int] = None,
+                        app: Optional[str] = None) -> str:
+        """Controla el volumen del sistema (o de una APP puntual).
 
         Acciones:
-        - ``subir``/``bajar``: cambio RELATIVO en pasos (default 5) sobre el
-          nivel actual.
-        - ``fijar``: pone un nivel EXACTO (``valor`` 0-100); si el nuevo valor
-          es > 0, reactiva el audio en caso de estar silenciado.
-        - ``silenciar``/``desmutear``: mute determinístico vía pycaw
-          (no es toggle; no se invierte por llamada accidental).
+        - ``subir``/``bajar``: cambio RELATIVO en pasos (default 5).
+        - ``fijar``: nivel EXACTO (``valor`` 0-100).
+        - ``silenciar``/``desmutear``: mute determinístico vía pycaw.
+
+        Si se pasa ``app`` (ej. "brave"), se ajusta el volumen de ESA app
+        (todas sus sesiones de audio). Si no, se ajusta el volumen GENERAL.
         """
         accion = (accion or "").lower().strip()
 
+        # Derivamos a la lógica POR APP si el usuario nombró una app.
+        app = (app or "").strip()
+        if app and app.lower() not in ("sistema", "general", "pc",
+                                       "computadora", "todo"):
+            return self._ajustar_volumen_app(app, accion, paso, valor)
+
+        # -------- Volumen GENERAL (comportamiento original) --------
         # Mute real (no toggle): sin ambigüedad.
         if accion in ("silenciar", "mutear", "mute", "sin sonido"):
             return self._aplicar_mute_real(True)
@@ -831,6 +849,139 @@ class SystemControl(Plugin):
         except Exception as e:  # noqa: BLE001
             logger.error("Error fijando volumen con pycaw: %s", e)
             return "No pude fijar el volumen."
+
+    # ---------------- Volumen POR APP (sesiones de audio) ---------------- #
+    def _sesiones_de_app(self, nombre_app: str) -> List[Any]:
+        """Devuelve las SESIONES de audio de la app cuyo nombre coincide.
+
+        Compara por nombre de proceso (DisplayName/ProcessName), case-insensitive
+        y tolerante a acentos. Devuelve TODAS las sesiones que matcheen (un
+        navegador puede tener varias pestañas/pestañas de audio abiertas): así
+        "bajá el volumen de Brave" afecta a todas por igual.
+        """
+        try:
+            from pycaw.pycaw import AudioUtilities  # import tardío
+        except Exception as e:  # noqa: BLE001
+            logger.debug("pycaw no disponible para volumen por app: %s", e)
+            return []
+
+        objetivo = _normalizar_texto(nombre_app)
+        objetivo_compacto = _clave_compacta(nombre_app)
+        coincidentes: List[Any] = []
+        try:
+            sesiones = AudioUtilities.GetAllSessions()
+        except Exception as e:  # noqa: BLE001
+            logger.error("No pude listar sesiones de audio: %s", e)
+            return coincidentes
+
+        for sesion in sesiones:
+            try:
+                proc = getattr(sesion, "Process", None)
+                nombre_proc = ""
+                if proc is not None:
+                    try:
+                        nombre_proc = proc.name() or ""
+                    except Exception:  # noqa: BLE001
+                        nombre_proc = ""
+                # A veces Process es None pero hay DisplayName.
+                display = ""
+                try:
+                    display = sesion.DisplayName or ""
+                except Exception:  # noqa: BLE001
+                    display = ""
+
+                candidatos = [_normalizar_texto(nombre_proc),
+                              _normalizar_texto(display)]
+                for cand in candidatos:
+                    if not cand:
+                        continue
+                    if (objetivo in cand
+                            or objetivo_compacto in _clave_compacta(cand)):
+                        # Ojo: el nombre del proceso suele terminar en ".exe".
+                        coincidentes.append(sesion)
+                        break
+            except Exception:  # noqa: BLE001
+                continue
+        return coincidentes
+
+    def _volumen_sesion(self, sesion: Any):
+        """Devuelve el ISimpleAudioVolume de una sesión (o None)."""
+        try:
+            return sesion.SimpleAudioVolume
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Sesión sin SimpleAudioVolume: %s", e)
+            return None
+
+    def _ajustar_volumen_app(self, nombre_app: str, accion: str,
+                             paso: Optional[int], valor: Optional[int]) -> str:
+        """Ajusta el volumen de TODAS las sesiones de audio de una app.
+
+        Acciones soportadas: subir/bajar (relativo), fijar (absoluto),
+        silenciar/desmutear. Lee/devuelve nivel en porcentaje.
+        """
+        accion = (accion or "").lower().strip()
+        sesiones = self._sesiones_de_app(nombre_app)
+        if not sesiones:
+            return (f"No encontré ninguna app sonando que se llame "
+                    f"'{nombre_app}'. ¿Está abierta y reproduciendo audio?")
+
+        app_txt = nombre_app
+        afectadas = 0
+        ultimo_pct = None
+        for sesion in sesiones:
+            vol = self._volumen_sesion(sesion)
+            if vol is None:
+                continue
+            try:
+                if accion in ("silenciar", "mutear", "mute", "sin sonido"):
+                    vol.SetMute(1, None)
+                    afectadas += 1
+                    continue
+                if accion in ("desmutear", "sonido", "reactivar",
+                              "activar sonido", "activar_sonido"):
+                    vol.SetMute(0, None)
+                    afectadas += 1
+                    continue
+                actual = max(0.0, min(1.0, float(vol.GetMasterVolume())))
+                if accion in ("fijar", "establecer", "poner", "setear", "set"):
+                    if valor is None:
+                        return ("Decime en qué porcentaje lo pongo (0 a 100), "
+                                "por ejemplo 'poné el volumen de brave en 30'.")
+                    nuevo = max(0.0, min(1.0, int(valor) / 100.0))
+                elif accion in ("subir", "mas", "arriba"):
+                    delta = max(1, min(100, int(paso or 5))) / 100.0
+                    nuevo = max(0.0, min(1.0, actual + delta))
+                elif accion in ("bajar", "menos", "abajo"):
+                    delta = max(1, min(100, int(paso or 5))) / 100.0
+                    nuevo = max(0.0, min(1.0, actual - delta))
+                else:
+                    return ("No entendí. Usá subir, bajar, fijar (con valor), "
+                            "silenciar o desmutear.")
+                vol.SetMasterVolume(nuevo, None)
+                # Si subimos y estaba silenciada, destrabamos el mute.
+                if nuevo > 0:
+                    try:
+                        if vol.GetMute():
+                            vol.SetMute(0, None)
+                    except Exception:  # noqa: BLE001
+                        pass
+                afectadas += 1
+                ultimo_pct = int(round(nuevo * 100))
+            except Exception as e:  # noqa: BLE001
+                logger.error("Error ajustando sesión de '%s': %s", app_txt, e)
+                continue
+
+        if afectadas == 0:
+            return f"No pude ajustar el volumen de '{app_txt}'."
+
+        if accion in ("silenciar", "mutear", "mute", "sin sonido"):
+            return f"Silencié {app_txt}."
+        if accion in ("desmutear", "sonido", "reactivar",
+                      "activar sonido", "activar_sonido"):
+            return f"Reactivé el sonido de {app_txt}."
+        if ultimo_pct is not None:
+            return f"Volumen de {app_txt} en {ultimo_pct}%."
+        return f"Ajusté el volumen de {app_txt}."
 
     # ---------------- Búsqueda con Everything (es.exe) ---------------- #
     def buscar_archivo(self, nombre: str, extension: Optional[str] = None,

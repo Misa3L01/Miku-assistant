@@ -38,6 +38,9 @@ from core import tono
 from plugins import Plugin, registrar_plugins
 from plugins.system_control import SystemControl
 from plugins.web_search import WebSearch
+from plugins.macros import Macros
+from plugins.video_interpolador import VideoInterpolador
+from plugins.traductor_juegos import TraductorJuegos
 
 logger = logging.getLogger("miku.main")
 
@@ -74,6 +77,8 @@ class Asistente:
         # Programador de acciones diferidas (timers). Vive con el asistente y
         # se pasa a las tools vía contexto["scheduler"].
         self.scheduler = Scheduler()
+        # Memoria persistente (SQLite). Solo se crea si está habilitada.
+        self.memoria = None
 
     # ---------------- Setup (no toca audio) ----------------
     def instalar_core(self) -> None:
@@ -81,12 +86,28 @@ class Asistente:
         logger.info("Ensamblando el núcleo del asistente...")
         self.bus = EventBus()
 
-        # Brain + parser. La memoria queda desactivada (None) de momento.
+        # Memoria persistente: se instancia SOLO si la config la habilita
+        # (memoria_activa = true). Si falla, se degrada a None (sin memoria)
+        # sin tumbar el arranque.
+        if self.cfg.memoria_activa:
+            try:
+                from core.memoria import Memoria  # import tardío
+                self.memoria = Memoria()
+                logger.info("Memoria persistente activa (%d recuerdo(s)).",
+                            self.memoria.cantidad())
+            except Exception:  # noqa: BLE001
+                logger.exception("No se pudo activar la memoria; sigo sin ella.")
+                self.memoria = None
+
+        # Brain + parser. La memoria se pasa al parser para que inyecte
+        # recuerdos relevantes en el contexto del LLM.
         brain = BrainGroq(self.cfg)
-        self.parser = CommandParser(self.cfg, brain, self.bus, memoria=None)
+        self.parser = CommandParser(self.cfg, brain, self.bus,
+                                    memoria=self.memoria)
 
         # Plugins.
-        candidatos: list[Plugin] = [SystemControl(), WebSearch()]
+        candidatos: list[Plugin] = [SystemControl(), WebSearch(), Macros(),
+                                    VideoInterpolador(), TraductorJuegos()]
         activos = registrar_plugins(candidatos, self.bus)
         for plugin in activos:
             self.bus.registrar_plugin(plugin)
@@ -178,6 +199,14 @@ class Asistente:
             keyboard.unhook_all()
         except Exception:  # noqa: BLE001
             pass
+        # Cerramos la conexión SQLite de la memoria (si estaba activa).
+        if self.memoria is not None:
+            try:
+                cerrar = getattr(self.memoria, "cerrar", None)
+                if callable(cerrar):
+                    cerrar()
+            except Exception:  # noqa: BLE001
+                logger.debug("No se pudo cerrar la memoria.")
         if self.bus:
             self.bus.detener()
 

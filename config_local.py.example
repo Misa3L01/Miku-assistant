@@ -60,3 +60,22 @@ TIDAL_RUTA_EXE = ""
 CARPETA_VIDEOS = ""
 # Ruta al script .bat que interpola (ej: R:\\...\\interpolar_miku.bat).
 RUTA_BAT_INTERPOLAR = ""
+
+# ============================================================================ #
+# Memoria persistente (SQLite en data/miku_memoria.db)
+# ============================================================================ #
+# Poné False para desactivar la memoria (no guardar/consultar recuerdos).
+MEMORIA_ACTIVA = True
+
+# ============================================================================ #
+# Traductor para juegos
+# ============================================================================ #
+# Idioma destino al que se traducen los mensajes del juego.
+IDIOMA_JUEGO = ""            # ej: "inglés", "japonés", "portugués"
+# Diccionario de mensajes predefinidos {clave: frase_en_español}.
+# Cuando pidas "mandá buena partida", se traduce y copia al portapapeles.
+MENSAJES_JUEGO = {
+    # "gg": "buena partida",
+    # "gracias": "gracias por jugar",
+    # "nuevo": "perdón, soy nuevo",
+}

@@ -37,6 +37,7 @@ from typing import Optional
 import requests
 
 import config as config_mod
+from core import traduccion
 
 logger = logging.getLogger("miku.tts")
 
@@ -47,15 +48,14 @@ logger = logging.getLogger("miku.tts")
 VOICEVOX_RUN_EXE = (config_mod.BASE_DIR / "extern" / "VOICEVOX"
                     / "vv-engine" / "run.exe")
 
-# URL de Groq (chat completions), para traducción ES->JA con la cuenta de STT.
-_GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
-# Modelo liviano y determinístico para traducir frases cortas.
-_MODELO_TRADUCCION = "openai/gpt-oss-20b"
-
 # Cache de traducciones (clave = texto EXACTO a traducir -> japonés).
 # Vive a nivel de módulo para sobrevivir entre instancias y aprovechar que las
 # frases de tono ("Listo", "Ya está", "Dale") se repiten mucho.
 _CACHE_TRADUCCIONES: dict = {}
+
+# Re-export por compatibilidad: la normalización de texto para traducir ahora
+# vive en ``core.traduccion`` (compartida con el traductor de juegos).
+normalizar_para_traducir = traduccion.normalizar_para_traducir
 
 
 def limpiar_texto_para_voz(texto: Optional[str]) -> str:
@@ -66,29 +66,6 @@ def limpiar_texto_para_voz(texto: Optional[str]) -> str:
     t = re.sub(r"\*+", "", t)         # asteriscos (negritas, cursivas)
     t = re.sub(r"_+", "", t)          # guiones bajos
     t = re.sub(r"`+", "", t)          # backticks (código)
-    t = re.sub(r"\s+", " ", t).strip()
-    return t
-
-
-def normalizar_para_traducir(texto: Optional[str]) -> str:
-    """Prepara el texto para el traductor (NO afecta lo que se dice/subtitula).
-
-    El traductor (Groq) a veces se confunde con signos de apertura y otros
-    símbolos que no usa el japonés. Los reemplazamos por equivalentes neutros
-    SOLO en la copia que se manda a traducir:
-      - "¿" -> "" y "?" se mantiene (el "?" de cierre ya cierra la pregunta).
-      - "¡" -> "" (el "!" de cierre ya está).
-      - "…" -> "..." (puntos suspensivos ASCII).
-      - comillas tipográficas -> comillas rectas.
-      - espacios múltiples colapsados.
-    """
-    if not texto:
-        return ""
-    t = texto
-    t = t.replace("¿", "").replace("¡", "")
-    t = t.replace("…", "...")
-    t = (t.replace("\u201c", "\"").replace("\u201d", "\"")
-         .replace("\u2018", "'").replace("\u2019", "'"))
     t = re.sub(r"\s+", " ", t).strip()
     return t
 
@@ -622,68 +599,19 @@ class TextoAVoz:
     def _traducir_a_japones(self, texto_es: str) -> Optional[str]:
         """Traduce a japonés usando la cuenta STT de Groq (con cache).
 
-        Orden del pipeline:
-          1. Normalizar símbolos raros (¿ ¡ … comillas) — 4.2c.
-          2. Cache en memoria (clave = texto normalizado exacto).
-          3. Llamada a Groq (chat/completions) con la cuenta de STT, temp=0.
-          4. Si Groq falla o devuelve vacío -> None (el caller cae a pyttsx3).
+        Delegado a ``core.traduccion.traducir_con_groq`` (compartido con el
+        traductor de juegos). Mantiene la cache en memoria del módulo
+        (``_CACHE_TRADUCCIONES``) para no repetir llamadas por frases de tono.
 
-        Devuelve None si no hay traducción disponible.
+        Devuelve None si no hay traducción disponible (el caller cae a pyttsx3).
         """
-        texto_limpio = normalizar_para_traducir(texto_es)
-        if not texto_limpio:
-            return None
-
-        # 2) Cache: si ya lo traducimos, no llamamos a la API.
-        cacheado = _CACHE_TRADUCCIONES.get(texto_limpio)
-        if cacheado:
-            logger.debug("[TTS] Traducción desde CACHE: %r", texto_limpio[:40])
-            return cacheado
-
-        # 3) Groq con la cuenta de STT (NO la del cerebro).
         key = str(self.cfg.groq_api_key_stt).strip()
         if not key:
             logger.info("[TTS] No hay groq_api_key_stt para traducir; "
                         "voy a pyttsx3.")
             return None
-
-        prompt = ("Traducí el siguiente texto al japonés. Devolvé SOLO la "
-                  "traducción, sin comillas, sin comentarios, sin texto "
-                  "adicional: " + texto_limpio)
-        try:
-            resp = requests.post(
-                _GROQ_CHAT_URL,
-                headers={"Authorization": f"Bearer {key}",
-                         "Content-Type": "application/json"},
-                json={
-                    "model": _MODELO_TRADUCCION,
-                    "temperature": 0,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
-                timeout=20,
-            )
-            if resp.status_code != 200:
-                # Logueamos el error REAL (nivel INFO) para diagnóstico.
-                logger.info("[TTS] Traducción Groq (STT) falló: HTTP %s. "
-                            "Cuerpo: %s", resp.status_code,
-                            (resp.text or "")[:200])
-                return None
-            data = resp.json()
-            trad = (data.get("choices", [{}])[0]
-                    .get("message", {}).get("content") or "").strip()
-            if not trad:
-                logger.info("[TTS] Traducción Groq (STT) vacía para %r",
-                            texto_limpio[:40])
-                return None
-            # Guardamos en cache para próximas repeticiones de la frase.
-            _CACHE_TRADUCCIONES[texto_limpio] = trad
-            logger.debug("[TTS] Traducción Groq (STT) OK: %r -> %r",
-                         texto_limpio[:40], trad[:40])
-            return trad
-        except Exception as e:  # noqa: BLE001
-            logger.info("[TTS] Error de red traduciendo con Groq (STT): %s",
-                        str(e)[:160])
-            return None
+        return traduccion.traducir_con_groq(
+            texto_es, "japonés", key, cache=_CACHE_TRADUCCIONES)
 
     # ---------------- VOICEVOX ----------------
     def _sintetizar_voicevox(self, texto_ja: str) -> Optional[bytes]:

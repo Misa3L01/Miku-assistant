@@ -14,8 +14,10 @@ keys.txt
 # Archivos de datos
 data/preferences.json
 data/macros_config.json
-# Persistencia de la memoria (chromadb)
+# Persistencia de la memoria
 data/miku_memoria/
+data/miku_memoria.db
+data/*.db
 
 # VS Code
 .vscode/settings.json

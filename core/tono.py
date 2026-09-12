@@ -82,8 +82,25 @@ _VARIANTES: Dict[str, List[str]] = {
     ],
     "anotado, no me olvido": [
         "Anotado, no me olvido.",
+        "Anotado, lo recordaré.",
+        "Perfecto, lo tendré en cuenta.",
         "Listo, lo tengo presente.",
         "Ya lo guardé en mi memoria.",
+        "Dale, me lo anoté.",
+        "Anotado, quedate tranqui.",
+        "Hecho, me voy a acordar.",
+    ],
+    # Memoria inactiva (cuando memoria_activa = false o falló el backend).
+    "no tengo memoria activa en este modo": [
+        "No tengo memoria activa en este modo.",
+        "Uy, ahora mismo no tengo memoria encendida.",
+        "Mi memoria está apagada en este modo.",
+        "No puedo acordarme de eso: la memoria no está activa.",
+    ],
+    "la memoria no está activa": [
+        "La memoria no está activa.",
+        "Mi memoria está apagada ahora.",
+        "No tengo memoria encendida en este modo.",
     ],
     # Wake word ("¿Sí? Decime."), lo setea main.py.
     "¿sí? decime": [

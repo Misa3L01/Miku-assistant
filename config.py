@@ -57,6 +57,11 @@ def _defaults() -> Dict[str, Any]:
         #: Nivel de logging por defecto: "INFO", "DEBUG" o "ERROR".
         "log_level": "INFO",
 
+        # --- Memoria persistente (SQLite en data/miku_memoria.db) ---
+        #: True para activar la memoria (guardar/consultar recuerdos).
+        #: Se puede forzar a False desde config_local.py para desactivarla.
+        "memoria_activa": True,
+
         # --- Navegador (Brave) ---
         "brave_debug_port": 9222,
         # Las rutas de tu instalación van en config_local.py (NO en defaults).
@@ -85,6 +90,14 @@ def _defaults() -> Dict[str, Any]:
         # defaults. Se definen únicamente en config_local.py (NO versionado).
         "carpeta_videos": "",
         "ruta_bat_interpolar": "",
+
+        # --- Traductor para juegos ---
+        # Idioma destino y mensajes preconfigurados. Se definen típicamente en
+        # config_local.py. Ejemplo:
+        #   IDIOMA_JUEGO = "inglés"
+        #   MENSAJES_JUEGO = {"gg": "buena partida", "gracias": "gracias"}
+        "idioma_juego": "",
+        "mensajes_juego": {},
     }
 
 
@@ -154,6 +167,15 @@ class Config:
     @property
     def modo_entrada(self) -> str:
         return str(self.valores.get("modo_entrada", "voz")).lower()
+
+    # ---------- Memoria ----------
+    @property
+    def memoria_activa(self) -> bool:
+        """True si la memoria persistente debe estar activa."""
+        valor = self.valores.get("memoria_activa", True)
+        if isinstance(valor, str):
+            return valor.strip().lower() in ("1", "true", "sí", "si", "yes", "on")
+        return bool(valor)
 
     # ---------- Sistema / apps ----------
     @property
