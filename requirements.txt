@@ -47,6 +47,11 @@ keyboard>=0.13.5
 pycaw>=20181223
 comtypes>=1.1.12
 
+# ---------- Discord (bot de moderación) ----------
+# Corre en su propio hilo/loop async (plugins/discord_control.py). Se importa
+# de forma LAZY: si falta, el plugin queda inactivo y el asistente igual arranca.
+discord.py>=2.3.2
+
 # ---------- Opcionales (comentados) ----------
 # TTS online alternativo (si preferís edge-tts a VOICEVOX):
 # edge-tts>=6.1.10

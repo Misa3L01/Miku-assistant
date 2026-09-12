@@ -110,6 +110,17 @@ def _defaults() -> Dict[str, Any]:
         # auto-detecta por ahora (sus manifiestos JSON son más frágiles).
         #   JUEGOS_EPIC = {"nombre": "id_del_item"}
         "juegos_epic": {},
+
+        # --- Discord (bot) ---
+        # El TOKEN es secreto: va SOLO en config_local.py (o variable de
+        # entorno DISCORD_BOT_TOKEN). Si está vacío, el plugin queda inactivo
+        # (no rompe el arranque).
+        "discord_bot_token": "",
+        # Guild (servidor) por defecto para resolver usuarios/canales. Se puede
+        # poner en config_local.py (DISCORD_GUILD_ID) o pasar por comando.
+        "discord_guild_id": "",
+        # Canal por defecto (ID) reservado para funciones de canal (a futuro).
+        "discord_canal_default": "",
     }
 
 
@@ -220,6 +231,17 @@ class Config:
     def discos_buscar(self) -> List[str]:
         discos = self.valores.get("discos_buscar") or ["C", "D", "R"]
         return [str(d) for d in discos]
+
+    # ---------- Discord ----------
+    @property
+    def discord_bot_token(self) -> str:
+        """Token del bot de Discord (secreto). Vacío => plugin inactivo."""
+        return str(self.valores.get("discord_bot_token", "") or "").strip()
+
+    @property
+    def discord_guild_id(self) -> str:
+        """ID del servidor (guild) por defecto para resolver usuarios/canales."""
+        return str(self.valores.get("discord_guild_id", "") or "").strip()
 
     # ---------- Acceso genérico ----------
     def get(self, clave: str, por_defecto: Any = None) -> Any:

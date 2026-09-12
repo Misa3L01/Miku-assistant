@@ -91,3 +91,20 @@ MENSAJES_JUEGO = {
 # Epic aún no se auto-detecta (sus manifiestos son más frágiles).
 #   JUEGOS_EPIC = {"fortnite": "fn", "rocket league": "sugar"}
 JUEGOS_EPIC = {}
+
+# ============================================================================ #
+# Discord (bot)
+# ============================================================================ #
+# Token del bot de Discord (secreto, NUNCA lo subas al repo).
+# Se crea en https://discord.com/developers/applications y necesita los
+# intents "Server Members" y "Message Content" activados.
+# Si lo dejás vacío, el plugin de Discord queda inactivo (no rompe el arranque).
+DISCORD_BOT_TOKEN = ""       # ej: "MTIz...abc"
+
+# ID del servidor (guild) por defecto, para resolver usuarios por nombre.
+# Clic derecho sobre el servidor (con Modo desarrollador activado) -> Copiar ID.
+DISCORD_GUILD_ID = ""
+
+# Canal por defecto (ID) reservado para futuras funciones de canal.
+DISCORD_CANAL_DEFAULT = ""
+

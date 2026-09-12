@@ -85,6 +85,12 @@ class BrainGroq:
             "- Para abrir un JUEGO (aunque no sea un programa instalado, como "
             "un juego de Steam o Epic) usá abrir_programa igual: sabe buscar en "
             "la biblioteca de Steam.\n"
+            "- Para acciones en DISCORD sobre OTROS usuarios (silenciar el "
+            "micro, ensordecer, expulsar), usá las tools de Discord "
+            "(silenciar_usuario_discord, volumen_usuario_discord, "
+            "expulsar_usuario_discord). NO se puede cambiar el VOLUMEN real de "
+            "otro usuario (Discord no lo permite): eso se hace como mute/"
+            "deafen de voz.\n"
             "- Si el usuario pide algo DENTRO DE UN TIEMPO, como 'apagá la pc en "
             "10 minutos', 'suspendé en 5 minutos' o 'recordame X en N minutos', "
             "usá la tool programar_accion (NO control_energia). Para cancelarlo, "
@@ -189,7 +195,13 @@ class BrainGroq:
                 self._ultima_llamada = time.monotonic()
 
             # Cache de respuestas típicas (no para acciones peligrosas).
-            peligrosas = {"control_energia", "programar_accion"}
+            # IMPORTANTE: cualquier tool que afecte a otro usuario o al sistema
+            # (Discord, energía, programar) NO se cachea, para no repetir una
+            # respuesta sin volver a ejecutar la acción.
+            peligrosas = {"control_energia", "programar_accion",
+                          "silenciar_usuario_discord",
+                          "expulsar_usuario_discord",
+                          "volumen_usuario_discord"}
             hay_danger = any(c["nombre"] in peligrosas for c in parsed_calls)
             if texto_resp and not hay_danger:
                 cache_respuesta(cache_key, texto_resp)
@@ -350,6 +362,9 @@ class CommandParser:
     _TOOLS_PELIGROSAS = {
         "control_energia",        # apagar/reiniciar/suspender la PC
         "programar_accion",       # programar apagado/reinicio/suspensión
+        "silenciar_usuario_discord",  # afecta a OTRO usuario en Discord
+        "expulsar_usuario_discord",   # expulsa (kick) a otro usuario
+        "volumen_usuario_discord",    # afecta el audio de otro usuario
     }
     # Palabras que el usuario usa para confirmar una acción.
     _CONFIRMAR = ("sí", "si", "dale", "confirmo", "hacelo", "ok", "okay",
@@ -393,9 +408,34 @@ class CommandParser:
         if tool == "programar_accion":
             return self._describir_programar(args)
 
+        if tool in ("silenciar_usuario_discord", "expulsar_usuario_discord",
+                    "volumen_usuario_discord"):
+            return self._describir_discord(tool, args)
+
         # Genérico para futuras tools peligrosas.
         return ("Esto es una acción importante, ¿la confirmás? "
                 "Decime 'sí' para confirmar o 'no' para cancelar.")
+
+    def _describir_discord(self, tool: str, args: Dict[str, Any]) -> str:
+        """Arma la pregunta de confirmación para las tools de Discord."""
+        usuario = str((args or {}).get("usuario", "") or "").strip() or "ese usuario"
+        if tool == "expulsar_usuario_discord":
+            return (f"¿Confirmás que expulse a {usuario} del servidor de "
+                    f"Discord? Decime 'sí' para confirmar o 'no' para cancelar.")
+        if tool == "silenciar_usuario_discord":
+            silenciar = bool((args or {}).get("silenciar", True))
+            verbo = "silencie" if silenciar else "le quite el silencio a"
+            return (f"¿Confirmás que {verbo} {usuario} en Discord? "
+                    f"Decime 'sí' para confirmar o 'no' para cancelar.")
+        # volumen_usuario_discord
+        accion = str((args or {}).get("accion", "") or "").strip().lower()
+        verbos = {
+            "silenciar": "silencie", "desilenciar": "reactive el micro de",
+            "ensordecer": "ensordezca", "desensordecer": "reactive el audio de",
+        }
+        verbo = verbos.get(accion, "ajuste el audio de")
+        return (f"¿Confirmás que {verbo} {usuario} en Discord? "
+                f"Decime 'sí' para confirmar o 'no' para cancelar.")
 
     def _describir_programar(self, args: Dict[str, Any]) -> str:
         """Arma la pregunta de confirmación para `programar_accion`."""
@@ -460,6 +500,10 @@ class CommandParser:
                     f"Decime 'sí' o 'no'.")
         if tool == "programar_accion":
             return ("Todavía no me confirmaste. ¿Lo programo? "
+                    "Decime 'sí' o 'no'.")
+        if tool in ("silenciar_usuario_discord", "expulsar_usuario_discord",
+                    "volumen_usuario_discord"):
+            return ("Todavía no me confirmaste la acción en Discord. "
                     "Decime 'sí' o 'no'.")
         return "Todavía no me confirmaste. Decime 'sí' o 'no'."
 

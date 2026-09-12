@@ -41,6 +41,7 @@ from plugins.web_search import WebSearch
 from plugins.macros import Macros
 from plugins.video_interpolador import VideoInterpolador
 from plugins.traductor_juegos import TraductorJuegos
+from plugins.discord_control import DiscordControl
 
 logger = logging.getLogger("miku.main")
 
@@ -107,7 +108,8 @@ class Asistente:
 
         # Plugins.
         candidatos: list[Plugin] = [SystemControl(), WebSearch(), Macros(),
-                                    VideoInterpolador(), TraductorJuegos()]
+                                    VideoInterpolador(), TraductorJuegos(),
+                                    DiscordControl()]
         activos = registrar_plugins(candidatos, self.bus)
         for plugin in activos:
             self.bus.registrar_plugin(plugin)
@@ -207,6 +209,18 @@ class Asistente:
                     cerrar()
             except Exception:  # noqa: BLE001
                 logger.debug("No se pudo cerrar la memoria.")
+        # Damos a los plugins la chance de cerrar recursos propios (p. ej. el
+        # bot de Discord detiene su hilo/loop). Es best-effort: un plugin que
+        # falle no debe tumbar el cierre.
+        if self.bus:
+            for plugin in getattr(self.bus, "plugins", []) or []:
+                cerrar = getattr(plugin, "cerrar", None)
+                if callable(cerrar):
+                    try:
+                        cerrar()
+                    except Exception:  # noqa: BLE001
+                        logger.debug("El plugin '%s' falló al cerrar.",
+                                     getattr(plugin, "nombre", "?"))
         if self.bus:
             self.bus.detener()
 

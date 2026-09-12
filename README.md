@@ -9,9 +9,9 @@ Arquitectura modular: un núcleo (`core/`) + plugins enchufables (`plugins/`).
 > control multimedia/volumen (**general y por app**), **acciones diferidas programadas
 > (scheduler)**, **búsqueda web**, **variantes de tono**, **subtítulos sincronizados por
 > frase**, **memoria persistente (SQLite)**, **macros personalizadas**, **interpolación
-> de video** y **traductor para juegos**. Quedan pendientes los plugins "grandes"
-> heredados del sistema anterior (Discord, Game Booster, navegador por CDP) — el
-> framework de plugins (`Plugin` + `tools`) ya está listo para sumarlos.
+> de video**, **traductor para juegos** y **control de Discord (bot)**. Quedan pendientes
+> los plugins "grandes" heredados del sistema anterior (Game Booster, navegador por CDP)
+> — el framework de plugins (`Plugin` + `tools`) ya está listo para sumarlos.
 
 ---
 
@@ -43,6 +43,7 @@ miku-assistant/
 │   ├── web_search.py             # Búsqueda/apertura de sitios web en el navegador
 │   ├── video_interpolador.py     # Dispara el pipeline de interpolación de video (.bat) y avisa al terminar
 │   ├── traductor_juegos.py       # Traduce mensajes de juego predefinidos y los copia al portapapeles
+│   ├── discord_control.py        # Bot de Discord (mute/deafen de VOZ y expulsar) en su propio hilo/loop async
 │   └── macros.py                 # Ejecuta macros/alias definidos en data/macros_config.json
 │
 ├── data/                         # Datos persistentes del usuario (gitignored)
@@ -84,7 +85,7 @@ Requiere **Python 3.10+** sobre **Windows**.
    ```
    Todas las dependencias pesadas/opcionales (PyQt5, pygame, pyttsx3,
    SpeechRecognition, pyaudio, keyboard, AppOpener, pywin32, screen-brightness-control,
-   pycaw, comtypes)
+   pycaw, comtypes, discord.py)
    se importan de forma **lazy**: si falta alguna, el asistente sigue arrancando y
    simplemente esa función particular avisa que no está disponible.
 
@@ -96,6 +97,7 @@ Requiere **Python 3.10+** sobre **Windows**.
    - `CARPETA_VIDEOS`, `RUTA_BAT_INTERPOLAR` — rutas del pipeline de interpolación de video.
    - `MEMORIA_ACTIVA` — `False` para desactivar la memoria persistente (default `True`).
    - `IDIOMA_JUEGO`, `MENSAJES_JUEGO` — idioma destino y diccionario de mensajes del traductor de juegos.
+   - `DISCORD_BOT_TOKEN`, `DISCORD_GUILD_ID`, `DISCORD_CANAL_DEFAULT` — token del bot de Discord y (opcional) servidor/canal por defecto. Sin token, el plugin de Discord queda inactivo (no rompe el arranque).
 
    **`config_local.py` nunca se sube al repo** (está en `.gitignore`). `config.py`
    trae todos los defaults públicos vacíos o genéricos, sin ningún dato real.
@@ -139,7 +141,8 @@ Para salir: `Ctrl+C` (o escribí "salir" en modo texto).
 ## Cómo funciona (flujo de un comando)
 
 1. **`main.py`** prepara logging, carga la config y ensambla el `Asistente`.
-2. Crea el `EventBus` y registra los plugins activos (`SystemControl` por ahora).
+2. Crea el `EventBus` y registra los plugins activos (`SystemControl`, `WebSearch`,
+   `Macros`, `VideoInterpolador`, `TraductorJuegos`, `DiscordControl`).
 3. El `CommandParser` recibe el texto y:
    - atiende **fast path local** (hora, saludos, "acordate que...") sin gastar API;
    - deja responder a un **plugin** si conoce el comando directamente;
@@ -150,8 +153,9 @@ Para salir: `Ctrl+C` (o escribí "salir" en modo texto).
      (`control_energia`, `programar_accion`, y futuras);
    - si nada de lo anterior aplica, consulta al **LLM** (Groq, vía `BrainGroq`)
      con las `tools` que publicaron los plugins. Si el LLM llama una tool
-     **peligrosa** (`control_energia`, `programar_accion`), se pide confirmación
-     explícita antes de ejecutarla.
+     **peligrosa** (`control_energia`, `programar_accion`, o las de **Discord**
+     que afectan a otro usuario), se pide confirmación explícita antes de
+     ejecutarla.
 4. La respuesta se habla (VOICEVOX + subtítulos) o se imprime, según el modo.
    Antes de hablar/imprimir, una respuesta **corta** puede pasar por
    `core/tono.variar()` para no sonar repetitiva (ver más abajo).
@@ -171,7 +175,7 @@ Se registra en `main.instalar_core()` dentro de `candidatos`. El framework
 cerebro "ve" esas tools y puede invocarlas por voz o texto.
 
 **Disponible hoy:** `system_control`, `web_search`, `video_interpolador`,
-`traductor_juegos` y `macros`, con las siguientes tools:
+`traductor_juegos`, `discord_control` y `macros`, con las siguientes tools:
 
 ### `system_control` (control del sistema)
 
@@ -224,17 +228,44 @@ Lee `data/macros_config.json`.
 | `listar_macros` | Lista las macros/alias definidas |
 | `ejecutar_macro` | Ejecuta la macro pedida (secuencia de acciones predefinidas) |
 
+### `discord_control` (moderación de voz por bot)
+
+Requiere `DISCORD_BOT_TOKEN` (y, recomendado, `DISCORD_GUILD_ID`) en `config_local.py`.
+El bot corre en **su propio hilo con su propio event loop** (asyncio), sin bloquear
+el asistente; las tools (sync) le piden trabajo con `run_coroutine_threadsafe`.
+El usuario se resuelve **por nombre** (display/username/nick, tolerante a
+acentos y mayúsculas) o por **ID**; si hay **varias coincidencias**, Miku pide
+el nombre completo en vez de adivinar.
+
+| Tool | Qué hace |
+|---|---|
+| `silenciar_usuario_discord` | Silencia (o quita el silencio de) el **micrófono** de un usuario (server mute de voz). **Pide confirmación** |
+| `volumen_usuario_discord` | **Mute / ensordecer (deafen)** de voz de un usuario. **Pide confirmación** |
+| `expulsar_usuario_discord` | Expulsa (**kick**) a un usuario del servidor. **Pide confirmación** |
+
+> **Límite real de la API de Discord (no nuestro):** un bot **no** puede cambiar
+> el **volumen** de reproducción de otro usuario (eso es local de cada cliente).
+> Por eso `volumen_usuario_discord` se implementa como **mute/deafen de voz**.
+> Requiere los *Privileged Intents* **Server Members** y **Message Content**
+> activados en el portal, y que el rol del bot esté **por encima** del usuario
+> objetivo con los permisos *Kick Members* / *Mute Members*.
+
+> **Pendiente (fuera de esta tanda):** `traducir_a_canal` (traducir y postear en
+> un canal) — el config `discord_canal_default` queda reservado por si se retoma.
+
 ---
 
 ## Notas técnicas
 
 - **Lazy loading:** todo lo pesado u opcional (PyQt5, pygame, pyttsx3,
   SpeechRecognition, pyaudio, keyboard, AppOpener, pywin32,
-  screen-brightness-control, pycaw, comtypes) se importa recién cuando el
-  modo/comando lo necesita.
+  screen-brightness-control, pycaw, comtypes, discord.py) se importa recién
+  cuando el modo/comando lo necesita.
 - **Threading:** la voz y la escucha de micrófono corren en hilos separados
   para no bloquear la consola; el overlay de subtítulos corre en su propio
-  hilo con event loop de Qt; las acciones diferidas usan `threading.Timer`.
+  hilo con event loop de Qt; las acciones diferidas usan `threading.Timer`; el
+  bot de Discord corre en **su propio hilo con su propio asyncio event loop**
+  (las tools sync le piden trabajo con `run_coroutine_threadsafe`).
 - **Cola de voz:** las respuestas se encolan y se reproducen una atrás de otra.
 - **VOICEVOX:** el texto de la respuesta se **traduce ES→JA** (ver "Traducción"
   más abajo) y se sintetiza con una voz **genérica** de VOICEVOX (configurable
@@ -287,12 +318,13 @@ Lee `data/macros_config.json`.
 
 ## 🛠️ Próximos pasos (roadmap)
 
-- **Discord**: silenciar/desilenciar, volumen por usuario, expulsar, traducción al chat.
 - **Game Booster**: bajar volumen del navegador (**ya existe volumen por app**), pausar Wallpaper Engine, monitorear temperatura.
 - **Navegador (Brave) por CDP**: abrir/cerrar pestañas, buscar, autocompletar (más profundo que el `buscar_en_web` actual, que solo abre la búsqueda).
+- **Discord (resto)**: `traducir_a_canal` y, a futuro, más moderación.
 
 ### Hecho recientemente (ya no son "próximos pasos")
 
+- **Discord** (`discord_control`): mute/deafen de voz y expulsar a usuarios, con la confirmación genérica (bot corriendo en su propio hilo/loop async).
 - **Volumen por app** (`ajustar_volumen` con `app`) — base del futuro Game Booster.
 - **Traductor para juegos** (`traductor_juegos`): mensajes predefinidos traducidos + portapapeles.
 - **Macros personalizadas** (`macros`): conectadas a `data/macros_config.json`.
