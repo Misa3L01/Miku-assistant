@@ -122,7 +122,18 @@ class Config:
     # ---------- Entrada ----------
     @property
     def modo_entrada(self) -> str:
-        return str(self.valores.get("modo_entrada", "voz")).lower()
+        """Modo de arranque: ``"voz"`` o ``"texto"`` (cualquier otro valor, p. ej. el viejo
+        ``"push"`` del push-to-talk eliminado, cuenta como ``"voz"``)."""
+        modo = str(self.valores.get("modo_entrada", "voz")).lower()
+        return modo if modo in ("voz", "texto") else "voz"
+
+    @property
+    def saludo_al_iniciar(self) -> bool:
+        """Si Miku da el saludo con hora, clima y pendientes al iniciar el modo voz."""
+        valor = self.valores.get("saludo_al_iniciar", True)
+        if isinstance(valor, str):
+            return valor.strip().lower() in ("1", "true", "sí", "si", "yes", "on")
+        return bool(valor)
 
     # ---------- Memoria ----------
     @property

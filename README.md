@@ -6,7 +6,7 @@ jugar (CS, Fortnite, Genshin Impact), el uso diario y Discord. Lo controlás hab
 (Telegram). Arquitectura modular: un **núcleo** (`miku/cerebro`, `voz`, `ui`, `servicios`) y
 **plugins** enchufables (`miku/plugins/`) que le publican *tools* al cerebro (un LLM en Groq).
 
-- **Voz de entrada:** wake word "Miku" (escucha continua) o push-to-talk, transcripción con Whisper (Groq).
+- **Voz de entrada:** wake word "Miku" (escucha continua) o la tecla F22, transcripción con Whisper (Groq).
 - **Voz de salida:** VOICEVOX local (traduce ES→JA con Groq) con subtítulos estilo anime; cae a la voz del sistema si VOICEVOX no está.
 - **Cerebro:** Groq con *function calling*, más un *fast-path* local (hora, saludos, calculadora, memoria) que no gasta API.
 - **Seguridad:** las acciones peligrosas (apagar la PC, expulsar a alguien de Discord) piden un "sí" explícito.
@@ -83,17 +83,31 @@ o `python main.py`. `run.bat` / `run.ps1` (atajos a `scripts/`) crean el `venv` 
 cuando `requirements.txt` cambia y arrancan VOICEVOX si no está corriendo
 (`run.bat sinvoicevox` / `.\run.ps1 -SinVoicevox` para saltearlo).
 
-Al arrancar aparece un **icono en la bandeja del sistema** y una **ventanita** para elegir el modo:
+Miku vive **en segundo plano, en la bandeja del sistema** (el icono es su "cara"). Al abrirla a mano
+aparece una **ventanita** para elegir el modo; con `--silencioso` (o al arrancar con Windows) usa el
+modo guardado sin preguntar. Hay **una sola Miku a la vez**: si ya está abierta, abrirla de nuevo solo
+la invoca.
 
 | Modo | Cómo se usa |
 |---|---|
-| **Modo Voz** | Escucha continua. Decí **"Miku"** y esperá el "¿Sí? Decime."; o todo junto: **"Miku, qué hora es"** (usa lo que sigue a "Miku" como comando). Mientras Miku habla, el micrófono espera para no oírla. Al iniciar da un *briefing* (hora, clima, recordatorios). |
-| **Modo Texto** | Consola con `Vos:`; **siempre con voz** (sirve para probar el TTS sin micrófono). `salir` cierra. |
-| Push-to-talk | Mantenés **F22** para grabar y soltás para enviar. **Solo está en el menú de consola**, que aparece cuando PyQt5 no está instalado o cerrás la ventanita sin elegir (ver [límites](#límites-conocidos-y-roadmap)). |
+| **Modo Voz** (el normal) | Escucha continua, como "OK Google": decí **"Miku"** y esperá el "¿Sí? Decime."; o todo junto: **"Miku, qué hora es"**. También podés **apretar F22**: saluda y escucha un comando sin decir "Miku". Mientras Miku habla, el micrófono espera para no oírla. Al iniciar da un *briefing* (hora, clima, recordatorios; se desactiva con `SALUDO_AL_INICIAR = False`). |
+| **Modo Texto** (depuración) | Una ventana para escribirle a Miku y ver las respuestas (habla igual). Sirve para probar sin micrófono. |
 
-- **F22 (global):** abre de nuevo la ventanita y guarda el modo para la próxima vez (no en push-to-talk, donde F22 es la tecla de hablar).
-- **Bandeja:** el menú "Salir" cierra ordenadamente; el tooltip muestra el estado.
-- Para salir también: `Ctrl+C`.
+**Menú del icono de la bandeja** (clic derecho): *Invocar ahora (F22)* · *Modo voz* · *Modo texto (depuración)* ·
+*Iniciar con Windows* · *Atajo F22 para abrir Miku* · *Salir*. El modo se cambia en caliente y se recuerda para la
+próxima vez.
+
+**F22 e inicio con Windows** (los dos son opcionales y los activás desde ese menú):
+
+- **Iniciar con Windows:** registra a Miku en el inicio del usuario. Aparece en *Administrador de tareas →
+  Inicio*, donde también la podés desactivar. Arranca en segundo plano y sin ventanita.
+- **F22 con Miku abierta:** la invoca (saluda y escucha).
+- **Atajo F22 para abrir Miku:** crea un acceso directo en el Menú Inicio con **F22 como tecla de método
+  abreviado**. Así F22 abre a Miku **aunque esté cerrada** (y no necesita el inicio con Windows). Si ya estaba abierta,
+  la nueva ejecución le avisa a la primera y se cierra. Si no activás el atajo, F22 funciona igual pero solo mientras Miku corre.
+- Argumentos: `--silencioso` (no muestra la ventanita) y `--invocar` (al arrancar, saluda y escucha).
+- Sin consola (con `pythonw`) el log queda en `data/miku.log`.
+- Para salir: menú de la bandeja → *Salir* (o `Ctrl+C` si la abriste desde una consola).
 
 ---
 
@@ -165,7 +179,7 @@ miku-assistant/
 ├── docs/                         # Bitácoras, plan de reestructuración, empaquetado, interpolación
 └── miku/
     ├── plataforma/               # Helpers de Windows compartidos: texto · subprocesos · pantalla · audio · everything
-    ├── app.py                    # Ensambla todo: Asistente, modos (voz/push/texto), cierre ordenado
+    ├── app.py                    # Ensambla todo: Asistente, modos (voz/texto) en caliente, F22, cierre ordenado
     ├── ajustes/                  # Configuración
     │   ├── esquema.py            #   Esquema ÚNICO de opciones (tipo, default, descripción)
     │   ├── carga.py              #   Capas defaults → preferences → config_local → entorno + guardado atómico
@@ -177,11 +191,11 @@ miku-assistant/
     │   ├── calculadora.py        #   Calculadora local (sin LLM ni eval)
     │   └── memoria/              #   almacen.py (SQLite) · embeddings.py (fastembed, opcional)
     ├── voz/
-    │   ├── entrada/escucha.py    #   STT: wake word "Miku" + push-to-talk, Whisper (Groq)
+    │   ├── entrada/escucha.py    #   STT: wake word "Miku" + invocación por F22, Whisper (Groq)
     │   ├── salida/               #   tts.py (VOICEVOX + fallback pyttsx3) · traduccion.py (Groq, compartida)
     │   └── frases/tono.py        #   Variantes de tono anti-repetición
-    ├── ui/                       #   qt_hilo.py (UN hilo de Qt) · bandeja.py · subtitulos.py · selector_modo.py
-    ├── servicios/                #   eventos.py · scheduler.py · notificaciones.py · modos.py · briefing.py · personalidad.py
+    ├── ui/                       #   qt_hilo.py (UN hilo de Qt) · bandeja.py · subtitulos.py · selector_modo.py · consola.py (modo texto)
+    ├── servicios/                #   instancia.py (una sola Miku) · arranque.py (inicio con Windows, atajo F22) · eventos · scheduler · notificaciones · modos · briefing · personalidad
     └── plugins/
         ├── base.py               #   Clase base Plugin (contrato documentado en el módulo)
         ├── registro.py           #   Catálogo de plugins con carga perezosa y aislada
@@ -363,13 +377,12 @@ Subí el nivel de log con `LOG_LEVEL = "DEBUG"` en `config_local.py`.
 
 **Límites actuales (por diseño o pendientes):**
 
-- **Push-to-talk (F22):** el selector gráfico solo ofrece Voz y Texto; push-to-talk se elige desde el menú de consola, que solo aparece si PyQt5 no está disponible o se cierra la ventanita sin elegir.
 - Los recordatorios y acciones programadas **no sobreviven** a cerrar el asistente.
-- El Modo Texto siempre habla (necesita VOICEVOX o la voz del sistema).
+- Miku siempre habla, también en modo texto (necesita VOICEVOX o la voz del sistema). Sin PyQt5 no hay bandeja ni ventana: el modo texto cae a una consola.
 - La wake word usa Whisper por API: cada frase de la escucha continua es una llamada (se filtran ruidos cortos, pero consume cuota).
 - Telegram/Discord/Todoist/Tidal/Brave dependen de servicios externos y no tienen pruebas automáticas.
 
-**Ideas pendientes:** `traducir_a_canal` de Discord, modo `always_on`, ventanita desde la bandeja, pausar Wallpaper Engine y temperatura en el Game Booster, OCR de regiones/ventanas puntuales, motores de voz alternativos y auto-actualización del `.exe`.
+**Ideas pendientes:** `traducir_a_canal` de Discord, pausar Wallpaper Engine y temperatura en el Game Booster, OCR de regiones/ventanas puntuales, motores de voz alternativos y auto-actualización del `.exe`.
 
 ---
 

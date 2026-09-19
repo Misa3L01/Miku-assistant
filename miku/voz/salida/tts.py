@@ -140,7 +140,7 @@ class TextoAVoz:
     Args:
         cfg: Config del programa (le da ``voicevox_url`` y el speaker).
         subtitulos_activos: True para mostrar subtítulos en pantalla.
-            (miku/app.py lo pasa solo en modo voz/push).
+            (miku/app.py lo activa siempre: el modo voz y el de texto hablan).
     """
 
     def __init__(self, cfg: "config_mod.Config",

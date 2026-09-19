@@ -98,11 +98,17 @@ DISCORD_BOT_TOKEN = ""
 # (usado por: voz)
 # MODELO_STT_COMANDO = "whisper-large-v3"
 
-# Modo con el que arranca cuando no se elige uno en la ventanita: 'voz' (escucha
-# continua) o 'texto' (consola de depuración).
-# Valores válidos: voz, texto, push
+# Modo con el que arranca cuando no se elige uno en la ventanita (o con --silencioso):
+# 'voz' (escucha continua, decís "Miku") o 'texto' (ventana de depuración). Se puede
+# cambiar desde el icono de la bandeja.
+# Valores válidos: voz, texto
 # (usado por: app)
 # MODO_ENTRADA = "voz"
+
+# Al iniciar el modo voz, Miku saluda con la hora, el clima y tus pendientes. Ponelo en
+# False si no querés que hable al arrancar con Windows.
+# (usado por: app)
+# SALUDO_AL_INICIAR = True
 
 # Detalle de los mensajes de diagnóstico: DEBUG, INFO, WARNING o ERROR.
 # Valores válidos: DEBUG, INFO, WARNING, ERROR

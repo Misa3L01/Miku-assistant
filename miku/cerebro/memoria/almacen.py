@@ -15,7 +15,7 @@ Contrato (el mismo que ya consumía el parser):
     - olvidar_recuerdo(texto_aproximado) -> borra la fila que mejor coincida.
     - cantidad() -> COUNT(*).
 
-Hilos: la conexión SQLite se comparte entre hilos (voz, push-to-talk, Telegram),
+Hilos: la conexión SQLite se comparte entre hilos (voz, F22, Telegram),
 así que TODOS los accesos van bajo un ``RLock``.
 
 Diseño defensivo: si SQLite falla por cualquier motivo, la clase se degrada a

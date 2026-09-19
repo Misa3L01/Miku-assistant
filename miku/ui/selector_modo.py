@@ -66,8 +66,8 @@ def construir_dialogo() -> Optional[Any]:
         btn_voz.clicked.connect(lambda: _elegir(dlg, MODO_VOZ))
         layout.addWidget(btn_voz)
 
-        btn_texto = QtWidgets.QPushButton("Modo Texto")
-        btn_texto.setToolTip("Consola, siempre con voz.")
+        btn_texto = QtWidgets.QPushButton("Modo Texto (depuración)")
+        btn_texto.setToolTip("Ventana para escribirle a Miku (útil para probar). Habla igual.")
         btn_texto.clicked.connect(lambda: _elegir(dlg, MODO_TEXTO))
         layout.addWidget(btn_texto)
 

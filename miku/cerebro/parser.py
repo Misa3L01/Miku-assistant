@@ -31,7 +31,7 @@ from miku.plataforma.texto import sin_acentos
 logger = logging.getLogger("miku.parser")
 
 # Cache LRU trivial para respuestas frecuentes (optimización). Se accede desde
-# varios hilos (STT, push-to-talk, Telegram), así que va protegida con un lock.
+# varios hilos (STT, ventana de texto, Telegram), así que va protegida con un lock.
 _CACHE = {}
 _CACHE_ORDEN: List[str] = []
 _CACHE_MAX = 64
@@ -274,7 +274,7 @@ class CommandParser:
         self._confirmacion_desde: float = 0.0
 
         # ``procesar`` se llama desde hilos distintos (escucha de voz,
-        # push-to-talk, Telegram) y comparte el estado de confirmación /
+        # ventana de texto, Telegram) y comparte el estado de confirmación /
         # desambiguación: se serializa con un RLock.
         self._lock = threading.RLock()
 

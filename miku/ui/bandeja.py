@@ -2,9 +2,9 @@
 """
 bandeja.py - Icono en la bandeja del sistema (QSystemTrayIcon).
 
-Paso 1 del lanzador (Z7): un icono en la bandeja que convive con los modos
-(voz/push/texto). Muestra el estado en el tooltip, da un menú básico ("Salir")
-y sirve de anfitrión de la ventanita de selección de modo.
+El icono de la bandeja es la "cara" de Miku mientras corre en segundo plano: muestra el estado en
+el tooltip y su menú permite invocarla, cambiar de modo (voz / texto de depuración), activar el
+inicio con Windows y el atajo F22, y salir. También hospeda la ventanita de selección de modo.
 
 Diseño de hilos:
     Todo lo que toca Qt corre en el hilo compartido de ``core.qt_hilo`` (el
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Dict, Optional
 
 from miku.ui import qt_hilo
 
@@ -35,9 +35,14 @@ class _PanelBandeja:
     """Icono, menú y ventanita. Sus métodos corren en el hilo de Qt."""
 
     def __init__(self, hilo: "qt_hilo.HiloQt",
-                 on_salir: Optional[Callable[[], None]] = None) -> None:
+                 on_salir: Optional[Callable[[], None]] = None,
+                 acciones: Optional[Dict[str, Callable[..., Any]]] = None,
+                 estado: Optional[Callable[[], Dict[str, Any]]] = None) -> None:
         self._hilo = hilo
         self._on_salir = on_salir
+        self._acciones = acciones or {}
+        self._estado = estado
+        self._checks: Dict[str, Any] = {}
         self._tray: Any = None
         # Resultado de la ventanita (se devuelve de forma síncrona a quien la pidió).
         self.modo_elegido: Optional[str] = None
@@ -58,9 +63,10 @@ class _PanelBandeja:
             menu = QtWidgets.QMenu()
             acc_estado = menu.addAction("Miku está activa")
             acc_estado.setEnabled(False)
-            menu.addSeparator()
+            self._armar_menu(menu)
             acc_salir = menu.addAction("Salir")
             acc_salir.triggered.connect(self._salir)
+            menu.aboutToShow.connect(self._refrescar_checks)
             tray.setContextMenu(menu)
 
             tray.activated.connect(self._al_activar)
@@ -72,6 +78,60 @@ class _PanelBandeja:
         except Exception:  # noqa: BLE001
             logger.exception("No pude crear la bandeja.")
             return False
+
+    def _armar_menu(self, menu: Any) -> None:
+        """Agrega las acciones configurables (las que el asistente haya registrado)."""
+        def _accion(texto: str, clave: str, marcable: bool = False) -> None:
+            if clave not in self._acciones:
+                return
+            acc = menu.addAction(texto)
+            if marcable:
+                acc.setCheckable(True)
+                self._checks[clave] = acc
+            acc.triggered.connect(lambda marcado=False, c=clave, m=marcable: self._ejecutar(c, marcado, m))
+
+        menu.addSeparator()
+        _accion("Invocar ahora (F22)", "invocar")
+        menu.addSeparator()
+        _accion("Modo voz", "modo_voz", True)
+        _accion("Modo texto (depuración)", "modo_texto", True)
+        menu.addSeparator()
+        _accion("Iniciar con Windows", "inicio_windows", True)
+        _accion("Atajo F22 para abrir Miku", "atajo_f22", True)
+        menu.addSeparator()
+
+    def _ejecutar(self, clave: str, marcado: bool, marcable: bool) -> None:
+        """Llama a la acción del asistente (sin bloquear el hilo de Qt)."""
+        accion = self._acciones.get(clave)
+        if accion is None:
+            return
+        threading.Thread(target=self._llamar, args=(accion, marcado, marcable),
+                         name=f"miku_menu_{clave}", daemon=True).start()
+
+    @staticmethod
+    def _llamar(accion: Callable[..., Any], marcado: bool, marcable: bool) -> None:
+        try:
+            accion(marcado) if marcable else accion()
+        except Exception:  # noqa: BLE001
+            logger.exception("Falló una acción del menú de la bandeja.")
+
+    def _refrescar_checks(self) -> None:
+        """Al abrir el menú, marca cada opción según el estado real (registro, atajo, modo)."""
+        if self._estado is None:
+            return
+        try:
+            estado = self._estado()
+        except Exception:  # noqa: BLE001
+            logger.debug("No pude leer el estado para el menú.", exc_info=True)
+            return
+        marcas = {
+            "modo_voz": estado.get("modo") == "voz",
+            "modo_texto": estado.get("modo") == "texto",
+            "inicio_windows": bool(estado.get("inicio_windows")),
+            "atajo_f22": bool(estado.get("atajo_f22")),
+        }
+        for clave, accion in self._checks.items():
+            accion.setChecked(marcas.get(clave, False))
 
     def _icono(self, app: Any) -> Any:
         """Icono de la bandeja (o uno estándar si no hay archivo propio)."""
@@ -148,8 +208,17 @@ class Bandeja:
         # Una sola ventanita a la vez (un segundo F22 con el diálogo abierto se ignora).
         self._lock_modo = threading.Lock()
 
-    def iniciar(self, on_salir: Optional[Callable[[], None]] = None) -> bool:
+    def iniciar(self, on_salir: Optional[Callable[[], None]] = None,
+                acciones: Optional[Dict[str, Callable[..., Any]]] = None,
+                estado: Optional[Callable[[], Dict[str, Any]]] = None) -> bool:
         """Arranca la bandeja.
+
+        Args:
+            on_salir: Se llama al elegir "Salir".
+            acciones: Acciones del menú por clave: ``invocar()``, ``modo_voz(marcado)``,
+                ``modo_texto(marcado)``, ``inicio_windows(marcado)``, ``atajo_f22(marcado)``.
+                Solo aparecen en el menú las que se registren.
+            estado: Devuelve ``{"modo", "inicio_windows", "atajo_f22"}`` para marcar las casillas.
 
         Returns:
             True si el icono quedó creado; False si no hay PyQt5 o falló.
@@ -161,7 +230,7 @@ class Bandeja:
         if hilo is None:
             logger.info("Bandeja no disponible (no arrancó el hilo de Qt).")
             return False
-        panel = _PanelBandeja(hilo, on_salir=on_salir)
+        panel = _PanelBandeja(hilo, on_salir=on_salir, acciones=acciones, estado=estado)
         if not hilo.ejecutar_y_esperar(panel.crear_tray, timeout=5.0):
             logger.warning("La bandeja no se creó; sigo sin ella.")
             return False

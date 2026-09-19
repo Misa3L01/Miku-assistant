@@ -61,7 +61,7 @@ def test_bucle_de_escucha(stt):
     stt._reconocedor = Reconocedor([Audio(0.1), Audio(1), Audio(1), Audio(1), Audio(1)])
     comandos, saludos, esperas = [], [], []
     stt.on_comando, stt.on_wake = comandos.append, saludos.append
-    stt.esperar_silencio = lambda: esperas.append(1)
+    stt.esperar_silencio = lambda t=0.5: esperas.append(1) or True
 
     def cortar():
         for _ in range(100):

@@ -1,31 +1,30 @@
 """
 app.py - Núcleo principal del asistente Miku.
 
-Punto de entrada de la app. Responsabilidades:
-    1. Configurar logging y cargar la configuración (config.py).
-    2. Montar el bus de eventos y registrar los plugins.
-    3. Crear el parser (cerebro) que convierte texto en respuestas.
-    4. Elegir el modo de entrada y correr SU bucle.
+Punto de entrada de la aplicación (``python main.py``). Responsabilidades:
+    1. Configurar el logging (consola y archivo) y cargar/validar la configuración.
+    2. Asegurar UNA sola Miku (si ya hay una corriendo, la invoca y termina).
+    3. Montar el bus de eventos, los plugins y el parser (cerebro).
+    4. Poner el icono de la bandeja y elegir el modo.
+    5. Esperar hasta que se pida salir, y cerrar todo de forma ordenada.
 
-Particularidades de esta refactorización:
-    - **Lazy loading por modo**: el reconocimiento de voz (STT) y la voz de
-      Miku (TTS / VOICEVOX) se importan/fabrican SOLO si se entra a modo
-      "voz" o "push" (o si en modo texto se elige "con voz"). En modo texto
-      silencioso no se toca nada de audio.
-    - **Modo texto con o sin voz**: al elegir texto se pregunta si Miku debe
-      hablar; con voz se verifica/arranca VOICEVOX antes del primer decir() y
-      se informa por consola qué motor se usará; sin voz es 100% limpio.
-    - Push-to-talk corregido: arranca con ``on_press_key`` y termina con
-      ``on_release_key``, con flag anti-reentrada, y ``unhook_all()`` al salir.
+Miku vive en segundo plano, en la bandeja. Tiene dos modos, que se pueden cambiar en caliente:
+    - **voz** (el normal): escucha continua; se la llama diciendo "Miku" o apretando F22.
+    - **texto** (depuración): una ventana para escribirle; habla igual.
+
+Argumentos de línea de comandos:
+    --silencioso   No muestra la ventanita de modo: usa el modo guardado (así arranca con Windows).
+    --invocar      Al terminar de arrancar, saluda y escucha un comando (así abre el atajo F22).
 """
 from __future__ import annotations
 
+import argparse
 import logging
+import logging.handlers
 import os
 import sys
 import threading
-import time
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 # Import de configuración (siempre seguro, sin deps pesadas).
 from miku.ajustes import carga as config_mod
@@ -41,6 +40,8 @@ from miku.plugins.base import registrar_plugins
 from miku.plugins.registro import instanciar_plugins
 
 logger = logging.getLogger("miku.main")
+
+MODOS = ("voz", "texto")
 
 
 def validar_configuracion(cfg: "config_mod.Config") -> None:
@@ -65,21 +66,37 @@ def validar_configuracion(cfg: "config_mod.Config") -> None:
 
 
 def configurar_logging(nivel: str) -> None:
-    """Configura el logging global con formato y nivel."""
+    """Configura el logging: consola (si hay) y archivo rotativo ``data/miku.log``.
+
+    El archivo importa cuando Miku arranca con ``pythonw`` (con Windows o con F22): ahí no hay
+    consola y, sin archivo, los errores se perderían.
+    """
     nivel_obj = getattr(logging, nivel, None)
     if not isinstance(nivel_obj, int):
         nivel_obj = logging.INFO
+    manejadores: List[logging.Handler] = []
+    if sys.stderr is not None:
+        manejadores.append(logging.StreamHandler())
+    try:
+        ruta = config_mod.BASE_DIR / "data" / "miku.log"
+        ruta.parent.mkdir(parents=True, exist_ok=True)
+        manejadores.append(logging.handlers.RotatingFileHandler(
+            ruta, maxBytes=1_000_000, backupCount=3, encoding="utf-8"))
+    except OSError:
+        pass
     logging.basicConfig(
         level=nivel_obj,
         format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
         datefmt="%H:%M:%S",
+        handlers=manejadores,
+        force=True,
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
 class Asistente:
-    """Ensambla bus + parser + plugins. La voz/STT se inyecta por modo.
+    """Ensambla bus + parser + plugins y administra los modos (voz / texto).
 
     Args:
         cfg: Config del programa ya cargada.
@@ -89,21 +106,29 @@ class Asistente:
         self.cfg = cfg
         self.bus = EventBus()
         self.parser: Optional[CommandParser] = None
-        # Objeto de voz (solo si el modo elegido lo requiere).
+        # Objeto de voz (se crea la primera vez que hace falta hablar).
         self.voice = None
-        # Manejadores por modo: se instalan cuando entran a correr.
+        # Reconocimiento de voz: existe mientras el modo voz esté activo.
         self.stt = None
         # Programador de acciones diferidas (timers). Vive con el asistente y
         # se pasa a las tools vía contexto["scheduler"].
         self.scheduler = Scheduler()
         # Memoria persistente (SQLite). Solo se crea si está habilitada.
         self.memoria = None
-        # Bandeja del sistema (Z7, paso 1). Convive con los modos actuales; si
-        # PyQt5 no está, no se arranca (no rompe nada).
+        # Bandeja del sistema; si PyQt5 no está, no se arranca (no rompe nada).
         self.bandeja = bandeja_mod.Bandeja()
-        # ``cerrar()`` puede invocarse más de una vez (finally de un modo y de
-        # main): la segunda llamada no debe hacer nada.
+        # Ventana de depuración del modo texto (se crea la primera vez).
+        self.consola = None
+        #: Modo actual: "voz", "texto" o None (todavía no se eligió).
+        self.modo: Optional[str] = None
+        self._lock_modo = threading.RLock()
+        self._saludo_dado = False
+        self._invocacion_pendiente = False
+        self._hotkey_f22: Any = None
+        self.instancia: Any = None
+        # ``cerrar()`` puede invocarse más de una vez: la segunda llamada no hace nada.
         self._cerrado = False
+        self._salir = threading.Event()
 
     # ---------------- Setup (no toca audio) ----------------
     def instalar_core(self) -> None:
@@ -158,14 +183,14 @@ class Asistente:
             "scheduler": self.scheduler,
         }
 
-    def responder(self, texto_usuario: str) -> None:
-        """Procesa el texto del usuario y emite la respuesta (voz o texto).
+    def responder(self, texto_usuario: str) -> str:
+        """Procesa el texto del usuario, emite la respuesta y la devuelve.
 
-        En modo texto, ``voice`` es None y la respuesta se imprime. En modo
-        voz/push, ``voice`` hablará y mostrará subtítulos (si los tiene).
+        Si hay voz, Miku la dice (con subtítulos); si no, se imprime. El texto de la respuesta
+        se devuelve para que la ventana de depuración lo muestre.
         """
         if self.parser is None:
-            return
+            return ""
         contexto = self._contexto_base()
         try:
             respuesta = self.parser.procesar(texto_usuario, contexto)
@@ -196,6 +221,7 @@ class Asistente:
                 print(f"[Miku] {respuesta}")
         else:
             print(f"\nMiku: {respuesta}")
+        return respuesta
 
     def decir(self, texto: str) -> None:
         """Habla (o imprime) un texto suelto, p. ej. el saludo de wake."""
@@ -208,15 +234,232 @@ class Asistente:
         else:
             print(f"[Miku] {texto}")
 
-    # ---------------- Cierre ----------------
+    # ---------------- Voz ----------------
+    def _preparar_voz(self, subtitulos: bool = True) -> Any:
+        """Crea (lazy) el motor de voz VOICEVOX y lo expone en el bus."""
+        if self.voice is None:
+            from miku.voz.salida.tts import TextoAVoz  # import tardío
+            voz = TextoAVoz(self.cfg, subtitulos_activos=subtitulos)
+            self.voice = voz
+            # Los plugins con avisos propios (proactivo, game_booster) leen la voz de ``bus.voice``.
+            self.bus.voice = voz
+            logger.info("Voz (VOICEVOX) preparada. Subtítulos: %s", subtitulos)
+        return self.voice
+
+    def _al_comando_voz(self, comando: str) -> None:
+        """Lo que se oyó tras "Miku" (o tras F22): se ejecuta y se muestra si hay ventana."""
+        print(f"\nVos: {comando}")
+        respuesta = self.responder(comando)
+        if self.consola is not None:
+            self.consola.agregar("Vos (voz)", comando)
+            self.consola.agregar("Miku", respuesta)
+
+    def _iniciar_voz(self) -> bool:
+        """Arranca la escucha continua. Devuelve False si no se pudo."""
+        from miku.voz.entrada.escucha import SpeechToText  # import tardío
+
+        voz = self._preparar_voz()
+        # Precalienta VOICEVOX en segundo plano: si no está corriendo (p. ej. al abrir Miku con F22
+        # o con Windows), arrancarlo tarda ~12 s y la primera frase no debería pagar esa espera.
+        threading.Thread(target=getattr(voz, "asegurar_voicevox_inicial", lambda: None),
+                         name="miku_precalentar_voz", daemon=True).start()
+        if self.stt is None:
+            stt = SpeechToText(self.cfg)
+            stt.on_wake = lambda _t: self.decir("¿Sí? Decime.")
+            stt.on_comando = self._al_comando_voz
+            # Mientras Miku habla, el micrófono espera (no graba su propia voz).
+            stt.esperar_silencio = voz.esperar_libre
+            stt.on_error = lambda e: logger.error("Error de voz: %s", e)
+            self.stt = stt
+        try:
+            self.stt.iniciar_escucha_continua()
+        except Exception:  # noqa: BLE001
+            logger.exception("No se pudo empezar la escucha continua.")
+            return False
+        self.bandeja.actualizar("Miku - Modo Voz (escuchando)")
+        print("\n=== Miku escuchando (decí 'Miku' o apretá F22) ===\n")
+        mostrar_microfonos(self.stt)
+        return True
+
+    def _saludar(self) -> None:
+        """Saludo de arranque con contexto (hora + clima + pendientes), una sola vez."""
+        if self._saludo_dado or not self.cfg.saludo_al_iniciar:
+            return
+        self._saludo_dado = True
+        try:
+            from miku.servicios import briefing
+            saludo = briefing.generar(self._contexto_base())
+        except Exception:  # noqa: BLE001
+            logger.exception("No pude armar el briefing; uso el saludo simple.")
+            saludo = "Ya estoy lista"
+        self.decir(saludo)
+
+    def _detener_voz(self) -> None:
+        """Detiene la escucha continua (el TTS queda disponible)."""
+        if self.stt is not None:
+            try:
+                self.stt.detener_escucha()
+            except Exception:  # noqa: BLE001
+                logger.debug("No se pudo detener la escucha.", exc_info=True)
+
+    # ---------------- Texto (depuración) ----------------
+    def _enviar_desde_consola(self, texto: str) -> None:
+        respuesta = self.responder(texto)
+        if self.consola is not None:
+            self.consola.agregar("Miku", respuesta)
+
+    def _mostrar_texto(self) -> bool:
+        """Muestra la ventana de depuración. False si no hay PyQt5."""
+        from miku.ui.consola import ConsolaDebug  # import tardío
+
+        voz = self._preparar_voz()
+        try:
+            asegurar = getattr(voz, "asegurar_voicevox_inicial", None)
+            if callable(asegurar):
+                asegurar()
+        except Exception:  # noqa: BLE001
+            logger.exception("No pude verificar VOICEVOX al entrar al modo texto.")
+        if self.consola is None:
+            try:
+                self.consola = ConsolaDebug(self._enviar_desde_consola)
+            except RuntimeError:
+                return False
+        self.consola.mostrar()
+        self.bandeja.actualizar("Miku - Modo texto (depuración)")
+        return True
+
+    # ---------------- Modos ----------------
+    def cambiar_modo(self, modo: str, persistir: bool = True) -> bool:
+        """Pasa al modo ``"voz"`` o ``"texto"`` en caliente.
+
+        Args:
+            modo: ``"voz"`` o ``"texto"`` (cualquier otro valor se ignora).
+            persistir: Si True, se guarda como modo de arranque.
+
+        Returns:
+            True si quedó en el modo pedido.
+        """
+        if modo not in MODOS:
+            logger.warning("Modo desconocido: %r", modo)
+            return False
+        with self._lock_modo:
+            if modo == "voz":
+                if self.consola is not None:
+                    self.consola.ocultar()
+                ok = self.modo == "voz" or self._iniciar_voz()
+            else:
+                self._detener_voz()
+                ok = self._mostrar_texto()
+            if not ok:
+                return False
+            anterior, self.modo = self.modo, modo
+        if persistir:
+            self.cfg.guardar_preferencias({"modo_entrada": modo})
+        if modo == "voz" and anterior is None:
+            self._saludar()
+        if self._invocacion_pendiente:
+            self._invocacion_pendiente = False
+            self.invocar()
+        logger.info("Modo actual: %s", modo)
+        return True
+
+    def invocar(self) -> None:
+        """Invocación directa (F22 / atajo): Miku saluda y escucha un comando sin la palabra "Miku".
+
+        En modo texto trae la ventana al frente. Si todavía está arrancando, queda pendiente.
+        Es seguro llamarlo desde cualquier hilo.
+        """
+        with self._lock_modo:
+            modo, stt, consola = self.modo, self.stt, self.consola
+        if modo == "voz" and stt is not None:
+            stt.invocar()
+        elif modo == "texto" and consola is not None:
+            consola.mostrar()
+        else:
+            self._invocacion_pendiente = True
+
+    # ---------------- Menú de la bandeja ----------------
+    def estado_menu(self) -> Dict[str, Any]:
+        """Estado real para marcar las casillas del menú."""
+        from miku.servicios import arranque
+        return {"modo": self.modo,
+                "inicio_windows": arranque.inicio_windows_activo(),
+                "atajo_f22": arranque.atajo_f22_activo()}
+
+    def acciones_menu(self) -> Dict[str, Callable[..., Any]]:
+        """Acciones del menú de la bandeja (se llaman en un hilo aparte)."""
+        from miku.servicios import arranque
+
+        def inicio_windows(marcado: bool) -> None:
+            (arranque.activar_inicio_windows if marcado else arranque.desactivar_inicio_windows)()
+
+        def atajo_f22(marcado: bool) -> None:
+            (arranque.activar_atajo_f22 if marcado else arranque.desactivar_atajo_f22)()
+            self.actualizar_hotkey_f22()
+
+        return {
+            "invocar": self.invocar,
+            "modo_voz": lambda _m=True: self.cambiar_modo("voz"),
+            "modo_texto": lambda _m=True: self.cambiar_modo("texto"),
+            "inicio_windows": inicio_windows,
+            "atajo_f22": atajo_f22,
+        }
+
+    def actualizar_hotkey_f22(self) -> None:
+        """Registra F22 dentro de Miku SOLO si no lo maneja el atajo de Windows.
+
+        Con el atajo activo, Windows lanza una segunda ejecución que invoca a esta; registrar
+        además el hotkey acá haría que F22 disparara la invocación dos veces.
+        """
+        from miku.servicios import arranque
+        try:
+            import keyboard  # type: ignore
+        except Exception as e:  # noqa: BLE001
+            logger.info("Sin 'keyboard' no registro F22 dentro de Miku: %s", e)
+            return
+        if arranque.atajo_f22_activo():
+            if self._hotkey_f22 is not None:
+                try:
+                    keyboard.remove_hotkey(self._hotkey_f22)
+                except Exception:  # noqa: BLE001
+                    pass
+                self._hotkey_f22 = None
+            logger.info("F22 lo maneja el atajo de Windows.")
+        elif self._hotkey_f22 is None:
+            self._hotkey_f22 = keyboard.add_hotkey("f22", self.invocar)
+            logger.info("Hotkey F22 registrado dentro de Miku.")
+
+    # ---------------- Salida y cierre ----------------
+    def pedir_salir(self) -> None:
+        """Pide cerrar Miku (desde la bandeja, un plugin, etc.). Nunca bloquea."""
+        logger.info("Cierre solicitado.")
+        self._salir.set()
+
+        # Red de seguridad: si el cierre ordenado no termina, se fuerza.
+        def _forzar() -> None:
+            logger.warning("El cierre ordenado no terminó; fuerzo la salida.")
+            self.cerrar()
+            os._exit(0)
+
+        temporizador = threading.Timer(10.0, _forzar)
+        temporizador.daemon = True
+        temporizador.start()
+
+    def esperar_salida(self) -> None:
+        """Bloquea el hilo principal hasta que se pida salir (interrumpible con Ctrl+C)."""
+        while not self._salir.wait(0.5):
+            pass
+
     def cerrar(self) -> None:
-        """Limpia recursos (subtítulos, voz lanzada por Miku y callbacks).
+        """Limpia recursos (escucha, subtítulos, voz lanzada por Miku y callbacks).
 
         Es idempotente: solo la primera llamada hace algo.
         """
         if self._cerrado:
             return
         self._cerrado = True
+        self._salir.set()
+        self._detener_voz()
         # Cancelamos cualquier acción diferida pendiente (no dejamos timers
         # vivos que puedan disparar un apagado/suspensión al cerrar).
         try:
@@ -263,86 +506,18 @@ class Asistente:
             self.bandeja.detener()
         except Exception:  # noqa: BLE001
             logger.debug("No pude cerrar la bandeja.")
+        if self.instancia is not None:
+            try:
+                self.instancia.liberar()
+            except Exception:  # noqa: BLE001
+                logger.debug("No pude liberar la instancia única.")
         if self.bus:
             self.bus.detener()
 
 
 # ===================================================================== #
-#                          MODO VOZ (wake word)                         #
+#                             Utilidades                                #
 # ===================================================================== #
-def _preparar_voz(asistente: Asistente, subtitulos: bool = True) -> Any:
-    """Crea (lazy) el motor de voz VOICEVOX.
-
-    Args:
-        asistente: La instancia del asistente.
-        subtitulos: True para mostrar el overlay de subtítulos en pantalla.
-    """
-    if asistente.voice is None:
-        from miku.voz.salida.tts import TextoAVoz  # import tardío
-        voz = TextoAVoz(asistente.cfg, subtitulos_activos=subtitulos)
-        asistente.voice = voz
-        # Los plugins con avisos propios (proactivo, game_booster) leen la voz
-        # de ``bus.voice``.
-        asistente.bus.voice = voz
-        logger.info("Voz (VOICEVOX) preparada. Subtítulos: %s", subtitulos)
-    return asistente.voice
-
-
-def run_modo_voz(asistente: Asistente) -> None:
-    """Bucle voice: escucha continua + wake word 'Miku'."""
-    from miku.voz.entrada.escucha import SpeechToText  # import tardío
-
-    _preparar_voz(asistente)  # activa TTS sólo cuando hace falta voz
-    stt = SpeechToText(asistente.cfg)
-    # Z7.5: en Modo Voz, Miku "vive" en la bandeja (escucha continua). Lo
-    # reflejamos en el tooltip; la consola sigue disponible para ver logs.
-    try:
-        asistente.bandeja.actualizar("Miku - Modo Voz (escuchando)")
-    except Exception:  # noqa: BLE001
-        pass
-
-    def al_wake(_texto: str) -> None:
-        asistente.decir("¿Sí? Decime.")
-
-    def al_comando(comando: str) -> None:
-        print(f"\nVos: {comando}")
-        asistente.responder(comando)
-
-    stt.on_wake = al_wake
-    stt.on_comando = al_comando
-    # Mientras Miku habla, el micrófono espera (no graba su propia voz).
-    stt.esperar_silencio = asistente.voice.esperar_libre
-    stt.on_error = lambda e: logger.error("Error de voz: %s", e)
-
-    print("\n=== Miku escuchando (decí 'Miku' para activarla) ===\n")
-    try:
-        stt.iniciar_escucha_continua()
-    except Exception:  # noqa: BLE001
-        logger.exception("No se pudo empezar la escucha continua.")
-        return
-
-    # Saludo de arranque (BRIEFING): confirmación AUDIBLE de que la escucha
-    # continua quedó activa, con contexto (hora + clima + pendientes). Se dice
-    # UNA sola vez, aquí (no en push-to-talk ni por hotkey).
-    try:
-        from miku.servicios import briefing
-        saludo = briefing.generar(asistente._contexto_base())
-    except Exception:  # noqa: BLE001
-        logger.exception("No pude armar el briefing; uso el saludo simple.")
-        saludo = "Ya estoy lista"
-    asistente.decir(saludo)
-
-    mostrar_microfonos(stt)
-    try:
-        while True:
-            time.sleep(0.5)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        stt.detener_escucha()
-    print("\nChau!")
-
-
 def mostrar_microfonos(stt: Any) -> None:
     """Lista los micrófonos y cuál está en uso según config."""
     try:
@@ -356,98 +531,13 @@ def mostrar_microfonos(stt: Any) -> None:
         logger.warning("No se pudieron listar los micrófonos.")
 
 
-# ===================================================================== #
-#                       MODO PUSH-TO-TALK (F22)                         #
-# ===================================================================== #
-_TECLA_PTT = "f22"
-
-
-def run_modo_push(asistente: Asistente) -> None:
-    """Bucle push-to-talk con pulsar-grabar / soltar-detener (correcto).
-
-    Tecnología:
-        - ``keyboard.on_press_key(F22, iniciar)``
-        - ``keyboard.on_release_key(F22, finalizar)``
-        - flag ``_grabando`` para evitar pulsaciones simultáneas.
-        - ``keyboard.unhook_all()`` al salir (lo hace Asistente.cerrar()).
-    """
-    from miku.voz.entrada.escucha import SpeechToText  # import tardío
-
-    _preparar_voz(asistente)
-    stt = SpeechToText(asistente.cfg)
-    stt.on_error = lambda e: logger.error("Error de voz: %s", e)
-
-    try:
-        import keyboard  # type: ignore
-    except Exception:  # noqa: BLE001
-        logger.error(
-            "No se pudo importar 'keyboard' para el push-to-talk. "
-            "Instalala con: pip install keyboard")
-        return
-
-    print(f"\n=== Push-to-talk activo (mantené {_TECLA_PTT}) ===\n")
-
-    # Estado simple para la grabación de una sola toma a la vez.
-    estado = {"grabando": False}
-
-    def _respuesta(texto: str) -> None:
-        if texto:
-            print(f"\nVos: {texto}")
-            asistente.responder(texto)
-
-    def iniciar_grabacion(_evento) -> None:
-        """Se llama al PRESIONAR la tecla. Empieza a grabar audio."""
-        if estado["grabando"]:
-            return  # evita reentrada
-        estado["grabando"] = True
-        logger.info("F22 presionada: grabando...")
-        try:
-            # Graba mientras la tecla esté apretada (corta al soltar).
-            stt.capturar_para_push(_respuesta)
-        except Exception:  # noqa: BLE001
-            logger.exception("Error arrancando la grabación.")
-            estado["grabando"] = False
-
-    def finalizar_grabacion(_evento) -> None:
-        """Se llama al SOLTAR la tecla. Corta la captura activa YA."""
-        if not estado["grabando"]:
-            return
-        try:
-            # Levanta el flag para que el hilo de grabación corte al momento.
-            if hasattr(stt, "detener_captura_activa"):
-                stt.detener_captura_activa()
-        except Exception:  # noqa: BLE001
-            logger.exception("Error finalizando la grabación.")
-        finally:
-            estado["grabando"] = False
-            logger.info("F22 soltada: fin de grabación (transcribiendo).")
-
-    # Registro de la tecla (release de eventos de keyup arrancan la toma).
-    keyboard.on_press_key(_TECLA_PTT, iniciar_grabacion)
-    keyboard.on_release_key(_TECLA_PTT, finalizar_grabacion)
-
-    try:
-        while True:
-            time.sleep(0.5)  # interrumpible con Ctrl+C / "Salir" de la bandeja
-    except KeyboardInterrupt:
-        pass
-    # El cierre (unhook_all + bus/voz) lo hace el ``finally`` de main().
-
-
-# ===================================================================== #
-#                    MODO TEXTO (consola estándar)                      #
-# ===================================================================== #
 def run_modo_texto(asistente: Asistente) -> None:
-    """Bucle de texto (consola) CON voz.
+    """Bucle de texto por consola (respaldo cuando no hay PyQt5 para la ventana de depuración).
 
-    Desde la Z7.3 el modo texto siempre habla: sirve también para probar el
-    TTS sin micrófono. Se verifica/arranca VOICEVOX antes del primer decir()
-    y se avisa por consola qué motor se va a usar (VOICEVOX o pyttsx3).
-
-    Args:
-        asistente: La instancia del asistente.
+    Miku habla igual: sirve también para probar el TTS sin micrófono. Se verifica/arranca
+    VOICEVOX antes del primer ``decir()``.
     """
-    voz = _preparar_voz(asistente, subtitulos=True)
+    voz = asistente._preparar_voz()
     try:
         asegurar = getattr(voz, "asegurar_voicevox_inicial", None)
         if callable(asegurar):
@@ -455,11 +545,8 @@ def run_modo_texto(asistente: Asistente) -> None:
     except Exception:  # noqa: BLE001
         logger.exception("No pude verificar VOICEVOX al entrar al modo texto.")
 
-    print("\n=== Miku lista (modo texto con voz) ===")
-    print("Escribí tu mensaje y Enter. Escribí 'salir' para cerrar.")
-    print("(Si no oís nada, mirá los mensajes [VOICEVOX]/[Voz] de arriba "
-          "y los logs; si VOICEVOX no está, cae a pyttsx3.)\n")
-
+    print("\n=== Miku lista (modo texto por consola) ===")
+    print("Escribí tu mensaje y Enter. Escribí 'salir' para cerrar.\n")
     while True:
         try:
             comando = input("Vos: ").strip()
@@ -469,79 +556,68 @@ def run_modo_texto(asistente: Asistente) -> None:
                 print("Chau!")
                 break
             asistente.responder(comando)
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, EOFError):
             print("\nChau!")
-            break
-        except EOFError:
             break
         except Exception:  # noqa: BLE001
             logger.exception("Error en el bucle de texto.")
 
 
-# ===================================================================== #
-#                    Selección de modo (al arrancar)                    #
-# ===================================================================== #
-
-def seleccionar_modo(cfg: "config_mod.Config") -> str:
-    """Pregunta cómo operar hoy. Usa config como default con Enter."""
+def seleccionar_modo_consola(cfg: "config_mod.Config") -> str:
+    """Menú por consola (solo cuando no hay ventanita): voz o texto. Enter = el guardado."""
     default = cfg.modo_entrada
-    mapeo_default = {"voz": "1", "texto": "3", "push": "2"}
-    default_num = mapeo_default.get(default, "1")
-
     print("\n¿Cómo querés operar esta vez?")
-    print("  [1] Hablando      (decís 'Miku' para activarla)")
-    print("  [2] Push-to-talk  (mantenés F22 para hablar)")
-    print("  [3] Escribiendo   (modo texto)")
+    print("  [1] Voz    (decís 'Miku' o apretás F22)")
+    print("  [2] Texto  (consola de depuración)")
+    opcion = input(f"Elegí 1 o 2 (Enter = {default}): ").strip()
+    return {"1": "voz", "2": "texto"}.get(opcion, default)
 
-    opcion = input(f"Elegí 1, 2 o 3 (Enter = {default_num}): ").strip()
 
-    if opcion in ("1", "2", "3"):
-        return {"1": "voz", "2": "push", "3": "texto"}[opcion]
-    if opcion == "":
-        return cfg.modo_entrada
-    print(f"No entendí '{opcion}', uso el default ({default}).")
-    return default
+def _analizar_argumentos(argv: Optional[List[str]]) -> argparse.Namespace:
+    analizador = argparse.ArgumentParser(prog="miku", description="Asistente de voz Miku.")
+    analizador.add_argument("--silencioso", action="store_true",
+                            help="no muestra la ventanita de modo; usa el modo guardado")
+    analizador.add_argument("--invocar", action="store_true",
+                            help="al arrancar, saluda y escucha un comando (atajo F22)")
+    args, _desconocidos = analizador.parse_known_args(argv)
+    return args
+
+
+def _elegir_modo_inicial(asistente: Asistente, args: argparse.Namespace) -> Any:
+    """Decide con qué modo arrancar. Devuelve ``(modo, lo_eligio_el_usuario)``."""
+    if not args.silencioso:
+        try:
+            elegido = asistente.bandeja.pedir_modo()
+        except Exception:  # noqa: BLE001
+            elegido = None
+            logger.debug("No pude usar la ventanita para elegir modo.")
+        if elegido in MODOS:
+            return elegido, True
+        if asistente.bandeja._hilo is None:          # sin bandeja/PyQt5: menú por consola
+            return seleccionar_modo_consola(asistente.cfg), True
+    return asistente.cfg.modo_entrada, False
 
 
 # ===================================================================== #
 #                                main                                   #
 # ===================================================================== #
-def _persistir_modo(cfg: "config_mod.Config", modo: str) -> None:
-    """Guarda el modo elegido en data/preferences.json (merge atómico)."""
-    if cfg.guardar_preferencias({"modo_entrada": modo}):
-        logger.info("Modo '%s' guardado para el próximo arranque.", modo)
-    else:
-        logger.error("No pude persistir el modo elegido.")
+def main(instancia: Any = None, argv: Optional[List[str]] = None) -> None:
+    """Función principal del asistente.
 
-
-def _registrar_f22_ventanita(asistente: Asistente) -> None:
-    """Registra F22 (global) para abrir la ventanita y persistir el modo.
-
-    Es best-effort: si 'keyboard' no está, no hace nada. El callback corre en el
-    hilo de 'keyboard', así que puede bloquearse mostrando la ventanita sin
-    trabar el resto del asistente.
+    Args:
+        instancia: ``InstanciaUnica`` ya adquirida por ``main.py`` (si es None se adquiere acá).
+        argv: Argumentos (por defecto ``sys.argv``).
     """
-    try:
-        import keyboard  # type: ignore
-    except Exception as e:  # noqa: BLE001
-        logger.info("Sin 'keyboard' no registro F22 global: %s", e)
-        return
+    args = _analizar_argumentos(argv)
 
-    def _al_f22() -> None:
-        try:
-            modo = asistente.bandeja.pedir_modo()
-            if modo:
-                _persistir_modo(asistente.cfg, modo)
-                asistente.bandeja.actualizar(f"Miku - modo {modo}")
-        except Exception:  # noqa: BLE001
-            logger.exception("Error en el hotkey F22.")
+    # 0) Una sola Miku: si ya hay una corriendo, se la invoca y se termina.
+    if instancia is None:
+        from miku.servicios.instancia import InstanciaUnica
+        instancia = InstanciaUnica()
+        if not instancia.adquirir():
+            instancia.invocar_existente()
+            return
 
-    keyboard.add_hotkey("f22", _al_f22)
-    logger.info("Hotkey global F22 registrado (abre la ventanita).")
-
-
-def main() -> None:
-    """Función principal del asistente."""
     # 1) Configuración + logging.
     cfg = config_mod.cargar()
     configurar_logging(cfg.log_level)
@@ -549,67 +625,37 @@ def main() -> None:
 
     # 2) Asistente ensamblado (no toca audio todavía).
     asistente = Asistente(cfg)
+    asistente.instancia = instancia
     try:
         asistente.instalar_core()
     except Exception:  # noqa: BLE001
         logger.exception("Error fatal ensamblando el núcleo.")
+        instancia.liberar()
         sys.exit(1)
+    instancia.escuchar(asistente.invocar)
 
-    # 2b) Bandeja del sistema (Z7 paso 1): arranca un icono que convive con los
-    #     modos. "Salir" del menú interrumpe el hilo principal para un cierre
-    #     ORDENADO (mismo camino que Ctrl+C), no un kill brusco.
+    # 3) Bandeja del sistema: el icono es la "cara" de Miku mientras corre en segundo plano.
     try:
-        import _thread as _thread_mod
-
-        def _salir_desde_bandeja() -> None:
-            logger.info("Cierre solicitado desde la bandeja.")
-            _thread_mod.interrupt_main()
-
-            # ``interrupt_main`` no despierta un ``input()`` bloqueado (modo
-            # texto): si el cierre ordenado no ocurrió en unos segundos, lo
-            # forzamos igual (cerrar() es idempotente).
-            def _forzar_cierre() -> None:
-                logger.warning("El cierre ordenado no ocurrió; fuerzo la salida.")
-                asistente.cerrar()
-                os._exit(0)
-
-            temporizador = threading.Timer(6.0, _forzar_cierre)
-            temporizador.daemon = True
-            temporizador.start()
-
-        asistente.bandeja.iniciar(on_salir=_salir_desde_bandeja)
+        asistente.bandeja.iniciar(on_salir=asistente.pedir_salir,
+                                  acciones=asistente.acciones_menu(),
+                                  estado=asistente.estado_menu)
     except Exception:  # noqa: BLE001
-        logger.debug("No pude iniciar la bandeja (sigo sin ella).")
+        logger.debug("No pude iniciar la bandeja (sigo sin ella).", exc_info=True)
 
-    # 3) Elegir modo de entrada. Preferimos la VENTANITA (Z7 paso 2); si no
-    #    está disponible (sin bandeja/PyQt5), caemos al menú por consola.
-    modo = None
+    # 4) Modo inicial + hotkey F22 + cambio a ese modo.
     try:
-        modo = asistente.bandeja.pedir_modo()
-    except Exception:  # noqa: BLE001
-        logger.debug("No pude usar la ventanita para elegir modo.")
-    if modo is None:
-        modo = seleccionar_modo(cfg)
-    logger.info("Modo de entrada seleccionado: %s", modo)
-
-    # 3b) Hotkey global F22 (Z7 paso 4): abre la ventanita para elegir modo y
-    #     PERSISTE la elección. IMPORTANTE: NO lo registramos en modo push,
-    #     porque ahí F22 sigue siendo push-to-talk (evita el conflicto).
-    if modo != "push":
-        try:
-            _registrar_f22_ventanita(asistente)
-        except Exception:  # noqa: BLE001
-            logger.debug("No pude registrar el hotkey F22.")
-
-    # 4) Correr el modo elegido (la voz/STT solo se crean dentro del modo).
-    try:
-        if modo == "voz":
-            run_modo_voz(asistente)
-        elif modo == "push":
-            run_modo_push(asistente)
-        else:
-            # Modo texto: SIEMPRE con voz (Z7.3: se quitó el "texto sin voz").
-            run_modo_texto(asistente)
+        modo, elegido = _elegir_modo_inicial(asistente, args)
+        logger.info("Modo de entrada: %s", modo)
+        asistente.actualizar_hotkey_f22()
+        if not asistente.cambiar_modo(modo, persistir=elegido):
+            # Sin PyQt5 no hay ventana de texto: bucle por consola (respaldo).
+            if modo == "texto":
+                run_modo_texto(asistente)
+                return
+            logger.error("No pude arrancar el modo %s.", modo)
+        if args.invocar:
+            asistente.invocar()
+        asistente.esperar_salida()
     except KeyboardInterrupt:
         print("\nChau!")
     finally:

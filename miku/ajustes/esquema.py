@@ -123,9 +123,13 @@ _OPCIONES: List[Opcion] = [
     _o("modelo_stt_comando", "whisper-large-v3", "voz",
        "Modelo de Whisper para transcribir lo que le pedís.", usado_por="voz"),
     _o("modo_entrada", "voz", "voz",
-       "Modo con el que arranca cuando no se elige uno en la ventanita: 'voz' (escucha "
-       "continua) o 'texto' (consola de depuración).", "texto", usado_por="app",
-       permitidos=("voz", "texto", "push")),
+       "Modo con el que arranca cuando no se elige uno en la ventanita (o con --silencioso): "
+       "'voz' (escucha continua, decís \"Miku\") o 'texto' (ventana de depuración). Se puede "
+       "cambiar desde el icono de la bandeja.", "texto", usado_por="app",
+       permitidos=("voz", "texto")),
+    _o("saludo_al_iniciar", True, "voz",
+       "Al iniciar el modo voz, Miku saluda con la hora, el clima y tus pendientes. Ponelo en "
+       "False si no querés que hable al arrancar con Windows.", "booleano", usado_por="app"),
     _o("log_level", "INFO", "voz",
        "Detalle de los mensajes de diagnóstico: DEBUG, INFO, WARNING o ERROR.",
        usado_por="app", permitidos=("DEBUG", "INFO", "WARNING", "ERROR")),
