@@ -24,6 +24,7 @@ from typing import Any, Callable, Optional
 # Imports "pesados"/opcionales hechos de forma lazy dentro de los métodos
 # para acortar el arranque si no se usa modo voz (ver optimización).
 from miku.ajustes import carga as config_mod  # noqa: F401  (accede por config_mod.config)
+from miku.voz.entrada.transcriptores import Transcriptor, crear_transcriptor
 from miku.plataforma.texto import sin_acentos
 
 logger = logging.getLogger("miku.stt")
@@ -78,6 +79,7 @@ class SpeechToText:
         self.cfg = cfg
         self._reconocedor: Any = None          # reconocedor "lazy"
         self._sr_mod: Any = None               # módulo speech_recognition (lazy)
+        self._transcriptor: Optional[Transcriptor] = None   # Groq o local (lazy, ver transcriptores.py)
 
         # Estado del escucha en segundo plano.
         self._hilo_escucha: Optional[threading.Thread] = None
@@ -126,44 +128,25 @@ class SpeechToText:
     #                  Transcripción vía API de Groq                   #
     # ---------------------------------------------------------------- #
     def _llamar_whisper(self, audio, modelo: str, timeout: float) -> str:
-        """Transcribe ``audio`` con Whisper (Groq) usando ``modelo``.
+        """Transcribe ``audio`` con el transcriptor configurado (Groq o local).
 
         Es el cuerpo común de ``transcribir_audio`` (comandos) y
         ``_transcribir_wake`` (wake word).
 
         Returns:
-            Texto transcrito, o "" si falló, no hay API key o Whisper devolvió
+            Texto transcrito, o "" si falló, no hay clave/modelo o Whisper devolvió
             una "alucinación" típica de silencio/ruido.
         """
         self._importar_dependencias()
-        if not str(self.cfg.groq_api_key_stt).strip():
-            logger.error(
-                "Falta la API key para STT. Configurala en GROQ_API_KEY_STT "
-                "(entorno) o en config_local.GROQ_API_KEY_STT.")
-            return ""
-        import requests  # lazy
-
+        if self._transcriptor is None:
+            self._transcriptor = crear_transcriptor(self.cfg)
         try:
             wav_bytes = audio.get_wav_data()
-            resp = requests.post(
-                "https://api.groq.com/openai/v1/audio/transcriptions",
-                headers={"Authorization": f"Bearer {self.cfg.groq_api_key_stt}"},
-                files={"file": ("audio.wav", wav_bytes, "audio/wav")},
-                data={
-                    "model": modelo,
-                    "language": "es",
-                    "response_format": "json",
-                    "temperature": 0,
-                },
-                timeout=timeout,
-            )
-            data = resp.json()
-            if "text" not in data:
-                logger.error("Error transcribiendo con Groq: %s", data)
-                return ""
-            texto = (data["text"] or "").strip()
         except Exception as e:  # noqa: BLE001
-            logger.error("Error llamando a la API de transcripción de Groq: %s", e)
+            logger.error("No pude leer el audio capturado: %s", e)
+            return ""
+        texto = self._transcriptor.transcribir(wav_bytes, modelo, timeout)
+        if not texto:
             return ""
 
         normalizado = sin_acentos(texto)

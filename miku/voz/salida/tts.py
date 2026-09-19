@@ -38,6 +38,7 @@ import requests
 
 from miku.ajustes import carga as config_mod
 from miku.voz.salida import traduccion
+from miku.voz.salida.motores import MotorComando, nombre_de_idioma
 
 logger = logging.getLogger("miku.tts")
 
@@ -152,6 +153,9 @@ class TextoAVoz:
         # Lista de URLs a probar: la configurada primero y luego el fallback
         # localhost <-> 127.0.0.1 (en Windows a veces uno resuelve y el otro no).
         self._urls_a_probar = self._construir_urls_a_probar(self.voicevox_url)
+
+        # Motor alternativo (comando externo) para voces custom / otros idiomas.
+        self._motor_comando = MotorComando(str(cfg.get("tts_comando", "") or ""))
 
         # Subtítulos (cargado de forma perezosa vía core.subtitles).
         self._subs_enabled = subtitulos_activos
@@ -570,7 +574,8 @@ class TextoAVoz:
                 hilo_prefetch.start()
 
             # Subtítulo sincronizado a ESTA frase, justo antes de reproducir.
-            self._actualizar_subtitulos(texto_frase)
+            if self._mostrar_subtitulo(artefacto):
+                self._actualizar_subtitulos(texto_frase)
 
             # Reproductor (bloqueante hasta que termina la frase).
             self._reproducir_frase(texto_frase, artefacto)
@@ -592,18 +597,24 @@ class TextoAVoz:
         """
         texto_es = limpiar_texto_para_voz(texto_es)
         if not texto_es:
-            return {"motor": "sistema", "wav": None}
+            return {"motor": "sistema", "wav": None, "idioma": "es"}
+
+        motor = self._motor_elegido()
+        if motor == "sistema":
+            return {"motor": "sistema", "wav": None, "idioma": "es"}
+        if motor == "comando":
+            return self._preparar_con_comando(texto_es)
 
         # Sin VOICEVOX disponible -> voz del sistema.
         if not self._asegurar_voicevox():
             logger.warning("[TTS] VOICEVOX no activo -> fallback pyttsx3.")
-            return {"motor": "sistema", "wav": None}
+            return {"motor": "sistema", "wav": None, "idioma": "es"}
 
         # 1) Traducir a japonés.
         texto_ja = self._traducir_a_japones(texto_es)
         if texto_ja is None:
             logger.warning("[TTS] Falló la traducción ES->JA -> fallback pyttsx3.")
-            return {"motor": "sistema", "wav": None}
+            return {"motor": "sistema", "wav": None, "idioma": "es"}
 
         # 2) Obtener WAV de VOICEVOX.
         wav_bytes = self._sintetizar_voicevox(texto_ja)
@@ -612,9 +623,41 @@ class TextoAVoz:
                 "[TTS] _asegurar_voicevox() dio True pero la síntesis devolvió "
                 "None (revisá los logs [VOICEVOX]: HTTP/estado/cuerpo). "
                 "Uso pyttsx3 para esta frase.")
-            return {"motor": "sistema", "wav": None}
+            return {"motor": "sistema", "wav": None, "idioma": "es"}
 
-        return {"motor": "voicevox", "wav": wav_bytes}
+        return {"motor": "voicevox", "wav": wav_bytes, "idioma": "ja"}
+
+    # ---------------- Motores y subtítulos ----------------
+    def _motor_elegido(self) -> str:
+        """``voicevox`` (por defecto), ``sistema`` o ``comando`` según ``tts_motor``."""
+        motor = str(self.cfg.get("tts_motor", "voicevox") or "voicevox").strip().lower()
+        return motor if motor in ("voicevox", "sistema", "comando") else "voicevox"
+
+    def _preparar_con_comando(self, texto_es: str) -> dict:
+        """Sintetiza con el comando externo, traduciendo antes si ``tts_idioma`` no es español."""
+        idioma = str(self.cfg.get("tts_idioma", "es") or "es").strip().lower()
+        texto = texto_es
+        if idioma != "es":
+            traducido = self._traducir_a(texto_es, idioma)
+            if traducido is None:
+                logger.warning("[TTS] Falló la traducción a '%s' -> fallback pyttsx3.", idioma)
+                return {"motor": "sistema", "wav": None, "idioma": "es"}
+            texto = traducido
+        wav = self._motor_comando.sintetizar(texto)
+        if not wav:
+            logger.warning("[TTS] El motor por comando no generó audio -> fallback pyttsx3.")
+            return {"motor": "sistema", "wav": None, "idioma": "es"}
+        return {"motor": "comando", "wav": wav, "idioma": idioma}
+
+    def _mostrar_subtitulo(self, artefacto: Optional[dict]) -> bool:
+        """Política de subtítulos: ``siempre``, ``nunca`` o ``auto`` (solo si NO se habla en español)."""
+        politica = str(self.cfg.get("subtitulos", "auto") or "auto").strip().lower()
+        if politica == "siempre":
+            return True
+        if politica == "nunca":
+            return False
+        idioma = (artefacto or {}).get("idioma", "ja")
+        return idioma != "es"
 
     def _reproducir_frase(self, texto_es: str, artefacto: Optional[dict]) -> None:
         """Reproduce UNA frase ya preparada (VOICEVOX=bytes o pyttsx3)."""
@@ -623,7 +666,7 @@ class TextoAVoz:
             artefacto = self._preparar_audio_frase(texto_es)
         motor = artefacto.get("motor")
         wav_bytes = artefacto.get("wav")
-        if motor == "voicevox" and wav_bytes:
+        if motor in ("voicevox", "comando") and wav_bytes:
             self._reproducir_bytes(wav_bytes, texto_es)
         else:
             self._hablar_sistema(texto_es)
@@ -645,6 +688,14 @@ class TextoAVoz:
             return None
         return traduccion.traducir_con_groq(
             texto_es, "japonés", key, cache=_CACHE_TRADUCCIONES)
+
+    def _traducir_a(self, texto_es: str, codigo_idioma: str) -> Optional[str]:
+        """Traduce a cualquier idioma (por código: en, pt, ja...) con la cuenta STT de Groq."""
+        key = str(self.cfg.groq_api_key_stt).strip()
+        if not key:
+            return None
+        return traduccion.traducir_con_groq(texto_es, nombre_de_idioma(codigo_idioma), key,
+                                            cache=_CACHE_TRADUCCIONES)
 
     # ---------------- VOICEVOX ----------------
     def _sintetizar_voicevox(self, texto_ja: str) -> Optional[bytes]:

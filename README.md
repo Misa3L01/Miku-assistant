@@ -139,6 +139,9 @@ sacale el `#`. Las opciones principales:
 |---|---|---|
 | `GROQ_API_KEY`, `GROQ_API_KEY_STT` | LLM y Whisper/traducción TTS (la de STT cae a la principal si está vacía) | parser, STT, TTS |
 | `VOICEVOX_URL`, `VOICEVOX_SPEAKER_ID`, `VOICEVOX_RUN_EXE` | Motor de voz y voz elegida | TTS |
+| `TTS_MOTOR`, `TTS_IDIOMA`, `TTS_COMANDO`, `SUBTITULOS` | Motor de voz alternativo (voces propias / español) y subtítulos | TTS |
+| `LLM_BASE_URL`, `LLM_MODELO`, `LLM_API_KEY`, `LLM_SOPORTA_TOOLS` | LLM local o de otro proveedor (compatible con OpenAI) | parser |
+| `STT_PROVEEDOR`, `STT_MODELO_LOCAL` | Transcripción en la nube (Groq) o local (faster-whisper) | STT |
 | `MICROFONO_INDEX` | Micrófono fijo (`None` = el del sistema) | STT |
 | `MODO_ENTRADA`, `LOG_LEVEL` | Modo por defecto de la consola; nivel de log | `main` |
 | `MEMORIA_ACTIVA`, `EMBEDDINGS_ACTIVOS`, `EMBEDDINGS_UMBRAL` | Memoria persistente y búsqueda semántica | memoria |
@@ -268,6 +271,22 @@ Se cargan de forma perezosa desde `miku/plugins/registro.py`; uno roto o sin dep
 | `game_booster` | *(automático)* baja el volumen de apps al detectar un juego y lo restaura al salir | `JUEGOS_BOOSTER` |
 | `asistente_proactivo` | *(automático)* avisos proactivos (ver abajo) | psutil, `CIUDAD_CLIMA` para el clima |
 | `telegram_control` | *(automático)* comandos remotos: texto libre, `/estado`, `/pendientes` | `python-telegram-bot`, token + tu user ID |
+
+### Proveedores intercambiables (nube / local)
+
+Cada pieza pesada de Miku se puede cambiar desde `config_local.py`, sin tocar código:
+
+| Pieza | Por defecto | Alternativa |
+|---|---|---|
+| **Cerebro (LLM)** | Groq | `LLM_BASE_URL = "http://localhost:11434/v1"` (Ollama) o `http://localhost:1234/v1` (LM Studio) + `LLM_MODELO = "qwen2.5:7b"`. Sin clave. Si el modelo no entiende *function calling*: `LLM_SOPORTA_TOOLS = False` (conversa pero no ejecuta acciones). Sirve cualquier servidor con el formato de OpenAI. |
+| **Oído (STT)** | Whisper en Groq | `STT_PROVEEDOR = "local"` → faster-whisper en tu PC (`pip install faster-whisper`, modelo `STT_MODELO_LOCAL = "small"`). Sin nube; el primer uso descarga el modelo. |
+| **Voz (TTS)** | VOICEVOX (japonés; Miku traduce lo que dice) | `TTS_MOTOR = "sistema"` (voz de Windows en español) o `"comando"`: tu propio motor. |
+
+**Voz propia / otro idioma.** Con `TTS_MOTOR = "comando"` Miku ejecuta *tu* comando, que tiene que escribir un WAV en `{salida}` (el texto entra por stdin, o usá `{texto}`). Sirve para Piper, XTTS, GPT-SoVITS, RVC… Ejemplo con Piper en español: `TTS_COMANDO = r"piper --model C:\voces\es_AR.onnx --output_file {salida}"`, `TTS_IDIOMA = "es"`. Si `TTS_IDIOMA` no es `es` (por ejemplo `pt`), Miku traduce antes de hablar. Se ejecuta **sin shell**, con tiempo máximo, y si falla habla con la voz de Windows.
+
+**Subtítulos.** `SUBTITULOS = "auto"` (por defecto) los muestra **solo cuando Miku no habla en español** (con VOICEVOX, para que leas lo que dice en japonés); `"siempre"` o `"nunca"` para forzarlos.
+
+> Ninguna de las alternativas locales se probó con el motor real desde el desarrollo (no hay modelos instalados en el entorno de trabajo): están cubiertas con tests que simulan cada proveedor, y el comando externo sí se probó con un programa de verdad.
 
 ### Avisos proactivos
 

@@ -67,6 +67,10 @@ TELEGRAM_BOT_TOKEN = ""
 # (usado por: discord_control)
 DISCORD_BOT_TOKEN = ""
 
+# Clave del servidor LLM propio (los servidores locales no la necesitan).
+# (usado por: parser)
+LLM_API_KEY = ""
+
 
 # ======================================================================================
 # Voz, micrófono y modo de arranque
@@ -97,6 +101,53 @@ DISCORD_BOT_TOKEN = ""
 # Modelo de Whisper para transcribir lo que le pedís.
 # (usado por: voz)
 # MODELO_STT_COMANDO = "whisper-large-v3"
+
+# Servidor del LLM compatible con OpenAI. Vacío = Groq. Para un modelo LOCAL: Ollama
+# 'http://localhost:11434/v1' o LM Studio 'http://localhost:1234/v1'.
+# (usado por: parser)
+# LLM_BASE_URL = "http://localhost:11434/v1"
+
+# Modelo a usar con ese servidor (vacío = MODELO_API_EXTERNA). Ej. Ollama: 'qwen2.5:7b'.
+# (usado por: parser)
+# LLM_MODELO = ""
+
+# False si tu modelo local no entiende herramientas (function calling): Miku conversa
+# pero no ejecuta acciones con él.
+# (usado por: parser)
+# LLM_SOPORTA_TOOLS = True
+
+# Quién transcribe lo que decís: 'groq' (Whisper en la nube) o 'local' (faster-whisper
+# en tu PC: sin nube, más lento; pip install faster-whisper).
+# Valores válidos: groq, local
+# (usado por: voz)
+# STT_PROVEEDOR = "groq"
+
+# Tamaño del modelo de faster-whisper cuando STT_PROVEEDOR = 'local' (tiny, base, small,
+# medium, large-v3).
+# (usado por: voz)
+# STT_MODELO_LOCAL = "small"
+
+# Motor de voz: 'voicevox' (voz japonesa, Miku traduce lo que dice), 'sistema' (voz de
+# Windows, español) o 'comando' (tu propio motor: ver TTS_COMANDO).
+# Valores válidos: voicevox, sistema, comando
+# (usado por: voz)
+# TTS_MOTOR = "voicevox"
+
+# Idioma que HABLA el motor 'comando' (es, en, ja, pt…). Si no es 'es', Miku traduce
+# antes de hablar.
+# (usado por: voz)
+# TTS_IDIOMA = "es"
+
+# Comando de tu motor de voz (Piper, XTTS, GPT-SoVITS…). Debe escribir un WAV en
+# {salida}; el texto entra por stdin (o usá {texto}).
+# (usado por: voz)
+# TTS_COMANDO = r"piper --model C:\voces\es.onnx --output_file {salida}"
+
+# Subtítulos en pantalla: 'auto' (solo cuando Miku NO habla en español), 'siempre' o
+# 'nunca'.
+# Valores válidos: auto, siempre, nunca
+# (usado por: voz)
+# SUBTITULOS = "auto"
 
 # Modo con el que arranca cuando no se elige uno en la ventanita (o con --silencioso):
 # 'voz' (escucha continua, decís "Miku") o 'texto' (ventana de depuración). Se puede

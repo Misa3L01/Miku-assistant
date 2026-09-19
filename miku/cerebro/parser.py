@@ -71,7 +71,11 @@ def _normalizar_frase(texto: str) -> str:
 # ---------------- Brain (cliente de LLM) ---------------- #
 
 class BrainGroq:
-    """Cliente mínimo de chat con tools usando la API de Groq.
+    """Cliente mínimo de chat con tools para cualquier API compatible con OpenAI.
+
+    Por defecto usa Groq. Con ``LLM_BASE_URL`` apunta a otro servidor con el mismo formato: un modelo
+    **local** (Ollama ``http://localhost:11434/v1``, LM Studio ``http://localhost:1234/v1``,
+    llama.cpp) u otro proveedor en la nube. Ver ``endpoint()``.
 
     El objetivo es separar el transporte (HTTP) de la lógica del asistente,
     para poder reemplazar Groq por otro proveedor sin tocar el parser.
@@ -84,6 +88,24 @@ class BrainGroq:
         self.system_prompt = system_prompt or self._prompt_default()
         self._ultima_llamada: float = 0.0
         self._lock = threading.Lock()
+
+    def endpoint(self) -> Dict[str, Any]:
+        """Dónde y cómo hablar con el LLM según la config.
+
+        Returns:
+            ``url`` (chat/completions), ``key`` (puede ser vacía en servidores locales), ``modelo``,
+            ``requiere_key`` (solo Groq) y ``tools`` (si el modelo soporta herramientas).
+        """
+        cfg = self.cfg
+        base = str(cfg.get("llm_base_url", "") or "").strip().rstrip("/")
+        modelo = str(cfg.get("llm_modelo", "") or "").strip() or cfg.modelo_api_externa
+        if not base:
+            return {"url": self.BASE_URL, "key": str(cfg.groq_api_key).strip(), "modelo": modelo,
+                    "requiere_key": True, "tools": True, "nombre": "Groq"}
+        url = base if base.endswith("/chat/completions") else base + "/chat/completions"
+        return {"url": url, "key": str(cfg.get("llm_api_key", "") or "").strip(), "modelo": modelo,
+                "requiere_key": False, "tools": bool(cfg.get("llm_soporta_tools", True)),
+                "nombre": base}
 
     def _prompt_default(self) -> str:
         """Prompt de sistema base de Miku."""
@@ -138,7 +160,8 @@ class BrainGroq:
         """
         # Guard: si NO hay API key configurada, informar con claridad y
         # devolver un mensaje amigable en vez de fallar con un HTTP 401.
-        if not str(self.cfg.groq_api_key).strip():
+        destino = self.endpoint()
+        if destino["requiere_key"] and not destino["key"]:
             logger.error(
                 "Falta GROQ_API_KEY. Configuralo en tu variable de entorno "
                 "o en config_local.py (config.GROQ_API_KEY = 'gsk_...').")
@@ -181,22 +204,22 @@ class BrainGroq:
             sistema = f"{sistema}\n\nContexto actual:\n" + "\n".join(extra_ctx)
 
         payload = {
-            "model": self.cfg.modelo_api_externa,
+            "model": destino["modelo"],
             "messages": [
                 {"role": "system", "content": sistema},
                 *historial,
                 {"role": "user", "content": texto},
             ],
-            "tools": tools,
-            "tool_choice": "auto",
             "temperature": 0.4,
             "max_tokens": 400,
         }
+        if destino["tools"] and tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
 
-        headers = {
-            "Authorization": f"Bearer {self.cfg.groq_api_key}",
-            "Content-Type": "application/json",
-        }
+        headers = {"Content-Type": "application/json"}
+        if destino["key"]:
+            headers["Authorization"] = f"Bearer {destino['key']}"
 
         # Protección de rate-limit básica.
         with self._lock:
@@ -205,8 +228,8 @@ class BrainGroq:
                 time.sleep(espera)
 
         try:
-            resp = requests.post(self.BASE_URL, headers=headers,
-                                 json=payload, timeout=20)
+            resp = requests.post(destino["url"], headers=headers,
+                                 json=payload, timeout=60 if not destino["requiere_key"] else 20)
             data = resp.json()
             if "choices" not in data:
                 logger.error("Error Groq: %s", data)

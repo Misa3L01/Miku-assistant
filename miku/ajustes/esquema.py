@@ -122,6 +122,40 @@ _OPCIONES: List[Opcion] = [
        "Modelo de Whisper para detectar la palabra 'Miku'.", usado_por="voz"),
     _o("modelo_stt_comando", "whisper-large-v3", "voz",
        "Modelo de Whisper para transcribir lo que le pedís.", usado_por="voz"),
+    _o("llm_base_url", "", "voz",
+       "Servidor del LLM compatible con OpenAI. Vacío = Groq. Para un modelo LOCAL: Ollama "
+       "'http://localhost:11434/v1' o LM Studio 'http://localhost:1234/v1'.", "texto",
+       'LLM_BASE_URL = "http://localhost:11434/v1"', "parser"),
+    _o("llm_modelo", "", "voz",
+       "Modelo a usar con ese servidor (vacío = MODELO_API_EXTERNA). Ej. Ollama: 'qwen2.5:7b'.",
+       usado_por="parser"),
+    _o("llm_api_key", "", "claves",
+       "Clave del servidor LLM propio (los servidores locales no la necesitan).", "secreto",
+       usado_por="parser"),
+    _o("llm_soporta_tools", True, "voz",
+       "False si tu modelo local no entiende herramientas (function calling): Miku conversa pero "
+       "no ejecuta acciones con él.", "booleano", usado_por="parser"),
+    _o("stt_proveedor", "groq", "voz",
+       "Quién transcribe lo que decís: 'groq' (Whisper en la nube) o 'local' (faster-whisper en tu "
+       "PC: sin nube, más lento; pip install faster-whisper).", "texto", usado_por="voz",
+       permitidos=("groq", "local")),
+    _o("stt_modelo_local", "small", "voz",
+       "Tamaño del modelo de faster-whisper cuando STT_PROVEEDOR = 'local' (tiny, base, small, "
+       "medium, large-v3).", "texto", usado_por="voz"),
+    _o("tts_motor", "voicevox", "voz",
+       "Motor de voz: 'voicevox' (voz japonesa, Miku traduce lo que dice), 'sistema' (voz de "
+       "Windows, español) o 'comando' (tu propio motor: ver TTS_COMANDO).", "texto", usado_por="voz",
+       permitidos=("voicevox", "sistema", "comando")),
+    _o("tts_idioma", "es", "voz",
+       "Idioma que HABLA el motor 'comando' (es, en, ja, pt…). Si no es 'es', Miku traduce antes "
+       "de hablar.", "texto", usado_por="voz"),
+    _o("tts_comando", "", "voz",
+       "Comando de tu motor de voz (Piper, XTTS, GPT-SoVITS…). Debe escribir un WAV en {salida}; el "
+       "texto entra por stdin (o usá {texto}).", "texto",
+       r'TTS_COMANDO = r"piper --model C:\voces\es.onnx --output_file {salida}"', "voz"),
+    _o("subtitulos", "auto", "voz",
+       "Subtítulos en pantalla: 'auto' (solo cuando Miku NO habla en español), 'siempre' o "
+       "'nunca'.", "texto", usado_por="voz", permitidos=("auto", "siempre", "nunca")),
     _o("modo_entrada", "voz", "voz",
        "Modo con el que arranca cuando no se elige uno en la ventanita (o con --silencioso): "
        "'voz' (escucha continua, decís \"Miku\") o 'texto' (ventana de depuración). Se puede "
