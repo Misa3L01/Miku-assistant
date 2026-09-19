@@ -8,6 +8,7 @@ import subprocess
 from typing import Any, Dict, List, Optional
 
 from miku.plugins.base import Plugin
+from miku.servicios import recordatorios
 from miku.voz.frases.respuesta import exito, falla
 
 logger = logging.getLogger("miku.plugins.energia")
@@ -229,7 +230,9 @@ class Energia(Plugin):
             texto = mensaje or "un recordatorio"
             descripcion = f"Recordatorio: {texto}"
             callback = self._crear_callback_recordatorio(contexto, texto)
-            scheduler.programar(segundos, callback, descripcion)
+            # Un recordatorio se guarda en disco: sobrevive a cerrar y abrir Miku.
+            scheduler.programar(segundos, callback, descripcion,
+                                persistente=recordatorios.datos_de(texto))
             return f"Dale, {etiqueta_momento} te aviso: {texto}."
 
         if accion not in ("apagar", "reiniciar", "suspender"):
@@ -287,18 +290,8 @@ class Energia(Plugin):
         El `voice` viene en ``contexto["voice"]`` (lo inyecta miku/app.py). Si no
         hay voz, el recordatorio se imprime por consola igual.
         """
-        def _callback() -> None:
-            frase = f"¡Recordatorio! {mensaje}"
-            voice = (contexto or {}).get("voice")
-            if voice is not None:
-                try:
-                    voice.decir(frase)
-                    return
-                except Exception:  # noqa: BLE001
-                    logger.exception("No pude decir el recordatorio por voz.")
-            # Fallback: consola.
-            print(f"[Recordatorio] {mensaje}")
-        return _callback
+        return recordatorios.fabricar_callback(lambda: (contexto or {}).get("voice"),
+                                               recordatorios.datos_de(mensaje))
 
     def cancelar_accion_programada(self, tarea_id: Any,
                                    contexto: Dict[str, Any]) -> str:

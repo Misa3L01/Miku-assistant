@@ -201,6 +201,19 @@ _OPCIONES: List[Opcion] = [
        "Ruta al .bat que interpola (recibe la ruta completa del video como argumento).", "ruta",
        r'r"R:\VapourSynth-Env\Python\interpolar_miku.bat"', "video_interpolador"),
 
+    # --------------------------------------------------------------- conversación
+    _o("historial_turnos", 4, "memoria",
+       "Cuántos turnos previos de la charla recuerda Miku para entender 'y mañana?' o 'ahora en "
+       "Chrome' (0 = sin historial).", "entero", usado_por="parser"),
+    _o("historial_minutos", 10, "memoria",
+       "Minutos que un turno sigue contando como contexto de la charla.", "entero", usado_por="parser"),
+    _o("enrutar_tools", True, "memoria",
+       "Mandarle al LLM solo las herramientas relacionadas con lo que dijiste (menos costo y "
+       "latencia). Si ninguna se relaciona claramente, manda todas.", "booleano", usado_por="parser"),
+    _o("enrutar_max_tools", 14, "memoria",
+       "Máximo de herramientas que se mandan al LLM por consulta cuando el enrutado está activo.",
+       "entero", usado_por="parser"),
+
     # ------------------------------------------------------------------ juegos
     _o("idioma_juego", "", "juegos",
        "Idioma por defecto del traductor cuando no decís uno ('traducí X al portugués' siempre "

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from unittest import mock
 
 import pytest
@@ -173,3 +174,83 @@ def test_procesar_concurrente(parser, cerebro):
     [h.start() for h in hilos]
     [h.join() for h in hilos]
     assert not errores
+
+
+# --------------------------------------------------------------------------- #
+# Historial de conversación y enrutado de tools en el parser
+# --------------------------------------------------------------------------- #
+def test_el_llm_recibe_los_turnos_anteriores(parser, cerebro):
+    vistos = []
+    cerebro.consultar = lambda texto, ctx, tools: vistos.append(ctx.get("historial")) or {
+        "respuesta": f"resp {len(vistos)}", "tools_call": []}
+    parser.procesar("cómo está el clima en Rosario", {})
+    parser.procesar("y mañana?", {})
+    assert vistos[0] == []
+    assert vistos[1] == [{"role": "user", "content": "cómo está el clima en Rosario"},
+                         {"role": "assistant", "content": "resp 1"}]
+
+
+def test_el_historial_tiene_tope_y_vencimiento(parser, cerebro, monkeypatch):
+    vistos = []
+    cerebro.consultar = lambda texto, ctx, tools: vistos.append(ctx["historial"]) or {
+        "respuesta": "ok", "tools_call": []}
+    parser.cfg.valores["historial_turnos"] = 2
+    for i in range(5):
+        parser.procesar(f"pregunta {i}", {})
+    assert [m["content"] for m in vistos[-1] if m["role"] == "user"] == ["pregunta 2", "pregunta 3"]
+    ahora = time.monotonic()
+    monkeypatch.setattr(time, "monotonic", lambda: ahora + 3600)      # una hora después
+    parser.procesar("otra cosa", {})
+    assert vistos[-1] == []
+    parser.cfg.valores["historial_turnos"] = 0
+    parser.procesar("sin historial", {})
+    assert vistos[-1] == []
+
+
+def test_olvidar_historial(parser, cerebro):
+    cerebro.resp = {"respuesta": "hola", "tools_call": []}
+    parser.procesar("hola", {})
+    assert parser._turnos_recientes()
+    parser.olvidar_historial()
+    assert parser._turnos_recientes() == []
+
+
+def test_con_historial_no_se_usa_la_cache_del_llm(cerebro_real):
+    llamadas = []
+
+    def post(url, **kw):
+        llamadas.append(kw["json"]["messages"])
+        return _Resp({"content": "Mañana llueve", "tool_calls": []})
+
+    previo = [{"role": "user", "content": "clima"}, {"role": "assistant", "content": "sol"}]
+    with mock.patch.object(requests, "post", post):
+        cerebro_real.consultar("y mañana?", {"historial": previo}, TOOLS)
+        cerebro_real.consultar("y mañana?", {"historial": previo}, TOOLS)
+    assert len(llamadas) == 2
+    roles = [m["role"] for m in llamadas[0]]
+    assert roles == ["system", "user", "assistant", "user"]
+
+
+def test_el_parser_manda_al_llm_solo_las_tools_relacionadas(parser, cerebro):
+    def tool(nombre, desc=""):
+        return {"type": "function", "function": {"name": nombre, "description": desc, "parameters": {}}}
+
+    from miku.plugins.base import Plugin
+
+    class Muchas(Plugin):
+        nombre = "muchas"
+        tools = [tool("abrir_programa", "Abre un programa")] + [tool(f"otra_cosa_{i}", "x") for i in range(20)]
+
+        def manejar_tool(self, n, a, c):
+            return f"hice {n}"
+
+    parser.bus.plugins = [Muchas()]
+    enviadas = []
+    cerebro.consultar = lambda texto, ctx, tools: enviadas.append([t["function"]["name"] for t in tools]) or {
+        "respuesta": "", "tools_call": [{"nombre": "otra_cosa_3", "args": {}}]}
+    r = parser.procesar("abrí discord", {})
+    assert enviadas[0] == ["abrir_programa"]
+    assert r == "hice otra_cosa_3"       # una tool del catálogo completo sigue siendo válida
+    parser.cfg.valores["enrutar_tools"] = False
+    parser.procesar("abrí discord", {})
+    assert len(enviadas[1]) == 21

@@ -142,10 +142,11 @@ sacale el `#`. Las opciones principales:
 | `MICROFONO_INDEX` | Micrófono fijo (`None` = el del sistema) | STT |
 | `MODO_ENTRADA`, `LOG_LEVEL` | Modo por defecto de la consola; nivel de log | `main` |
 | `MEMORIA_ACTIVA`, `EMBEDDINGS_ACTIVOS`, `EMBEDDINGS_UMBRAL` | Memoria persistente y búsqueda semántica | memoria |
+| `HISTORIAL_TURNOS`, `HISTORIAL_MINUTOS`, `ENRUTAR_TOOLS`, `ENRUTAR_MAX_TOOLS` | Historial de la charla y enrutado de tools | parser |
 | `APP_WHITELIST` | Apps que se pueden cerrar por voz (`explorer` **nunca** se cierra) | `programas` |
 | `STEAM_RUTA`, `JUEGOS_EPIC` | Abrir juegos | `programas` |
 | `CARPETA_VIDEOS`, `RUTA_BAT_INTERPOLAR` | Interpolación de video | `video_interpolador` |
-| `IDIOMA_JUEGO`, `MENSAJES_JUEGO` | Traductor de mensajes de juego | `traductor_juegos` |
+| `IDIOMA_JUEGO`, `PERFILES_JUEGO`, `MENSAJES_JUEGO` | Traductor: idioma por defecto, idioma por juego y atajos (todo opcional) | `traductor_juegos` |
 | `CARPETAS_FAVORITAS`, `CARPETA_CAPTURAS` | Carpetas rápidas y destino de capturas | `favoritos`, `captura` |
 | `CIUDAD_CLIMA` (o `CLIMA_LAT`/`CLIMA_LON`) | Clima y briefing | `clima` |
 | `PERSONALIDAD` | Estilo por defecto | `personalidad` |
@@ -248,8 +249,8 @@ Se cargan de forma perezosa desde `miku/plugins/registro.py`; uno roto o sin dep
 | `energia` | `control_energia` ⚠️, `programar_accion` ⚠️, `cancelar_accion_programada`, `controlar_brillo` | — |
 | `ventanas` | `listar_ventanas`, `mover_ventana`, `posicionar_ventana`, `organizar_ventanas`, `minimizar_ventana` | pywin32 |
 | `web_search` | `buscar_en_web` (MercadoLibre, YouTube, Google, Wikipedia, GitHub o dominio) | — |
-| `browser` | `abrir_pestana`, `cerrar_pestana`, `buscar_en_pestana_actual` | Brave (`BRAVE_RUTA_EXE`), CDP |
-| `tidal` | `controlar_tidal`, `que_esta_sonando` | TIDAL / Windows SMTC |
+| `browser` | `abrir_pestana`, `cerrar_pestana` (la actual o por título), `buscar_en_pestana_actual` (navega la pestaña activa; con `websocket-client`) | Brave (`BRAVE_RUTA_EXE`), CDP |
+| `tidal` | `controlar_tidal`, `que_esta_sonando`, `reproducir_en_tidal` ("poné X de Y"), `conectar_tidal` | TIDAL / Windows SMTC; `tidalapi` (opcional) para buscar por nombre |
 | `system_status` | `estado_pc` (CPU, RAM, disco, batería) | psutil |
 | `favoritos` | `abrir_carpeta_favorita`, `guardar_carpeta_favorita` | — |
 | `captura` | `capturar_pantalla` | Pillow |
@@ -258,10 +259,11 @@ Se cargan de forma perezosa desde `miku/plugins/registro.py`; uno roto o sin dep
 | `clima` | `clima` (Open-Meteo, sin clave) | `CIUDAD_CLIMA` |
 | `todoist` | `tareas_hoy`, `agregar_tarea`, `completar_tarea` | `TODOIST_API_TOKEN` |
 | `personalidad` | `cambiar_personalidad`, `listar_personalidades` | — |
-| `modos` | `salir_modo` (revierte resolución/volumen/brillo) | — |
-| `macros` | `listar_macros`, `ejecutar_macro` | `data/macros_config.json` |
+| `modos` | `salir_modo` (revierte resolución/volumen/brillo; **sobrevive a reiniciar**), `volver_resolucion_nativa` | — |
+| `recuerdos` | `guardar_recuerdo`, `olvidar_recuerdo`, `listar_recuerdos`, `olvidar_conversacion` | — |
+| `macros` | `listar_macros` (dice cuántas hay y nombra 5), `ejecutar_macro` | `data/macros_config.json` |
 | `video_interpolador` | `interpolar_video` (lanza el `.bat` en segundo plano y avisa al terminar) | `CARPETA_VIDEOS`, `RUTA_BAT_INTERPOLAR` |
-| `traductor_juegos` | `traducir_mensaje_juego` (traduce y copia al portapapeles) | `IDIOMA_JUEGO`, `MENSAJES_JUEGO` |
+| `traductor_juegos` | `traducir_mensaje_juego` (cualquier texto a **cualquier idioma**; deja el resultado **solo en el portapapeles**) | Groq; opcional `IDIOMA_JUEGO`, `PERFILES_JUEGO`, `MENSAJES_JUEGO` |
 | `discord_control` | `silenciar_usuario_discord` ⚠️, `volumen_usuario_discord` ⚠️, `expulsar_usuario_discord` ⚠️ | `DISCORD_BOT_TOKEN`, intent *Server Members* |
 | `game_booster` | *(automático)* baja el volumen de apps al detectar un juego y lo restaura al salir | `JUEGOS_BOOSTER` |
 | `asistente_proactivo` | *(automático)* avisos proactivos (ver abajo) | psutil, `CIUDAD_CLIMA` para el clima |
@@ -288,7 +290,10 @@ Detalles que conviene saber:
 - **`cerrar_programa`** solo cierra apps de `APP_WHITELIST` (coincidencia exacta) y nunca el Explorador.
 - **`programar_accion`** acepta minutos o una hora (`HH:MM`); los recordatorios se hablan por voz. Se cancelan al cerrar el asistente.
 - **Discord:** un bot **no** puede cambiar el volumen de otro usuario (límite de la API), por eso `volumen_usuario_discord` es mute/deafen. El rol del bot debe estar por encima del usuario objetivo.
-- **TIDAL:** no tiene API pública; los controles usan las teclas multimedia del sistema y "qué suena" sale de Windows SMTC.
+- **TIDAL:** no tiene API pública de reproducción; los controles usan las teclas multimedia del sistema y "qué suena" (con el estado play/pausa) sale de Windows SMTC. Para **"poné X de Y"**: `pip install tidalapi`, decí *"conectá TIDAL"* (abre el navegador para aprobar el acceso, una sola vez; la sesión queda en `data/tidal_sesion.json`, que **no se sube a git**) y después *"poné Bohemian Rhapsody de Queen"*: Miku busca el tema en tu cuenta y abre `tidal://track/<id>` en la app de escritorio (si queda en pausa, manda "play"). Ese último tramo (abrir el enlace) no se probó contra una cuenta real.
+- **Traductor:** *"traducí 'buena suerte' al portugués"* / *"decí gracias en japonés"* / *"mandá gg"* → traduce con Groq y lo deja en el portapapeles para pegar; no escribe ni envía nada. Idioma: el que digas > el perfil del juego en primer plano (`PERFILES_JUEGO = {"cs2": "portugués"}`) > `IDIOMA_JUEGO`. Un atajo (`MENSAJES_JUEGO`) solo cuenta si lo decís exacto.
+- **Historial y enrutado (cerebro):** Miku recuerda los últimos `HISTORIAL_TURNOS` (4) turnos de los últimos `HISTORIAL_MINUTOS` (10) para entender *"y mañana?"*; *"empecemos de nuevo"* lo borra (los recuerdos guardados no se tocan). Al LLM no se le mandan las ~45 tools en cada consulta sino las **relacionadas** con lo que dijiste (`miku/cerebro/enrutador.py`: raíces de palabras + sinónimos; si nada se relaciona claramente, manda todas). Se apaga con `ENRUTAR_TOOLS = False`.
+- **Recordatorios:** los que programás con *"recordame en 10 minutos…"* **sobreviven a cerrar Miku** (`data/recordatorios.json`); si vencen con Miku cerrada, te los avisa al abrir (hasta 24 h después). Apagados y suspensiones programados **nunca** se guardan: no se disparan en otra sesión.
 - **Telegram:** solo responde al **usuario** autorizado (no al chat/grupo) y no puede prender la PC.
 
 ---

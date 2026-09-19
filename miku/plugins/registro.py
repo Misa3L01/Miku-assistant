@@ -51,6 +51,7 @@ _CATALOGO: List[_Entrada] = [
     _Entrada("pantalla.captura", "Captura"),
     _Entrada("asistente.personalidad", "PersonalidadPlugin"),
     _Entrada("asistente.modos", "Modos"),
+    _Entrada("asistente.recuerdos", "Recuerdos"),
     _Entrada("productividad.clima", "Clima"),
     _Entrada("navegacion.brave", "Browser"),
     _Entrada("multimedia.tidal", "Tidal"),

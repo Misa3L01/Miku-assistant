@@ -19,6 +19,8 @@ data/miku_memoria/
 data/miku_memoria.db
 data/*.db
 data/tidal_sesion.json
+data/recordatorios.json
+data/modo_snapshot.json
 data/proactivo_estado.json
 data/*.log*
 data/*.tmp

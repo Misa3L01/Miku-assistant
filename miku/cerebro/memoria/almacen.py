@@ -30,10 +30,10 @@ import re
 import sqlite3
 import threading
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from miku.ajustes.carga import BASE_DIR
-from miku.voz.frases.respuesta import falla
+from miku.voz.frases.respuesta import exito, falla
 
 logger = logging.getLogger("miku.memoria")
 
@@ -310,11 +310,11 @@ class Memoria:
         """
         texto_aproximado = (texto_aproximado or "").strip()
         if not texto_aproximado:
-            return "¿Qué recuerdo querés que olvide?"
+            return falla("memoria.olvidar_sin_texto")
 
         with self._lock:
             if self._conn is None:
-                return "La memoria no está activa."
+                return falla("memoria.inactiva")
             try:
                 palabras = _tokenizar(texto_aproximado)
                 if palabras:
@@ -332,18 +332,28 @@ class Memoria:
                 if not coincidencias:
                     return falla("memoria.sin_recuerdos", consulta=texto_aproximado)
                 if len(coincidencias) > 1:
-                    listado = ", ".join(t for _, t in coincidencias[:5])
-                    return (f"Tengo varios recuerdos que coinciden: {listado}. "
-                            f"Decime cuál con más detalle.")
+                    listado = "; ".join(t for _, t in coincidencias[:5])
+                    return falla("memoria.varios", listado=listado)
 
                 rec_id, rec_texto = coincidencias[0]
                 self._conn.execute("DELETE FROM recuerdos WHERE id = ?", (rec_id,))
                 self._conn.commit()
                 logger.info("Recuerdo olvidado: %r", rec_texto[:60])
-                return f"Listo, olvidé: {rec_texto}"
+                return exito("memoria.olvidado", recuerdo=rec_texto)
             except Exception as e:  # noqa: BLE001
                 logger.error("Error olvidando recuerdo: %s", e)
-                return "No pude olvidar ese recuerdo."
+                return falla("memoria.error_olvidar")
+
+    def listar_recuerdos(self, cantidad: int = 5) -> Tuple[int, List[str]]:
+        """``(total, los N más recientes)``; ``(0, [])`` si la memoria está inactiva."""
+        with self._lock:
+            if self._conn is None:
+                return 0, []
+            try:
+                return self.cantidad(), self._recientes(max(1, int(cantidad)))
+            except Exception as e:  # noqa: BLE001
+                logger.error("No pude listar los recuerdos: %s", e)
+                return 0, []
 
     def cantidad(self) -> int:
         """Devuelve la cantidad de recuerdos guardados."""

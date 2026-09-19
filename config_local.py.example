@@ -134,6 +134,25 @@ DISCORD_BOT_TOKEN = ""
 # (usado por: memoria)
 # EMBEDDINGS_UMBRAL = 0.35
 
+# Cuántos turnos previos de la charla recuerda Miku para entender 'y mañana?' o 'ahora
+# en Chrome' (0 = sin historial).
+# (usado por: parser)
+# HISTORIAL_TURNOS = 4
+
+# Minutos que un turno sigue contando como contexto de la charla.
+# (usado por: parser)
+# HISTORIAL_MINUTOS = 10
+
+# Mandarle al LLM solo las herramientas relacionadas con lo que dijiste (menos costo y
+# latencia). Si ninguna se relaciona claramente, manda todas.
+# (usado por: parser)
+# ENRUTAR_TOOLS = True
+
+# Máximo de herramientas que se mandan al LLM por consulta cuando el enrutado está
+# activo.
+# (usado por: parser)
+# ENRUTAR_MAX_TOOLS = 14
+
 
 # ======================================================================================
 # Sistema, programas y juegos

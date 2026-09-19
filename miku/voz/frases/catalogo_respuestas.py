@@ -171,6 +171,98 @@ CATALOGO: Dict[str, List[str]] = {
         "La traducción es: {traduccion}. Igual no logré copiarla al portapapeles.",
     ],
 
+    # -------------------------------------------------------------------- recuerdos
+    "memoria.guardado": [
+        "Anotado, no me olvido.",
+        "Listo, lo recuerdo.",
+        "Dale, queda guardado.",
+    ],
+    "memoria.olvidado": [
+        "Listo, olvidé: {recuerdo}",
+        "Ya está, borré este recuerdo: {recuerdo}",
+    ],
+    "memoria.varios": [
+        "Tengo varios recuerdos que coinciden: {listado}. Decime cuál con más detalle.",
+        "Hay más de uno que coincide: {listado}. ¿Cuál querés que olvide?",
+    ],
+    "memoria.olvidar_sin_texto": [
+        "¿Qué recuerdo querés que olvide?",
+        "Decime de qué trata el recuerdo que tengo que olvidar.",
+    ],
+    "memoria.guardar_sin_texto": [
+        "¿Qué querés que recuerde?",
+        "Decime qué anoto.",
+    ],
+    "memoria.inactiva": [
+        "La memoria no está activa ahora.",
+        "No tengo la memoria disponible en este momento.",
+    ],
+    "memoria.error_olvidar": [
+        "No pude olvidar ese recuerdo.",
+        "Algo falló al borrar ese recuerdo.",
+    ],
+    "memoria.error_guardar": [
+        "No pude guardar eso ahora mismo.",
+        "Algo falló al anotarlo; probá de nuevo.",
+    ],
+    "memoria.vacia": [
+        "Todavía no tengo ningún recuerdo guardado.",
+        "No tengo nada anotado por ahora.",
+    ],
+    "memoria.lista": [
+        "Tengo {total} recuerdos: {listado}.",
+        "Esto es lo que recuerdo ({total}): {listado}.",
+    ],
+    "memoria.lista_parcial": [
+        "Tengo {total} recuerdos. Los últimos {cantidad}: {listado}.",
+        "Recuerdo {total} cosas; las más recientes son: {listado}.",
+    ],
+    "memoria.charla_olvidada": [
+        "Listo, empezamos de cero.",
+        "Dale, olvidé lo que veníamos hablando.",
+    ],
+
+    # ---------------------------------------------------------------------- Brave
+    "brave.sin_cdp": [
+        "No puedo controlar Brave ahora: falta el puerto de depuración. Configurá BRAVE_RUTA_EXE para "
+        "que lo lance yo, o abrí Brave con --remote-debugging-port.",
+        "No logro conectarme a Brave (falta el puerto de depuración). Con BRAVE_RUTA_EXE configurado "
+        "lo abro yo con ese puerto.",
+    ],
+    "brave.pestana_no_encontrada": [
+        "No veo ninguna pestaña que diga '{titulo}'.",
+        "No encuentro una pestaña con '{titulo}' abierta.",
+    ],
+    "brave.varias_pestanas": [
+        "Hay {cantidad} pestañas con '{titulo}': {nombres}. Decime cuál con más detalle y la cierro.",
+        "Encontré {cantidad} pestañas que coinciden con '{titulo}': {nombres}. ¿Cuál cierro?",
+    ],
+    "brave.pestana_sin_id": [
+        "No pude identificar esa pestaña.",
+        "Esa pestaña no me dio su identificador, no pude cerrarla.",
+    ],
+    "brave.no_pude_cerrar": [
+        "No pude cerrar la pestaña.",
+        "Intenté cerrar la pestaña pero no respondió.",
+    ],
+    "brave.pestana_cerrada": [
+        "Listo, cerré la pestaña.",
+        "Ya cerré la pestaña.",
+        "Pestaña cerrada.",
+    ],
+    "brave.buscar_sin_consulta": [
+        "¿Qué querés que busque?",
+        "Decime qué busco.",
+    ],
+    "brave.buscado_en_actual": [
+        "Listo, busqué {consulta} en la pestaña actual.",
+        "Ya está, {consulta} en la pestaña que tenías abierta.",
+    ],
+    "brave.buscado_en_nueva": [
+        "Listo, abrí una pestaña nueva buscando {consulta}.",
+        "Busqué {consulta} en una pestaña nueva.",
+    ],
+
     # ---------------------------------------------------------------------- macros
     "macros.lista": [
         "Tengo {cantidad} macros: {nombres}.",

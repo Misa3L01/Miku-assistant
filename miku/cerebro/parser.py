@@ -20,12 +20,14 @@ import logging
 import re
 import threading
 import time
+from collections import deque
 from datetime import date
-from typing import Any, Dict, List, Optional
+from typing import Any, Deque, Dict, List, Optional, Tuple
 
 import requests
 
 from miku.ajustes import carga as config_mod
+from miku.cerebro import enrutador
 from miku.plataforma.texto import sin_acentos
 
 logger = logging.getLogger("miku.parser")
@@ -161,7 +163,8 @@ class BrainGroq:
         # Cache: la respuesta depende del texto, de las tools, de la
         # personalidad y del DÍA (una respuesta con "hoy" no vale mañana). No se
         # usa si hay recuerdos en el contexto (la respuesta depende de ellos).
-        usa_cache = not contexto.get("miku_memoria")
+        historial = contexto.get("historial") or []
+        usa_cache = not contexto.get("miku_memoria") and not historial
         cache_key = (f"{texto.lower()}|{sorted(claves)}|{hash(_extra_pers)}|"
                      f"{date.today().isoformat()}")
         if usa_cache:
@@ -181,6 +184,7 @@ class BrainGroq:
             "model": self.cfg.modelo_api_externa,
             "messages": [
                 {"role": "system", "content": sistema},
+                *historial,
                 {"role": "user", "content": texto},
             ],
             "tools": tools,
@@ -285,6 +289,34 @@ class CommandParser:
         # Estructura: {tool: str, args_base: dict, opciones: list[dict]}
         self._pendiente_desambiguacion: Optional[Dict[str, Any]] = None
 
+        # ---- Historial corto de conversación (para "y mañana?", "ahora en Chrome") ----
+        # (momento monotonic, lo que dijo el usuario, lo que respondió Miku). Se descartan los
+        # turnos viejos: una charla de hace una hora no aporta contexto a lo que se dice ahora.
+        self._historial: Deque[Tuple[float, str, str]] = deque(maxlen=12)
+
+    # ---------------- Historial ----------------
+    def _turnos_recientes(self) -> List[Dict[str, str]]:
+        """Mensajes ``user``/``assistant`` de los últimos turnos vigentes (para el LLM)."""
+        try:
+            maximo = int(self.cfg.get("historial_turnos", 4) or 0)
+            vigencia = float(self.cfg.get("historial_minutos", 10)) * 60
+        except (TypeError, ValueError):
+            maximo, vigencia = 4, 600.0
+        if maximo <= 0:
+            return []
+        ahora = time.monotonic()
+        vigentes = [t for t in self._historial if ahora - t[0] <= vigencia][-maximo:]
+        mensajes: List[Dict[str, str]] = []
+        for _, dicho, respondido in vigentes:
+            mensajes.append({"role": "user", "content": dicho})
+            mensajes.append({"role": "assistant", "content": respondido})
+        return mensajes
+
+    def olvidar_historial(self) -> None:
+        """Borra el historial de la conversación (no toca los recuerdos guardados)."""
+        with self._lock:
+            self._historial.clear()
+
     # ---------------- Construcción de tools desde plugins ----------------
     def recopilar_tools(self) -> List[dict]:
         """Junta los schemas de tools declaradas por todos los plugins."""
@@ -330,7 +362,10 @@ class CommandParser:
             Respuesta de texto final.
         """
         with self._lock:
-            return self._procesar(texto, contexto)
+            respuesta = self._procesar(texto, contexto)
+            if (texto or "").strip() and isinstance(respuesta, str) and respuesta.strip():
+                self._historial.append((time.monotonic(), texto.strip()[:400], respuesta.strip()[:600]))
+            return respuesta
 
     def _procesar(self, texto: str, contexto: Dict[str, Any]) -> str:
         """Implementación de ``procesar`` (se llama con el lock tomado)."""
@@ -369,10 +404,19 @@ class CommandParser:
 
         # 3) Construir contexto de memoria para el prompt.
         contexto_brain = self._agregar_memoria(texto)
+        contexto_brain["historial"] = self._turnos_recientes()
 
-        # 4) Consultar al LLM y ejecutar tools si hace falta.
+        # 4) Consultar al LLM y ejecutar tools si hace falta. Al LLM se le manda solo la parte
+        #    del catálogo que se relaciona con lo dicho (``enrutador``); la validación de nombres
+        #    de más abajo usa el catálogo completo.
         tools = self.recopilar_tools()
-        resultado = self.brain.consultar(texto, contexto_brain, tools)
+        ofrecidas = tools
+        if self.cfg.get("enrutar_tools", True):
+            try:
+                ofrecidas = enrutador.seleccionar(texto, tools, int(self.cfg.get("enrutar_max_tools", 14)))
+            except Exception:  # noqa: BLE001
+                logger.debug("Enrutador falló; mando todas las tools.", exc_info=True)
+        resultado = self.brain.consultar(texto, contexto_brain, ofrecidas)
 
         if resultado.get("error"):
             return resultado["error"]

@@ -22,6 +22,7 @@ Requisitos para que el control REAL funcione:
 """
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 import time
@@ -31,8 +32,9 @@ from urllib.parse import quote_plus
 import requests
 
 from miku.ajustes import carga as config_mod
+from miku.plataforma.texto import normalizar
 from miku.plugins.base import Plugin
-from miku.voz.frases.respuesta import falla
+from miku.voz.frases.respuesta import exito, falla, hubo_falla
 
 logger = logging.getLogger("miku.plugins.browser")
 
@@ -68,9 +70,17 @@ class Browser(Plugin):
             "type": "function",
             "function": {
                 "name": "cerrar_pestana",
-                "description": "Cierra la pestaña ACTUAL de Brave. Ej: "
-                               "'cerrá esta pestaña'.",
-                "parameters": {"type": "object", "properties": {}},
+                "description": "Cierra una pestaña de Brave: la ACTUAL, o la que se llame "
+                               "como se diga. Ej: 'cerrá esta pestaña', 'cerrá la pestaña de "
+                               "YouTube'.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "titulo": {"type": "string",
+                                   "description": "Parte del título o del sitio de la pestaña a "
+                                                  "cerrar. Opcional: sin esto se cierra la actual."},
+                    },
+                },
             },
         },
         {
@@ -210,7 +220,7 @@ class Browser(Plugin):
         if nombre_tool == "abrir_pestana":
             return self.abrir_pestana(str(args.get("destino", "")))
         if nombre_tool == "cerrar_pestana":
-            return self.cerrar_pestana()
+            return self.cerrar_pestana(str(args.get("titulo", "") or ""))
         if nombre_tool == "buscar_en_pestana_actual":
             return self.buscar_en_pestana_actual(str(args.get("consulta", "")))
         return None
@@ -233,34 +243,87 @@ class Browser(Plugin):
             return f"Listo, abrí una pestaña con {destino}."
         return "No pude abrir la pestaña en Brave."
 
-    def cerrar_pestana(self) -> str:
-        """Cierra la pestaña actual (la primera de la lista de CDP).
+    @staticmethod
+    def _coincide(pestana: Dict[str, Any], palabras: List[str]) -> bool:
+        """True si TODAS las palabras aparecen en el título o en la URL de la pestaña."""
+        texto = normalizar(f"{pestana.get('title', '')} {pestana.get('url', '')}")
+        return all(p in texto for p in palabras)
 
-        ``/json`` lista los targets con la pestaña más recientemente activa
-        primero; la última sería la más ANTIGUA, no la actual.
+    def _cerrar_por_id(self, pid: str) -> bool:
+        try:
+            requests.get(f"{self._url_base()}/json/close/{pid}", timeout=4)
+            return True
+        except Exception as e:  # noqa: BLE001
+            logger.error("No pude cerrar la pestaña: %s", e)
+            return False
+
+    def cerrar_pestana(self, titulo: str = "") -> str:
+        """Cierra la pestaña ACTUAL o, si se dice un título, la que coincida (si es una sola).
+
+        ``/json`` lista los targets con la pestaña más recientemente activa primero; la última sería
+        la más ANTIGUA, no la actual. Si el título coincide con varias pestañas no se cierra ninguna:
+        se dicen cuáles son para que el usuario precise.
         """
         if not self._asegurar_cdp():
-            return ("No puedo controlar Brave ahora (falta el puerto de "
-                    "depuración/CDP).")
+            return falla("brave.sin_cdp")
 
         pestanas = [p for p in self._pestanas() if p.get("type", "page") == "page"]
         if not pestanas:
             return falla("brave.sin_pestanas")
-        actual = pestanas[0]
-        pid = actual.get("id")
+
+        palabras = [p for p in normalizar(titulo).split() if p]
+        if palabras:
+            candidatas = [p for p in pestanas if self._coincide(p, palabras)]
+            if not candidatas:
+                return falla("brave.pestana_no_encontrada", titulo=titulo)
+            if len(candidatas) > 1:
+                nombres = "; ".join(str(p.get("title") or p.get("url") or "?")[:40]
+                                    for p in candidatas[:3])
+                return falla("brave.varias_pestanas", titulo=titulo, cantidad=len(candidatas),
+                             nombres=nombres)
+            objetivo = candidatas[0]
+        else:
+            objetivo = pestanas[0]
+
+        pid = objetivo.get("id")
         if not pid:
-            return "No pude identificar la pestaña actual."
+            return falla("brave.pestana_sin_id")
+        if not self._cerrar_por_id(pid):
+            return falla("brave.no_pude_cerrar")
+        return exito("brave.pestana_cerrada", titulo=str(objetivo.get("title") or "")[:40],
+                     con_titulo=bool(palabras))
+
+    def _navegar(self, pestana: Dict[str, Any], url: str) -> bool:
+        """Lleva ``pestana`` a ``url`` por el websocket de CDP (necesita ``websocket-client``)."""
+        ws_url = pestana.get("webSocketDebuggerUrl")
+        if not ws_url:
+            return False
         try:
-            requests.get(f"{self._url_base()}/json/close/{pid}", timeout=4)
-            return "Listo, cerré la pestaña."
+            import websocket  # type: ignore  # opcional
+        except Exception:  # noqa: BLE001
+            return False
+        try:
+            ws = websocket.create_connection(ws_url, timeout=4)
+            try:
+                ws.send(json.dumps({"id": 1, "method": "Page.navigate", "params": {"url": url}}))
+                respuesta = json.loads(ws.recv())
+            finally:
+                ws.close()
+            return "error" not in respuesta
         except Exception as e:  # noqa: BLE001
-            logger.error("No pude cerrar la pestaña: %s", e)
-            return "No pude cerrar la pestaña."
+            logger.debug("No pude navegar la pestaña por CDP: %s", e)
+            return False
 
     def buscar_en_pestana_actual(self, consulta: str) -> str:
-        """Abre una búsqueda de Google en una pestaña nueva."""
+        """Busca en Google **en la pestaña activa**; si no se puede navegarla, abre una nueva."""
         consulta = (consulta or "").strip()
         if not consulta:
-            return "¿Qué querés que busque?"
-        # Reutilizamos abrir_pestana con la consulta (la convierte a búsqueda).
-        return self.abrir_pestana(consulta)
+            return falla("brave.buscar_sin_consulta")
+        if not self._asegurar_cdp():
+            return falla("brave.sin_cdp")
+        pestanas = [p for p in self._pestanas() if p.get("type", "page") == "page"]
+        if pestanas and self._navegar(pestanas[0], self._a_url(consulta)):
+            return exito("brave.buscado_en_actual", consulta=consulta)
+        # Sin websocket-client (o sin pestañas) se abre una pestaña nueva; se dice que fue eso.
+        resultado = self.abrir_pestana(consulta)
+        return resultado if hubo_falla(resultado) else exito("brave.buscado_en_nueva", consulta=consulta)

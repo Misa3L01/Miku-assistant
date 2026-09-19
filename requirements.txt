@@ -88,3 +88,7 @@ discord.py>=2.3.2
 # "Poné Bohemian Rhapsody" (plugins/multimedia/tidal.py): busca el tema en TU cuenta de TIDAL.
 # Sin esto, TIDAL solo se controla (pausa/siguiente/qué suena). Luego decí "conectá TIDAL".
 # tidalapi>=0.8.0
+
+# ---------- Buscar en la pestana actual de Brave (opcional) ----------
+# Sin esto, "buscar_en_pestana_actual" abre una pestana nueva (y lo dice).
+# websocket-client>=1.6.0

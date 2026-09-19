@@ -62,8 +62,9 @@ def test_no_duplica(mem):
 def test_olvidar_pide_precision_si_hay_varios(mem):
     mem.guardar_recuerdo("el wifi de casa es cielo_azul")
     mem.guardar_recuerdo("el wifi del trabajo es rojo")
-    assert "varios" in mem.olvidar_recuerdo("el wifi")
-    assert "olvidé" in mem.olvidar_recuerdo("wifi de casa")
+    r = mem.olvidar_recuerdo("el wifi")
+    assert r.intencion == "memoria.varios" and "cielo_azul" in r and "rojo" in r
+    assert mem.olvidar_recuerdo("wifi de casa").intencion == "memoria.olvidado"
     assert mem.cantidad() == 1
 
 
@@ -168,3 +169,52 @@ def test_sin_acentos(entrada, esperado):
 def test_normalizar_recorta_y_clave_compacta_quita_separadores():
     assert normalizar("  Visual Studio  ") == "visual studio"
     assert clave_compacta("Lista_Animes 2") == clave_compacta("lista animes2") == "listaanimes2"
+
+
+# ---------------------------------------------------------------- plugin de recuerdos
+def _plugin_recuerdos(mem, parser=None):
+    from types import SimpleNamespace
+    from miku.plugins.asistente.recuerdos import Recuerdos
+    p = Recuerdos()
+    p.initialize(SimpleNamespace(parser=parser or SimpleNamespace(memoria=mem, olvidar_historial=lambda: None)))
+    return p
+
+
+def test_listar_recuerdos_cuenta_y_nombra_los_ultimos(mem):
+    p = _plugin_recuerdos(mem)
+    assert p.manejar_tool("listar_recuerdos", {}, {}).intencion == "memoria.vacia"
+    for i in range(8):
+        mem.guardar_recuerdo(f"dato {i}")
+    r = p.manejar_tool("listar_recuerdos", {"cantidad": 3}, {})
+    assert r.intencion == "memoria.lista_parcial" and "8" in r and "dato 7" in r and "dato 4" not in r
+    assert _plugin_recuerdos(mem).manejar_tool("listar_recuerdos", {"cantidad": "x"}, {}).ok
+
+
+def test_guardar_y_olvidar_por_tools(mem):
+    p = _plugin_recuerdos(mem)
+    assert p.manejar_tool("guardar_recuerdo", {"texto": "mi cumple es el 3 de mayo"}, {}).ok
+    assert mem.cantidad() == 1
+    assert p.manejar_tool("guardar_recuerdo", {"texto": "  "}, {}).intencion == "memoria.guardar_sin_texto"
+    assert p.manejar_tool("olvidar_recuerdo", {"descripcion": "cumple"}, {}).intencion == "memoria.olvidado"
+    assert mem.cantidad() == 0
+    assert p.manejar_tool("olvidar_recuerdo", {"descripcion": "cumple"}, {}).intencion == "memoria.sin_recuerdos"
+
+
+def test_olvidar_conversacion_limpia_el_historial_no_los_recuerdos(parser, memoria):
+    from miku.plugins.asistente.recuerdos import Recuerdos
+    from types import SimpleNamespace
+    parser.memoria = memoria
+    p = Recuerdos()
+    p.initialize(SimpleNamespace(parser=parser))
+    parser.procesar("hola", {})
+    assert parser._turnos_recientes()
+    assert p.manejar_tool("olvidar_conversacion", {}, {}).ok
+    assert parser._turnos_recientes() == [] and True
+
+
+def test_sin_parser_o_memoria_explica_que_no_esta():
+    from miku.plugins.asistente.recuerdos import Recuerdos
+    p = Recuerdos()
+    p.initialize(None)
+    assert p.manejar_tool("listar_recuerdos", {}, {}).intencion == "memoria.inactiva"
+    assert p.manejar_tool("olvidar_conversacion", {}, {}).intencion == "memoria.inactiva"

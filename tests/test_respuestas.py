@@ -347,3 +347,67 @@ def test_listar_macros_no_recita_todo():
 def test_macro_desconocida_sugiere_pocas():
     r = _macros(8).ejecutar_macro("inexistente")
     assert hubo_falla(r) and r.intencion == "macros.desconocida" and "macro 6" not in r
+
+
+# --------------------------------------------------------------------------- #
+# Brave: cerrar pestaña por título y buscar en la pestaña actual
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def brave(monkeypatch):
+    from miku.plugins.navegacion.brave import Browser
+    b = Browser()
+    b.cerradas, b.navegadas, b.nuevas = [], [], []
+    b.tabs = [
+        {"id": "1", "type": "page", "title": "YouTube - gatos", "url": "https://youtube.com/watch?v=1",
+         "webSocketDebuggerUrl": "ws://x/1"},
+        {"id": "2", "type": "page", "title": "GitHub", "url": "https://github.com/miku"},
+        {"id": "3", "type": "page", "title": "Docs de Python", "url": "https://docs.python.org"},
+        {"id": "4", "type": "page", "title": "Python Tutorial", "url": "https://python.org/tut"},
+    ]
+    monkeypatch.setattr(b, "_asegurar_cdp", lambda: True)
+    monkeypatch.setattr(b, "_pestanas", lambda: b.tabs)
+    monkeypatch.setattr(b, "_cerrar_por_id", lambda pid: b.cerradas.append(pid) or True)
+    monkeypatch.setattr(b, "_navegar", lambda tab, url: b.navegadas.append((tab["id"], url)) or True)
+    monkeypatch.setattr(b, "_nueva_pestana", lambda url: b.nuevas.append(url) or "id")
+    return b
+
+
+def test_cerrar_pestana_actual_sin_titulo(brave):
+    r = brave.manejar_tool("cerrar_pestana", {}, {})
+    assert r.ok and brave.cerradas == ["1"]
+
+
+def test_cerrar_pestana_por_titulo_o_sitio(brave):
+    assert brave.cerrar_pestana("github").ok and brave.cerradas == ["2"]
+    assert brave.cerrar_pestana("YouTube").ok and brave.cerradas == ["2", "1"]
+
+
+def test_cerrar_por_titulo_ambiguo_no_cierra_nada(brave):
+    r = brave.cerrar_pestana("python")
+    assert hubo_falla(r) and r.intencion == "brave.varias_pestanas" and brave.cerradas == []
+    assert "Docs de Python" in r and "Python Tutorial" in r
+
+
+def test_cerrar_por_titulo_inexistente(brave):
+    r = brave.cerrar_pestana("netflix")
+    assert r.intencion == "brave.pestana_no_encontrada" and not brave.cerradas
+
+
+def test_cerrar_sin_pestanas_o_sin_cdp(brave, monkeypatch):
+    monkeypatch.setattr(brave, "_pestanas", lambda: [])
+    assert brave.cerrar_pestana().intencion == "brave.sin_pestanas"
+    monkeypatch.setattr(brave, "_asegurar_cdp", lambda: False)
+    assert brave.cerrar_pestana().intencion == "brave.sin_cdp"
+
+
+def test_buscar_en_la_pestana_actual_navega_esa_pestana(brave):
+    r = brave.buscar_en_pestana_actual("recetas de pizza")
+    assert r.intencion == "brave.buscado_en_actual" and not brave.nuevas
+    assert brave.navegadas[0][0] == "1" and "recetas+de+pizza" in brave.navegadas[0][1]
+
+
+def test_buscar_sin_poder_navegar_abre_nueva_y_lo_dice(brave, monkeypatch):
+    monkeypatch.setattr(brave, "_navegar", lambda tab, url: False)
+    r = brave.buscar_en_pestana_actual("recetas")
+    assert r.intencion == "brave.buscado_en_nueva" and len(brave.nuevas) == 1
+    assert brave.buscar_en_pestana_actual("  ").intencion == "brave.buscar_sin_consulta"

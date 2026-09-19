@@ -13,6 +13,13 @@ Diseño:
       ``listar_pendientes`` devuelve el estado actual.
     - ``cancelar_todos`` se usa al cerrar el asistente (evita timers vivos).
 
+Recordatorios persistentes:
+    Una tarea programada con ``persistente={...}`` (solo datos simples: un recordatorio) se guarda
+    también en un JSON (``ruta_persistencia``) con su hora de vencimiento absoluta. Sobrevive a
+    cerrar Miku: al arrancar, ``recuperar`` reprograma los que faltan y devuelve los que se pasaron
+    mientras estaba cerrada (hasta ``MAX_ATRASO_H`` horas) para avisarlos. Las acciones peligrosas
+    (apagar, suspender) NUNCA se persisten: un apagado programado no debe dispararse en otra sesión.
+
 Hilos:
     Cada ``threading.Timer`` es un hilo propio de la stdlib. Mantenemos un
     lock para que programar/cancelar/listar sean seguros desde varios hilos
@@ -21,12 +28,18 @@ Hilos:
 from __future__ import annotations
 
 import itertools
+import json
 import logging
+import os
 import threading
 import time
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger("miku.scheduler")
+
+#: Un recordatorio vencido mientras Miku estaba cerrada se avisa si pasaron menos de estas horas.
+MAX_ATRASO_H = 24
 
 
 class Scheduler:
@@ -36,7 +49,8 @@ class Scheduler:
     canceladas) se eliminan de la lista de pendientes automáticamente.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, ruta_persistencia: Optional[Path] = None) -> None:
+        self._ruta = Path(ruta_persistencia) if ruta_persistencia else None
         self._lock = threading.RLock()
         # id -> {"timer": Timer, "descripcion": str, "cuando": float,
         #         "creado": float, "callback": callable}
@@ -45,7 +59,7 @@ class Scheduler:
 
     # ---------------- API principal ----------------
     def programar(self, cuando_segundos: float, callback: Callable[[], Any],
-                  descripcion: str = "") -> int:
+                  descripcion: str = "", persistente: Optional[Dict[str, Any]] = None) -> int:
         """Programa `callback` para dentro de `cuando_segundos` segundos.
 
         Args:
@@ -53,6 +67,8 @@ class Scheduler:
                 casi de inmediato).
             callback: función sin argumentos a llamar al dispararse.
             descripcion: texto legible para listar ("Apagar la PC").
+            persistente: datos simples (JSON) para guardar la tarea en disco y recuperarla al
+                reiniciar (un recordatorio). None = solo vive en memoria.
 
         Returns:
             El id de la tarea (para poder cancelarla después).
@@ -73,6 +89,7 @@ class Scheduler:
             # listar_pendientes() no la muestra como si siguiera esperando.
             with self._lock:
                 self._tareas.pop(tarea_id, None)
+            self._quitar_de_disco(tarea_id)
             try:
                 logger.info("[Scheduler] Disparando tarea %s (%s).",
                             tarea_id, descripcion or "sin descripción")
@@ -90,14 +107,21 @@ class Scheduler:
                 "cuando": demora,
                 "creado": time.time(),
                 "callback": callback,
+                "persistente": persistente,
             }
+        if persistente is not None:
+            self._guardar_en_disco(tarea_id, demora, descripcion, persistente)
         timer.start()
         logger.info("[Scheduler] Tarea %s programada en %.1f s (%s).",
                     tarea_id, demora, descripcion or "-")
         return tarea_id
 
-    def cancelar(self, tarea_id: Optional[int] = None) -> bool:
+    def cancelar(self, tarea_id: Optional[int] = None, olvidar: bool = True) -> bool:
         """Cancela una tarea por id. Si `tarea_id` es None, cancela la última.
+
+        Args:
+            olvidar: Si es False el timer se detiene pero la tarea sigue guardada en disco (se usa
+                al cerrar Miku: los recordatorios deben volver en la próxima sesión).
 
         Returns:
             True si se canceló algo, False si no había nada para cancelar.
@@ -111,6 +135,8 @@ class Scheduler:
             tarea = self._tareas.pop(tarea_id, None)
         if tarea is None:
             return False
+        if olvidar:
+            self._quitar_de_disco(tarea_id)
         try:
             tarea["timer"].cancel()
         except Exception:  # noqa: BLE001
@@ -139,12 +165,91 @@ class Scheduler:
         with self._lock:
             return bool(self._tareas)
 
-    def cancelar_todos(self) -> int:
-        """Cancela TODAS las tareas pendientes. Devuelve cuántas canceló."""
+    def cancelar_todos(self, olvidar: bool = True) -> int:
+        """Cancela TODAS las tareas pendientes. Devuelve cuántas canceló.
+
+        Con ``olvidar=False`` (cierre de Miku) los recordatorios guardados en disco se conservan.
+        """
         with self._lock:
             ids = list(self._tareas.keys())
         canceladas = 0
         for tarea_id in ids:
-            if self.cancelar(tarea_id):
+            if self.cancelar(tarea_id, olvidar=olvidar):
                 canceladas += 1
         return canceladas
+
+    # ---------------- Persistencia ----------------
+    def _leer_disco(self) -> List[Dict[str, Any]]:
+        if self._ruta is None:
+            return []
+        try:
+            datos = json.loads(self._ruta.read_text(encoding="utf-8"))
+            return [t for t in datos if isinstance(t, dict)]
+        except FileNotFoundError:
+            return []
+        except (OSError, ValueError, TypeError) as e:
+            logger.warning("[Scheduler] Recordatorios guardados ilegibles (%s); los ignoro.", e)
+            return []
+
+    def _escribir_disco(self, tareas: List[Dict[str, Any]]) -> None:
+        if self._ruta is None:
+            return
+        try:
+            self._ruta.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._ruta.with_suffix(".tmp")
+            tmp.write_text(json.dumps(tareas, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, self._ruta)
+        except OSError as e:
+            logger.warning("[Scheduler] No pude guardar los recordatorios: %s", e)
+
+    def _guardar_en_disco(self, tarea_id: int, demora: float, descripcion: str,
+                          datos: Dict[str, Any]) -> None:
+        with self._lock:
+            tareas = [t for t in self._leer_disco() if t.get("id") != tarea_id]
+            tareas.append({"id": tarea_id, "vence": time.time() + demora,
+                           "descripcion": descripcion, "datos": datos})
+            self._escribir_disco(tareas)
+
+    def _quitar_de_disco(self, tarea_id: int) -> None:
+        if self._ruta is None:
+            return
+        with self._lock:
+            tareas = self._leer_disco()
+            restantes = [t for t in tareas if t.get("id") != tarea_id]
+            if len(restantes) != len(tareas):
+                self._escribir_disco(restantes)
+
+    def recuperar(self, fabricar_callback: Callable[[Dict[str, Any]], Callable[[], Any]]
+                  ) -> List[Dict[str, Any]]:
+        """Reprograma los recordatorios guardados. Devuelve los que se pasaron mientras estaba cerrada.
+
+        Args:
+            fabricar_callback: ``f(datos) -> callback`` que arma la acción de un recordatorio a
+                partir de sus datos guardados.
+
+        Returns:
+            Lista de ``datos`` de los recordatorios vencidos (recientes) para avisarlos ahora.
+        """
+        guardadas = self._leer_disco()
+        if not guardadas:
+            return []
+        self._escribir_disco([])          # se vuelven a guardar al reprogramarlas
+        ahora = time.time()
+        perdidos: List[Dict[str, Any]] = []
+        for t in guardadas:
+            try:
+                falta = float(t["vence"]) - ahora
+                datos = dict(t["datos"])
+                descripcion = str(t.get("descripcion") or "")
+            except (KeyError, TypeError, ValueError):
+                continue
+            if falta > 0:
+                self.programar(falta, fabricar_callback(datos), descripcion, persistente=datos)
+            elif -falta <= MAX_ATRASO_H * 3600:
+                perdidos.append(datos)
+            else:
+                logger.info("[Scheduler] Recordatorio muy viejo descartado: %s", descripcion)
+        if guardadas:
+            logger.info("[Scheduler] Recuperados %d recordatorio(s); %d se pasaron.",
+                        len(guardadas) - len(perdidos), len(perdidos))
+        return perdidos

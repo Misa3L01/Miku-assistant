@@ -30,6 +30,7 @@ from typing import Any, Callable, Dict, List, Optional
 from miku.ajustes import carga as config_mod
 from miku.servicios.eventos import EventBus
 from miku.cerebro.parser import BrainGroq, CommandParser
+from miku.servicios import recordatorios
 from miku.servicios.scheduler import Scheduler
 from miku.voz.frases import tono
 from miku.ui import bandeja as bandeja_mod
@@ -123,6 +124,8 @@ class Asistente:
         self.modo: Optional[str] = None
         self._lock_modo = threading.RLock()
         self._saludo_dado = False
+        #: Recordatorios que vencieron con Miku cerrada (se avisan al saludar).
+        self._recordatorios_perdidos: List[Dict[str, Any]] = []
         self._invocacion_pendiente = False
         self._hotkey_f22: Any = None
         self.instancia: Any = None
@@ -133,6 +136,10 @@ class Asistente:
     # ---------------- Setup (no toca audio) ----------------
     def instalar_core(self) -> None:
         """Monta bus, parser y plugins. NO crea STT/TTS (es lazy por modo)."""
+        # Los recordatorios sobreviven a cerrar Miku: se guardan junto a las preferencias.
+        self.scheduler = Scheduler(self.cfg.ruta_archivo.parent / "recordatorios.json")
+        self._recordatorios_perdidos = self.scheduler.recuperar(
+            lambda datos: recordatorios.fabricar_callback(lambda: self.voice, datos))
         logger.info("Ensamblando el núcleo del asistente...")
 
         # Memoria persistente: se instancia SOLO si la config la habilita
@@ -283,16 +290,23 @@ class Asistente:
 
     def _saludar(self) -> None:
         """Saludo de arranque con contexto (hora + clima + pendientes), una sola vez."""
-        if self._saludo_dado or not self.cfg.saludo_al_iniciar:
+        if self._saludo_dado:
             return
         self._saludo_dado = True
+        perdidos = recordatorios.texto_perdidos(self._recordatorios_perdidos)
+        self._recordatorios_perdidos = []
+        if not self.cfg.saludo_al_iniciar:
+            # Sin saludo, un recordatorio vencido igual se avisa: es lo único que no puede perderse.
+            if perdidos:
+                self.decir(perdidos)
+            return
         try:
             from miku.servicios import briefing
             saludo = briefing.generar(self._contexto_base())
         except Exception:  # noqa: BLE001
             logger.exception("No pude armar el briefing; uso el saludo simple.")
             saludo = "Ya estoy lista"
-        self.decir(saludo)
+        self.decir(f"{saludo} {perdidos}".strip())
 
     def _detener_voz(self) -> None:
         """Detiene la escucha continua (el TTS queda disponible)."""
@@ -463,7 +477,7 @@ class Asistente:
         # Cancelamos cualquier acción diferida pendiente (no dejamos timers
         # vivos que puedan disparar un apagado/suspensión al cerrar).
         try:
-            canceladas = self.scheduler.cancelar_todos()
+            canceladas = self.scheduler.cancelar_todos(olvidar=False)
             if canceladas:
                 logger.info("Cancelé %d acción(es) programada(s) al cerrar.",
                             canceladas)
