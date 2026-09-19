@@ -148,6 +148,132 @@ CATALOGO: Dict[str, List[str]] = {
         "No veo ninguna acción programada con ese número.",
     ],
 
+    # ------------------------------------------------------------------ traductor
+    "traductor.copiado": [
+        "Listo, dejé en el portapapeles la traducción al {idioma}: {traduccion}. Pegala con Ctrl+V.",
+        "Ya está en el portapapeles, en {idioma}: {traduccion}. Pegala con Ctrl+V.",
+        "Traducido al {idioma} y copiado: {traduccion}. Solo falta pegarlo con Ctrl+V.",
+    ],
+    "traductor.sin_idioma": [
+        "¿A qué idioma lo traduzco? Decímelo, o configurá IDIOMA_JUEGO en config_local.py.",
+        "Me falta el idioma. Decime a cuál traducir, o dejá uno por defecto en IDIOMA_JUEGO.",
+    ],
+    "traductor.sin_texto": [
+        "No me dijiste qué traducir.",
+        "¿Qué querés que traduzca?",
+    ],
+    "traductor.error": [
+        "No pude traducirlo ahora mismo. Revisá la clave de Groq o la conexión.",
+        "La traducción no salió; puede ser la conexión o la clave de Groq.",
+    ],
+    "traductor.sin_portapapeles": [
+        "Lo traduje ({traduccion}), pero no pude copiarlo al portapapeles.",
+        "La traducción es: {traduccion}. Igual no logré copiarla al portapapeles.",
+    ],
+
+    # ---------------------------------------------------------------------- macros
+    "macros.lista": [
+        "Tengo {cantidad} macros: {nombres}.",
+        "Estas son mis {cantidad} macros: {nombres}.",
+    ],
+    "macros.lista_larga": [
+        "Tengo {cantidad} macros, por ejemplo {nombres}. La lista completa la dejé en el registro.",
+        "Hay {cantidad} macros. Algunas: {nombres}. El resto está en el registro.",
+    ],
+    "macros.sin_macros": [
+        "Todavía no hay macros configuradas.",
+        "No tengo macros configuradas por ahora.",
+    ],
+    "macros.sin_nombre": [
+        "¿Qué macro querés que ejecute?",
+        "Decime el nombre de la macro que querés.",
+    ],
+    "macros.desconocida": [
+        "No conozco la macro '{nombre}'. Algunas que tengo: {nombres}.",
+        "No encuentro una macro llamada '{nombre}'. Tengo, por ejemplo: {nombres}.",
+    ],
+
+    # ----------------------------------------------------------------------- modos
+    "modo.sin_modo": [
+        "No tengo ningún modo activo del que salir. No toqué nada.",
+        "No hay ningún modo activo, así que no cambié nada.",
+    ],
+    "modo.restaurado": [
+        "Listo, salí del modo y dejé todo como estaba ({restaurado}).",
+        "Ya está: salí del modo y volví {restaurado} a como estaban.",
+    ],
+    "modo.nada_que_restaurar": [
+        "Salí del modo, pero no había nada para restaurar.",
+        "Salí del modo; no había nada que devolver a su estado anterior.",
+    ],
+    "modo.restauracion_parcial": [
+        "Salí del modo. Restauré: {restaurado}. No pude restaurar: {fallos}.",
+        "Salí del modo, pero no todo salió bien. Volvió: {restaurado}. Falló: {fallos}.",
+    ],
+    "modo.ya_nativa": [
+        "La pantalla ya está en su resolución nativa, {ancho} por {alto}.",
+        "Ya estás en la resolución nativa ({ancho} por {alto}).",
+    ],
+    "modo.nativa_aplicada": [
+        "Listo, puse la pantalla en su resolución nativa: {ancho} por {alto}.",
+        "Volví a la resolución nativa, {ancho} por {alto}.",
+    ],
+    "modo.nativa_error": [
+        "No pude poner la resolución nativa ({ancho} por {alto}). Probá desde la configuración de pantalla de Windows.",
+        "Intenté volver a {ancho} por {alto} pero no me dejó. Podés hacerlo desde la configuración de pantalla.",
+    ],
+    "modo.sin_resolucion_nativa": [
+        "No pude averiguar la resolución nativa del monitor.",
+        "No logro leer las resoluciones que soporta el monitor.",
+    ],
+
+    # ------------------------------------------------------------------------ TIDAL
+    "tidal.reproduciendo": [
+        "Dale, pongo {titulo}{de}.",
+        "Ahí va {titulo}{de}.",
+        "Poniendo {titulo}{de}.",
+    ],
+    "tidal.sin_consulta": [
+        "¿Qué querés que ponga en TIDAL?",
+        "Decime qué canción, álbum o artista busco en TIDAL.",
+    ],
+    "tidal.sin_resultados": [
+        "No encuentro '{consulta}' en TIDAL.",
+        "Busqué '{consulta}' en TIDAL y no me apareció nada. ¿Probamos con otro nombre?",
+    ],
+    "tidal.sin_sesion": [
+        "Para buscar música por nombre primero tengo que conectarme a tu cuenta de TIDAL. Decime 'conectá TIDAL'.",
+        "Todavía no estoy conectada a tu cuenta de TIDAL. Decime 'conectá TIDAL' y lo hacemos.",
+    ],
+    "tidal.sin_libreria": [
+        "Para poner música por nombre necesito la librería tidalapi. Instalala con pip install tidalapi y probamos.",
+        "Me falta tidalapi para buscar en TIDAL. Se instala con pip install tidalapi.",
+    ],
+    "tidal.no_abre": [
+        "Encontré el tema pero no pude abrirlo en TIDAL. ¿Está instalada la app de escritorio?",
+        "No logré abrir TIDAL con ese tema. Revisá que la app esté instalada.",
+    ],
+    "tidal.conectando": [
+        "Te abrí el navegador: iniciá sesión en TIDAL y aprobá el acceso. Yo espero.",
+        "Abrí la página de TIDAL en el navegador. Aprobá el acceso y te aviso cuando termine.",
+    ],
+    "tidal.ya_conectado": [
+        "Ya estoy conectada a tu cuenta de TIDAL.",
+        "TIDAL ya está conectado, podés pedirme música.",
+    ],
+    "tidal.conexion_error": [
+        "No pude empezar la conexión con TIDAL ahora. Probá de nuevo en un rato.",
+        "No logré iniciar el acceso a TIDAL. Puede ser la conexión o que ya haya uno en curso.",
+    ],
+    "tidal.conectado": [
+        "Listo, ya estoy conectada a TIDAL. Ahora podés pedirme música por nombre.",
+        "TIDAL conectado. Pedime lo que quieras escuchar.",
+    ],
+    "tidal.conexion_fallida": [
+        "No se completó la conexión con TIDAL. Cuando quieras, decime 'conectá TIDAL' de nuevo.",
+        "La conexión con TIDAL no terminó (venció o se canceló). Podemos intentar otra vez.",
+    ],
+
     # ----------------------------------------------------------------------- clima
     "clima.sin_ciudad": [
         "No sé de qué ciudad me hablás. Configurá CIUDAD_CLIMA en config_local.py o decime una ciudad.",

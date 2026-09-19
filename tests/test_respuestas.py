@@ -37,7 +37,7 @@ def test_todas_las_frases_se_pueden_armar_sin_dejar_llaves():
     cat.registrar(b)
     datos = {k: "x" for k in ("nombre", "app", "a", "b", "falta", "puesta", "izq", "der", "lado",
                               "lugar", "accion", "orientacion", "pct", "etiqueta", "monitor",
-                              "descripcion", "carpeta", "consulta")}
+                              "descripcion", "carpeta", "consulta", "idioma", "traduccion")}
     for clave, variantes in cat.CATALOGO.items():
         assert variantes, clave
         for _ in range(len(variantes) * 2):
@@ -124,3 +124,226 @@ def test_briefing_ignora_el_clima_fallido(monkeypatch):
     monkeypatch.setattr(clima.Clima, "consultar_clima",
                         lambda self, ciudad="": "En Casa ahora está despejado con 20 grados. Llevate campera.")
     assert briefing._clima_resumen() == "En Casa ahora está despejado con 20 grados"
+
+
+# --------------------------------------------------------------------------- #
+# Traductor: cualquier idioma, solo portapapeles
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def traductor(monkeypatch, cfg):
+    from miku.ajustes import carga as config_mod
+    from miku.plugins.gaming import traductor as mod
+    from miku.voz.salida import traduccion
+
+    cfg.valores.update(idioma_juego="", mensajes_juego={"gg": "buena partida"}, groq_api_key="k")
+    monkeypatch.setattr(config_mod, "config", cfg)
+    pedidos, copiado = [], []
+    monkeypatch.setattr(traduccion, "traducir_con_groq",
+                        lambda texto, idioma, api_key="", **k: pedidos.append((texto, idioma))
+                        or f"[{idioma}] {texto}")
+    monkeypatch.setattr(mod, "_copiar_al_portapapeles", lambda t: copiado.append(t) or True)
+    plugin = mod.TraductorJuegos()
+    plugin.pedidos, plugin.copiado, plugin.cfg = pedidos, copiado, cfg
+    return plugin
+
+
+def test_traduce_texto_libre_a_cualquier_idioma_y_solo_copia(traductor):
+    r = traductor.manejar_tool("traducir_mensaje_juego",
+                               {"texto": "¿dónde está la biblioteca?", "idioma": "swahili"}, {})
+    assert r.ok and r.intencion == "traductor.copiado"
+    assert traductor.pedidos == [("¿dónde está la biblioteca?", "swahili")]
+    assert traductor.copiado == ["[swahili] ¿dónde está la biblioteca?"]
+
+
+def test_atajo_exacto_usa_la_frase_asociada(traductor):
+    traductor.cfg.valores["idioma_juego"] = "inglés"
+    traductor.manejar_tool("traducir_mensaje_juego", {"texto": "GG"}, {})
+    assert traductor.pedidos == [("buena partida", "inglés")]
+
+
+def test_un_atajo_parcial_no_se_expande(traductor):
+    """'buena' no debe convertirse en 'buena partida': con texto libre traduce lo dicho."""
+    traductor.manejar_tool("traducir_mensaje_juego", {"texto": "buena suerte", "idioma": "inglés"}, {})
+    assert traductor.pedidos == [("buena suerte", "inglés")]
+
+
+def test_el_idioma_pedido_gana_sobre_el_configurado(traductor):
+    traductor.cfg.valores["idioma_juego"] = "inglés"
+    traductor.manejar_tool("traducir_mensaje_juego", {"texto": "hola", "idioma": "japonés"}, {})
+    assert traductor.pedidos == [("hola", "japonés")]
+
+
+def test_sin_idioma_pregunta_en_vez_de_inventar(traductor):
+    r = traductor.manejar_tool("traducir_mensaje_juego", {"texto": "hola"}, {})
+    assert hubo_falla(r) and r.intencion == "traductor.sin_idioma"
+    assert not traductor.pedidos and not traductor.copiado
+
+
+def test_parametro_viejo_clave_sigue_andando(traductor):
+    traductor.cfg.valores["idioma_juego"] = "inglés"
+    traductor.manejar_tool("traducir_mensaje_juego", {"clave": "gg"}, {})
+    assert traductor.pedidos == [("buena partida", "inglés")]
+
+
+def test_fallos_de_traduccion_y_portapapeles(traductor, monkeypatch):
+    from miku.plugins.gaming import traductor as mod
+    from miku.voz.salida import traduccion
+
+    monkeypatch.setattr(traduccion, "traducir_con_groq", lambda *a, **k: None)
+    assert traductor.traducir_mensaje_juego("hola", "inglés").intencion == "traductor.error"
+    monkeypatch.setattr(traduccion, "traducir_con_groq", lambda *a, **k: "hello")
+    monkeypatch.setattr(mod, "_copiar_al_portapapeles", lambda t: False)
+    r = traductor.traducir_mensaje_juego("hola otra vez", "inglés")
+    assert r.intencion == "traductor.sin_portapapeles" and "hello" in r
+    assert traductor.traducir_mensaje_juego("  ", "inglés").intencion == "traductor.sin_texto"
+
+
+def test_la_traduccion_se_recuerda_con_tope(traductor):
+    traductor.traducir_mensaje_juego("hola", "inglés")
+    traductor.traducir_mensaje_juego("HOLA", "inglés")
+    assert len(traductor.pedidos) == 1
+
+
+# --------------------------------------------------------------------------- #
+# TIDAL: "poné X" (búsqueda y sesión simuladas: nunca toca TIDAL ni la red)
+# --------------------------------------------------------------------------- #
+class _Elemento:
+    def __init__(self, id_, name, artista=None):
+        self.id, self.name = id_, name
+        self.artist = type("A", (), {"name": artista})() if artista else None
+
+
+class _SesionFalsa:
+    def __init__(self, resultados=None, valida=True):
+        self.resultados, self.valida, self.consultas = resultados or {}, valida, []
+
+    def load_session_from_file(self, ruta):
+        return True
+
+    def check_login(self):
+        return self.valida
+
+    def search(self, consulta, models=None, limit=5):
+        self.consultas.append((consulta, models))
+        return self.resultados
+
+    def save_session_to_file(self, ruta):
+        ruta.write_text("{}", encoding="utf-8")
+
+
+@pytest.fixture
+def tidal(tmp_path, monkeypatch):
+    from miku.plugins.multimedia import tidal as mod
+    from miku.plugins.multimedia.tidal_busqueda import BuscadorTidal
+
+    sesion = _SesionFalsa({"tracks": [_Elemento(77, "Bohemian Rhapsody", "Queen")],
+                           "artists": [_Elemento(5, "Soda Stereo")]})
+    ruta = tmp_path / "sesion.json"
+    ruta.write_text("{}", encoding="utf-8")
+    plugin = mod.Tidal()
+    plugin._buscador = BuscadorTidal(ruta, fabrica_sesion=lambda: sesion)
+    abiertos = []
+    monkeypatch.setattr(mod.Tidal, "_abrir_enlace", staticmethod(lambda e: abiertos.append(e) or True))
+    monkeypatch.setattr(mod.Tidal, "_asegurar_reproduccion", lambda self: None)
+    plugin.abiertos, plugin.sesion = abiertos, sesion
+    return plugin
+
+
+def test_pone_una_cancion_abriendo_el_enlace_de_tidal(tidal):
+    r = tidal.manejar_tool("reproducir_en_tidal", {"consulta": "bohemian rhapsody queen"}, {})
+    assert r.ok and r.intencion == "tidal.reproduciendo"
+    assert "Bohemian Rhapsody" in r and "Queen" in r
+    assert tidal.abiertos == ["tidal://track/77"]
+    assert tidal.sesion.consultas[0][0] == "bohemian rhapsody queen"
+
+
+def test_pone_un_artista(tidal):
+    r = tidal.reproducir_en_tidal("Soda Stereo", "banda")
+    assert tidal.abiertos == ["tidal://artist/5"] and "de " not in r
+
+
+def test_sin_resultados_es_honesto(tidal):
+    tidal.sesion.resultados = {"tracks": []}
+    r = tidal.reproducir_en_tidal("asdfgh")
+    assert hubo_falla(r) and r.intencion == "tidal.sin_resultados" and not tidal.abiertos
+
+
+def test_sin_sesion_o_sin_consulta_explica_que_falta(tidal, tmp_path):
+    from miku.plugins.multimedia.tidal_busqueda import BuscadorTidal
+    assert tidal.reproducir_en_tidal("  ").intencion == "tidal.sin_consulta"
+    tidal._buscador = BuscadorTidal(tmp_path / "no_existe.json", fabrica_sesion=lambda: _SesionFalsa())
+    r = tidal.reproducir_en_tidal("algo")
+    assert hubo_falla(r) and r.intencion in ("tidal.sin_sesion", "tidal.sin_libreria")
+    assert not tidal.abiertos
+
+
+def test_sesion_vencida_no_se_usa(tidal):
+    tidal.buscador()._sesion = None
+    tidal.sesion.valida = False
+    assert tidal.buscador().sesion() is None
+
+
+def test_tipos_de_busqueda():
+    from miku.plugins.multimedia.tidal_busqueda import Resultado, normalizar_tipo
+    assert normalizar_tipo("Canción") == "cancion" and normalizar_tipo("disco") == "album"
+    assert normalizar_tipo("cualquier cosa") == "cancion"
+    assert Resultado("playlist", "abc", "x").enlace == "tidal://playlist/abc"
+
+
+def test_conectar_guarda_la_sesion_al_aprobar(tmp_path):
+    import concurrent.futures
+    import threading
+    from miku.plugins.multimedia.tidal_busqueda import BuscadorTidal
+
+    futuro = concurrent.futures.Future()
+    sesion = _SesionFalsa()
+    sesion.login_oauth = lambda: (type("L", (), {"verification_uri_complete": "link.tidal.com/AB12"})(),
+                                  futuro)
+    ruta = tmp_path / "data" / "sesion.json"
+    buscador = BuscadorTidal(ruta, fabrica_sesion=lambda: sesion)
+    urls, terminado, listo = [], [], threading.Event()
+    url = buscador.conectar(lambda ok: (terminado.append(ok), listo.set()), urls.append)
+    assert url == "https://link.tidal.com/AB12" and urls == [url]
+    assert buscador.conectar(lambda ok: None, urls.append) is None      # ya hay una en curso
+    futuro.set_result(True)
+    assert listo.wait(3) and terminado == [True] and ruta.exists()
+    assert buscador.sesion() is sesion
+
+
+def test_perfil_del_juego_en_primer_plano_define_el_idioma(traductor, monkeypatch):
+    from miku.plataforma import procesos
+    traductor.cfg.valores.update(idioma_juego="inglés",
+                                 perfiles_juego={"cs2": "portugués", "GenshinImpact.exe": "japonés"})
+    monkeypatch.setattr(procesos, "proceso_primer_plano", lambda: "cs2")
+    traductor.manejar_tool("traducir_mensaje_juego", {"texto": "corran"}, {})
+    monkeypatch.setattr(procesos, "proceso_primer_plano", lambda: "genshinimpact")
+    traductor.manejar_tool("traducir_mensaje_juego", {"texto": "vamos"}, {})
+    monkeypatch.setattr(procesos, "proceso_primer_plano", lambda: "chrome")      # sin perfil: el por defecto
+    traductor.manejar_tool("traducir_mensaje_juego", {"texto": "hola"}, {})
+    # Un idioma dicho explícitamente le gana al perfil.
+    monkeypatch.setattr(procesos, "proceso_primer_plano", lambda: "cs2")
+    traductor.manejar_tool("traducir_mensaje_juego", {"texto": "chau", "idioma": "francés"}, {})
+    assert [i for _, i in traductor.pedidos] == ["portugués", "japonés", "inglés", "francés"]
+
+
+# --------------------------------------------------------------------------- #
+# Macros: respuestas cortas
+# --------------------------------------------------------------------------- #
+def _macros(n):
+    from miku.plugins.productividad.macros import Macros
+    m = Macros()
+    m._macros = {f"macro_{i}": {"descripcion": f"hace {i}", "comando": "x"} for i in range(n)}
+    return m
+
+
+def test_listar_macros_no_recita_todo():
+    r = _macros(8).listar_macros()
+    assert r.ok and "8" in r and "macro 0" in r and "macro 4" in r and "macro 5" not in r
+    corto = _macros(3).listar_macros()
+    assert "3" in corto and "macro 2" in corto
+    assert hubo_falla(_macros(0).listar_macros())
+
+
+def test_macro_desconocida_sugiere_pocas():
+    r = _macros(8).ejecutar_macro("inexistente")
+    assert hubo_falla(r) and r.intencion == "macros.desconocida" and "macro 6" not in r

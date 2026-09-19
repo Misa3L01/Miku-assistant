@@ -203,10 +203,14 @@ _OPCIONES: List[Opcion] = [
 
     # ------------------------------------------------------------------ juegos
     _o("idioma_juego", "", "juegos",
-       "Idioma al que se traducen los mensajes de juego cuando no decís uno: 'inglés', "
-       "'portugués', 'japonés'…", usado_por="traductor_juegos"),
+       "Idioma por defecto del traductor cuando no decís uno ('traducí X al portugués' siempre "
+       "gana): 'inglés', 'portugués', 'japonés'… Opcional.", usado_por="traductor_juegos"),
+    _o("perfiles_juego", {}, "juegos",
+       "Idioma del traductor por juego: si estás jugando uno de estos y no decís idioma, se usa el suyo "
+       "(tiene prioridad sobre IDIOMA_JUEGO). Clave: proceso sin .exe.", "mapa",
+       'PERFILES_JUEGO = {"cs2": "portugués", "genshinimpact": "inglés"}', "traductor_juegos"),
     _o("mensajes_juego", {}, "juegos",
-       "Atajos de mensajes de juego: clave -> frase en español ('gg': 'buena partida').",
+       "Atajos del traductor: clave -> frase en español ('gg': 'buena partida'). Opcional.",
        "mapa", 'MENSAJES_JUEGO = {"gg": "buena partida"}', "traductor_juegos"),
     _o("juegos_booster", [], "juegos",
        "Procesos de juegos (sin .exe) que activan el modo gaming automático.", "lista",
@@ -318,7 +322,6 @@ REQUISITOS: Dict[str, Tuple[str, Sequence[Sequence[str]]]] = {
     "clima": ("el clima", [("ciudad_clima", "clima_lat")]),
     "video_interpolador": ("interpolar videos",
                            [("carpeta_videos",), ("ruta_bat_interpolar",)]),
-    "traductor_juegos": ("traducir mensajes de juego", [("idioma_juego",)]),
     "game_booster": ("el modo gaming automático", [("juegos_booster",)]),
     "browser": ("controlar Brave", [("brave_ruta_exe",)]),
 }

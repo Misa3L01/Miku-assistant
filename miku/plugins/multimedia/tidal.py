@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-tidal.py - Control fino de TIDAL (play/pausa/siguiente/anterior + "qué suena").
+tidal.py - Control fino de TIDAL (play/pausa/siguiente/anterior, "qué suena" y "poné X").
 
 TIDAL (app de escritorio) NO expone una API pública de reproducción, así que:
     - Los controles (play/pausa/siguiente/anterior) se hacen con las **teclas
@@ -11,17 +11,27 @@ TIDAL (app de escritorio) NO expone una API pública de reproducción, así que:
       título/artista del reproductor de media ACTUAL. Es best-effort: si no se
       puede, lo decimos claro (límite real de Windows, no nuestro).
 
+    - "Poné X de Y" busca el tema en TIDAL con la librería opcional ``tidalapi`` (con tu cuenta, ver
+      ``tidal_busqueda.py``) y abre el enlace ``tidal://track/<id>`` en la app de escritorio. Si tras
+      abrirlo no empezó a sonar, manda un "play". No probado contra una cuenta real desde el desarrollo.
+
 Ver también: control multimedia genérico en ``miku/plugins/sistema/audio.py``
 (``control_multimedia``); este plugin lo especializa para TIDAL.
 """
 from __future__ import annotations
 
 import logging
+import os
+import threading
+import time
+import webbrowser
 from typing import Any, Dict, List, Optional
 
 from miku.ajustes import carga as config_mod
 from miku.plataforma.subprocesos import PREAMBULO_WINRT, correr_powershell
 from miku.plugins.base import Plugin
+from miku.plugins.multimedia.tidal_busqueda import BuscadorTidal, libreria_disponible
+from miku.voz.frases.respuesta import exito, falla, responder
 
 logger = logging.getLogger("miku.plugins.tidal")
 
@@ -33,6 +43,36 @@ class Tidal(Plugin):
     descripcion = "Controla TIDAL (play/pausa/siguiente/anterior) y qué suena."
 
     tools: List[dict] = [
+        {
+            "type": "function",
+            "function": {
+                "name": "reproducir_en_tidal",
+                "description": "Busca una canción, álbum, artista o playlist en TIDAL y la reproduce. "
+                               "Ej: 'poné Bohemian Rhapsody de Queen', 'reproducí el álbum Thriller "
+                               "en TIDAL', 'poné algo de Soda Stereo'.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "consulta": {"type": "string",
+                                     "description": "Qué buscar: título y, si se dijo, el artista."},
+                        "tipo": {"type": "string",
+                                 "enum": ["cancion", "album", "artista", "playlist"],
+                                 "description": "Qué tipo de cosa es (por defecto, canción)."},
+                    },
+                    "required": ["consulta"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "conectar_tidal",
+                "description": "Inicia sesión con la cuenta de TIDAL (una sola vez) para poder buscar "
+                               "y reproducir música por nombre. Abre el navegador para aprobar. "
+                               "Ej: 'conectá TIDAL', 'iniciá sesión en TIDAL'.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
         {
             "type": "function",
             "function": {
@@ -69,8 +109,14 @@ class Tidal(Plugin):
     ]
 
     # ---------------------------------------------------------- #
+    def __init__(self) -> None:
+        super().__init__()
+        self._event_bus: Any = None
+        self._buscador: Optional[BuscadorTidal] = None
+
     def initialize(self, event_bus: Any = None) -> None:
         super().initialize(event_bus)
+        self._event_bus = event_bus
         ruta = config_mod.config.valores.get("tidal_ruta_exe", "")
         logger.info("Plugin tidal listo (ruta exe: %s).",
                     "configurada" if ruta else "no configurada")
@@ -82,7 +128,79 @@ class Tidal(Plugin):
             return self.controlar_tidal(str(args.get("accion", "")))
         if nombre_tool == "que_esta_sonando":
             return self.que_esta_sonando()
+        if nombre_tool == "reproducir_en_tidal":
+            return self.reproducir_en_tidal(str(args.get("consulta", "")), str(args.get("tipo", "")))
+        if nombre_tool == "conectar_tidal":
+            return self.conectar_tidal()
         return None
+
+    # ---------------- Poné X (búsqueda + enlace tidal://) ---------------- #
+    def buscador(self) -> BuscadorTidal:
+        """Buscador con la sesión guardada en ``data/`` (se crea la primera vez que se usa)."""
+        if self._buscador is None:
+            self._buscador = BuscadorTidal(config_mod.BASE_DIR / "data" / "tidal_sesion.json")
+        return self._buscador
+
+    def reproducir_en_tidal(self, consulta: str, tipo: str = "") -> str:
+        """Busca ``consulta`` en TIDAL y la abre en la app de escritorio."""
+        consulta = (consulta or "").strip()
+        if not consulta:
+            return falla("tidal.sin_consulta")
+        buscador = self.buscador()
+        if buscador.sesion() is None:
+            return falla("tidal.sin_sesion" if libreria_disponible() else "tidal.sin_libreria")
+        r = buscador.buscar(consulta, tipo)
+        if r is None:
+            return falla("tidal.sin_resultados", consulta=consulta)
+        if not self._abrir_enlace(r.enlace):
+            return falla("tidal.no_abre")
+        threading.Thread(target=self._asegurar_reproduccion, daemon=True, name="tidal_play").start()
+        de = f", de {r.artista}" if r.artista else ""
+        return exito("tidal.reproduciendo", titulo=r.titulo, de=de)
+
+    def conectar_tidal(self) -> str:
+        """Inicia el inicio de sesión (una vez): abre el navegador y espera la aprobación."""
+        if not libreria_disponible():
+            return falla("tidal.sin_libreria")
+        buscador = self.buscador()
+        if buscador.sesion() is not None:
+            return exito("tidal.ya_conectado")
+        url = buscador.conectar(self._avisar_conexion, webbrowser.open)
+        if url is None:
+            return falla("tidal.conexion_error")
+        return exito("tidal.conectando")
+
+    def _avisar_conexion(self, conectado: bool) -> None:
+        """Avisa (toast y voz) cómo terminó el inicio de sesión."""
+        r = responder("tidal.conectado" if conectado else "tidal.conexion_fallida", conectado)
+        try:
+            from miku.servicios import notificaciones
+            notificaciones.notificar("TIDAL", str(r))
+        except Exception:  # noqa: BLE001
+            logger.debug("Sin toast de TIDAL.", exc_info=True)
+        voz = getattr(self._event_bus, "voice", None) if self._event_bus else None
+        if voz is not None:
+            try:
+                voz.decir(str(r))
+            except Exception:  # noqa: BLE001
+                pass
+
+    @staticmethod
+    def _abrir_enlace(enlace: str) -> bool:
+        """Abre un enlace ``tidal://`` con el programa registrado (TIDAL de escritorio)."""
+        try:
+            os.startfile(enlace)  # type: ignore[attr-defined]  # solo Windows
+            return True
+        except Exception as e:  # noqa: BLE001
+            logger.error("No pude abrir %s: %s", enlace, e)
+            return False
+
+    def _asegurar_reproduccion(self) -> None:
+        """Si tras abrir el enlace TIDAL quedó en pausa, manda "play" (nunca si no pudo leer el estado)."""
+        time.sleep(4.0)
+        info = self._leer_smtc()
+        if info and info.get("status") in ("paused", "stopped"):
+            self._enviar_tecla("play_pausa")
 
     # ---------------- Controles (teclas multimedia) ---------------- #
     def controlar_tidal(self, accion: str) -> str:
@@ -155,7 +273,8 @@ class Tidal(Plugin):
             "if ($ses -eq $null) { Write-Output ''; exit 0 }; "
             "$P = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties, Windows.Media.Control, ContentType = WindowsRuntime]; "
             "$props = Await ($ses.TryGetMediaPropertiesAsync()) ($P); "
-            "Write-Output ($props.Title + [char]9 + $props.Artist);"
+            "$estado = $ses.GetPlaybackInfo().PlaybackStatus.ToString(); "
+            "Write-Output ($props.Title + [char]9 + $props.Artist + [char]9 + $estado);"
         )
         try:
             proc = correr_powershell(ps, timeout=12)
@@ -171,8 +290,9 @@ class Tidal(Plugin):
                          (proc.stderr or "")[:200])
             return None
         if not salida:
-            return {"title": "", "artist": ""}
+            return {"title": "", "artist": "", "status": ""}
         partes = salida.split("\t")
         return {"title": partes[0].strip(),
-                "artist": partes[1].strip() if len(partes) > 1 else ""}
+                "artist": partes[1].strip() if len(partes) > 1 else "",
+                "status": partes[2].strip().lower() if len(partes) > 2 else ""}
 

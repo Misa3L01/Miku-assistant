@@ -102,3 +102,12 @@ def parser(cfg, plugin, memoria, cerebro) -> CommandParser:
 def espacio_de_nombres():
     """Atajo para crear objetos con atributos (``types.SimpleNamespace``)."""
     return types.SimpleNamespace
+
+
+@pytest.fixture(autouse=True)
+def _snapshot_de_modos_aislado(tmp_path, monkeypatch):
+    """El snapshot de "salir del modo" se guarda en disco: que ningún test toque ``data/`` real."""
+    from miku.servicios import modos
+    monkeypatch.setattr(modos, "RUTA_SNAPSHOT", tmp_path / "modo_snapshot.json")
+    monkeypatch.setattr(modos, "_snapshot", None)
+    monkeypatch.setattr(modos, "_cargado", False)

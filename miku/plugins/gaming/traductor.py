@@ -1,45 +1,41 @@
 """
-traductor_juegos.py - Traduce mensajes predefinidos y los copia al portapapeles.
+traductor.py - Traduce un texto a CUALQUIER idioma y lo deja en el portapapeles.
 
-Idea de uso: en juegos (CS:GO, Genshin, etc.) muchos mensajes son fijos
-("gg", "buena partida", "perdón, soy nuevo"). Este plugin tiene un DICCIONARIO
-de frases configurables; cuando el usuario pide una ("mandá 'buena partida'"),
-la traduce al idioma del juego y la **copia al portapapeles** para pegarla con
-Ctrl+V en el chat del juego.
+Nació para juegos (mensajes rápidos en CS2, Genshin…), pero sirve para cualquier cosa: el juego
+era solo el contexto. Pedís "traducí 'buena partida' al portugués" o "decí gracias en japonés" y el
+resultado queda en el portapapeles para pegarlo con Ctrl+V donde quieras. **No hace nada más**: no
+escribe en ninguna ventana ni manda el mensaje.
 
-Config (config_local.py):
-    - IDIOMA_JUEGO: idioma destino (ej. "inglés", "japonés", "portugués").
-    - MENSAJES_JUEGO: dict {clave: frase_en_español} con los mensajes.
-      Ejemplo:
-          MENSAJES_JUEGO = {
-              "gg": "buena partida",
-              "gracias": "gracias por jugar",
-              "nuevo": "perdón, soy nuevo",
-          }
+Config (config_local.py, todas opcionales):
+    - IDIOMA_JUEGO: idioma por defecto cuando no decís uno ("inglés", "japonés"…).
+    - PERFILES_JUEGO: idioma por juego, {"cs2": "portugués", "genshinimpact": "inglés"}. Si estás
+      dentro de uno de esos juegos y no decís idioma, se usa el suyo.
+    - MENSAJES_JUEGO: atajos {clave: frase en español}. Decir la clave ("gg") usa la frase asociada.
+          MENSAJES_JUEGO = {"gg": "buena partida", "nuevo": "perdón, soy nuevo"}
 
 Tool publicada:
-    - traducir_mensaje_juego(clave): traduce la frase asociada a `clave` y la
-      copia al portapapeles.
+    - traducir_mensaje_juego(texto, idioma?): traduce ``texto`` (o la frase del atajo) y lo copia al
+      portapapeles. Idioma: el que digas > el perfil del juego en primer plano > IDIOMA_JUEGO.
 
-Reutiliza ``core.traduccion.traducir_con_groq`` (el mismo cliente de Groq que
-usa el TTS para ES->JA), con una cache en memoria por (frase, idioma).
+Reutiliza ``miku.voz.salida.traduccion.traducir_con_groq`` (el cliente de Groq que usa también el TTS).
 """
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from collections import OrderedDict
+from typing import Any, Dict, List, Optional, Tuple
 
 from miku.plugins.base import Plugin
+from miku.voz.frases.respuesta import exito, falla
 
 logger = logging.getLogger("miku.plugins.traductor_juegos")
 
+#: Traducciones recordadas en memoria (frase, idioma) -> texto; tope para no crecer sin límite.
+_CACHE_MAX = 200
+
 
 def _copiar_al_portapapeles(texto: str) -> bool:
-    """Copia `texto` al portapapeles de Windows (win32clipboard).
-
-    Devuelve True si pudo. Importa ``win32clipboard`` de forma perezosa (solo
-    existe en Windows). Maneja el formato CF_UNICODETEXT.
-    """
+    """Copia ``texto`` al portapapeles de Windows (CF_UNICODETEXT). True si pudo."""
     try:
         import win32clipboard  # type: ignore  # import tardío (Windows)
     except Exception as e:  # noqa: BLE001
@@ -49,8 +45,7 @@ def _copiar_al_portapapeles(texto: str) -> bool:
         win32clipboard.OpenClipboard()
         try:
             win32clipboard.EmptyClipboard()
-            win32clipboard.SetClipboardData(win32clipboard.CF_UNICODETEXT,
-                                            texto)
+            win32clipboard.SetClipboardData(win32clipboard.CF_UNICODETEXT, texto)
         finally:
             win32clipboard.CloseClipboard()
         return True
@@ -59,40 +54,59 @@ def _copiar_al_portapapeles(texto: str) -> bool:
         return False
 
 
+def resolver_atajo(texto: str, mensajes: Dict[str, Any]) -> str:
+    """Devuelve la frase en español de un atajo, o ``texto`` tal cual si no es un atajo.
+
+    Solo cuenta la coincidencia **exacta** con una clave ("gg") o con una frase ya definida: con
+    texto libre una coincidencia parcial traduciría otra cosa de la que pediste.
+    """
+    buscado = (texto or "").strip().lower()
+    for clave, frase in mensajes.items():
+        if str(clave).strip().lower() == buscado:
+            return str(frase)
+    return (texto or "").strip()
+
+
 class TraductorJuegos(Plugin):
-    """Traduce mensajes de juego preconfigurados y los copia al portapapeles."""
+    """Traduce texto a cualquier idioma y lo deja en el portapapeles."""
 
     nombre = "traductor_juegos"
-    descripcion = ("Traduce mensajes de juego predefinidos y los copia al "
-                   "portapapeles (config: IDIOMA_JUEGO / MENSAJES_JUEGO).")
+    descripcion = ("Traduce un texto a cualquier idioma y lo copia al portapapeles "
+                   "(config opcional: IDIOMA_JUEGO / MENSAJES_JUEGO).")
 
     tools: List[dict] = [
         {
             "type": "function",
             "function": {
                 "name": "traducir_mensaje_juego",
-                "description": "Traduce un mensaje de juego predefinido al "
-                               "idioma configurado y lo deja en el "
-                               "portapapeles para pegar (Ctrl+V) en el chat "
-                               "del juego. Ej: 'mandá buena partida', 'decí "
-                               "gracias en el chat'.",
+                "description": "Traduce un texto (o un atajo como 'gg') a CUALQUIER idioma y lo deja "
+                               "SOLO en el portapapeles para pegarlo con Ctrl+V; no lo escribe ni lo "
+                               "envía. Ej: 'traducí buena partida al portugués', 'decí gracias en "
+                               "japonés', 'mandá gg' (usa el idioma por defecto).",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "clave": {
+                        "texto": {
                             "type": "string",
-                            "description": "Clave o frase del mensaje a "
-                                           "enviar (ej: 'buena partida').",
+                            "description": "Lo que hay que traducir (una frase cualquiera) o un atajo "
+                                           "configurado (ej: 'gg').",
+                        },
+                        "idioma": {
+                            "type": "string",
+                            "description": "Idioma destino en español ('inglés', 'portugués', "
+                                           "'japonés'…). Opcional: si se omite se usa el idioma por "
+                                           "defecto configurado.",
                         },
                     },
-                    "required": ["clave"],
+                    "required": ["texto"],
                 },
             },
         },
     ]
 
-    # Cache de traducciones por (frase, idioma) para no repetir llamadas.
-    _cache: Dict[str, str] = {}
+    def __init__(self) -> None:
+        super().__init__()
+        self._cache: "OrderedDict[str, str]" = OrderedDict()
 
     # ---------------- Ciclo de vida ----------------
     def initialize(self, event_bus: Any = None) -> None:
@@ -100,124 +114,86 @@ class TraductorJuegos(Plugin):
         logger.info("Plugin traductor_juegos listo.")
 
     # ---------------- Lectura de config ----------------
-    def _leer_config(self) -> Dict[str, Any]:
-        """Devuelve {'idioma': str, 'mensajes': dict} desde config (runtime)."""
+    @staticmethod
+    def _idioma_del_juego_actual(perfiles: Any) -> str:
+        """Idioma del perfil del juego en primer plano ("" si no hay juego o no tiene perfil)."""
+        if not isinstance(perfiles, dict) or not perfiles:
+            return ""
         try:
-            from miku.ajustes import carga as config_mod  # ruta segura
-            config_mod.cargar()
+            from miku.plataforma import procesos
+            juego = procesos.proceso_primer_plano()
+        except Exception:  # noqa: BLE001
+            return ""
+        if not juego:
+            return ""
+        for proceso, idioma in perfiles.items():
+            if str(proceso).lower().removesuffix(".exe") == juego:
+                return str(idioma or "").strip()
+        return ""
+
+    @classmethod
+    def _leer_config(cls) -> Tuple[str, Dict[str, Any], str]:
+        """``(idioma por defecto, atajos, clave de Groq)`` de la config viva.
+
+        El "idioma por defecto" ya incluye el perfil del juego en primer plano (si lo hay).
+        """
+        try:
+            from miku.ajustes import carga as config_mod
             cfg = config_mod.config
-            idioma = str(cfg.get("idioma_juego", "") or "").strip()
             mensajes = cfg.get("mensajes_juego", {}) or {}
             if not isinstance(mensajes, dict):
                 logger.warning("mensajes_juego no es un dict; lo ignoro.")
                 mensajes = {}
-            return {"idioma": idioma, "mensajes": mensajes}
+            idioma = (cls._idioma_del_juego_actual(cfg.get("perfiles_juego"))
+                      or str(cfg.get("idioma_juego", "") or "").strip())
+            return idioma, mensajes, str(cfg.groq_api_key or "")
         except Exception as e:  # noqa: BLE001
-            logger.error("No pude leer la config del traductor de juegos: %s", e)
-            return {"idioma": "", "mensajes": {}}
-
-    @staticmethod
-    def _resolver_clave(clave: str, mensajes: Dict[str, Any]) -> Optional[str]:
-        """Resuelve la frase en español a partir de la clave o la propia frase.
-
-        Acepta:
-          - una CLAVE del diccionario ("gg");
-          - parte de una clave ("buen" -> "gg"/"buena partida");
-          - directamente la frase en español ("buena partida").
-        Devuelve la frase en español o None si no la encuentra.
-        """
-        clave = (clave or "").strip().lower()
-        if not clave:
-            return None
-        # 1) Clave exacta.
-        for k, v in mensajes.items():
-            if str(k).lower() == clave:
-                return str(v)
-        # 2) Coincidencia por substring en la clave o en el valor.
-        for k, v in mensajes.items():
-            if clave in str(k).lower() or clave in str(v).lower():
-                return str(v)
-        return None
+            logger.error("No pude leer la config del traductor: %s", e)
+            return "", {}, ""
 
     # ---------------- Despacho de tools ----------------
     def manejar_tool(self, nombre_tool: str, args: Dict[str, Any],
                      contexto: Dict[str, Any]) -> Any:
         if nombre_tool == "traducir_mensaje_juego":
-            return self.traducir_mensaje_juego(str(args.get("clave", "") or ""))
+            # "clave" era el nombre del parámetro antes de que aceptara texto libre.
+            texto = str(args.get("texto") or args.get("clave") or "")
+            return self.traducir_mensaje_juego(texto, str(args.get("idioma") or ""))
         return None
 
     # ---------------- Lógica principal ----------------
-    def traducir_mensaje_juego(self, clave: str) -> str:
-        """Traduce el mensaje asociado a `clave` y lo copia al portapapeles.
-
-        Flujo:
-          1. Lee config (idioma + diccionario de mensajes).
-          2. Resuelve la frase en español a partir de la clave.
-          3. Traduce con Groq (``core.traduccion``) usando la cuenta principal
-             (``groq_api_key``) — no la de STT.
-          4. Copia el resultado al portapapeles (win32clipboard).
-
-        Devuelve un mensaje natural en todos los casos (sin romper).
-        """
-        cfg = self._leer_config()
-        idioma = cfg["idioma"]
-        mensajes = cfg["mensajes"]
-
-        if not idioma:
-            return ("No tengo configurado el idioma del juego. Definí "
-                    "IDIOMA_JUEGO en config_local.py (ej. 'inglés').")
-        if not mensajes:
-            return ("No tengo mensajes de juego configurados. Definí "
-                    "MENSAJES_JUEGO en config_local.py.")
-
-        frase_es = self._resolver_clave(clave, mensajes)
-        if frase_es is None:
-            disponibles = ", ".join(list(mensajes.keys())[:8])
-            return (f"No tengo un mensaje para '{clave}'. Tengo estos: "
-                    f"{disponibles}.")
-
-        # Traducir (cache por frase+idioma). Usamos la cuenta PRINCIPAL (cerebro).
-        cache_key = f"{frase_es}||{idioma}".lower()
-        traduccion_txt = self._cache.get(cache_key)
-        if traduccion_txt is None:
-            try:
-                from miku.voz.salida import traduccion  # import tardío
-            except Exception:  # noqa: BLE001
-                return "No tengo disponible el módulo de traducción."
-            traduccion_txt = traduccion.traducir_con_groq(
-                frase_es, idioma,
-                api_key=str(self._api_key_principal() or ""),
-                cache=self._cache_core())
-            if not traduccion_txt:
-                return ("No pude traducir el mensaje ahora mismo (revisá la "
-                        "API key o la conexión).")
-            self._cache[cache_key] = traduccion_txt
-
-        # Copiar al portapapeles.
-        if not _copiar_al_portapapeles(traduccion_txt):
-            return (f"Traduje '{frase_es}' -> '{traduccion_txt}', pero no pude "
-                    f"copiarlo al portapapeles (falta pywin32?).")
-
-        return (f"Listo, copié al portapapeles el mensaje en {idioma}: "
-                f"'{traduccion_txt}'. Pegalo con Ctrl+V.")
-
-    def _api_key_principal(self) -> str:
-        """Devuelve la groq_api_key (la del cerebro, NO la de STT)."""
-        try:
-            from miku.ajustes import carga as config_mod
-            config_mod.cargar()
-            return str(config_mod.config.groq_api_key or "")
-        except Exception:  # noqa: BLE001
-            return ""
-
-    def _cache_core(self) -> Dict[str, str]:
-        """Devuelve la cache interna del módulo de traducción (por texto).
-
-        La usamos además para aprovechar el cacheo por texto normalizado que ya
-        hace ``traducir_con_groq``. Es un dict vivo del módulo.
-        """
+    def _traducir(self, frase: str, idioma: str, api_key: str) -> Optional[str]:
+        """Traduce con Groq recordando el resultado (LRU acotado)."""
+        clave = f"{frase}||{idioma}".lower()
+        if clave in self._cache:
+            self._cache.move_to_end(clave)
+            return self._cache[clave]
         try:
             from miku.voz.salida import traduccion
-            return traduccion.__dict__.setdefault("_CACHE_JUEGOS", {})
         except Exception:  # noqa: BLE001
-            return {}
+            return None
+        resultado = traduccion.traducir_con_groq(frase, idioma, api_key=api_key)
+        if resultado:
+            self._cache[clave] = resultado
+            while len(self._cache) > _CACHE_MAX:
+                self._cache.popitem(last=False)
+        return resultado
+
+    def traducir_mensaje_juego(self, texto: str, idioma: str = "") -> str:
+        """Traduce ``texto`` (o su atajo) a ``idioma`` y lo copia al portapapeles.
+
+        Devuelve siempre una respuesta hablable (``Respuesta``); nunca lanza.
+        """
+        idioma_defecto, mensajes, api_key = self._leer_config()
+        idioma = (idioma or "").strip() or idioma_defecto
+        if not idioma:
+            return falla("traductor.sin_idioma")
+        frase = resolver_atajo(texto, mensajes)
+        if not frase:
+            return falla("traductor.sin_texto")
+
+        traduccion_txt = self._traducir(frase, idioma, api_key)
+        if not traduccion_txt:
+            return falla("traductor.error")
+        if not _copiar_al_portapapeles(traduccion_txt):
+            return falla("traductor.sin_portapapeles", traduccion=traduccion_txt)
+        return exito("traductor.copiado", idioma=idioma, traduccion=traduccion_txt)

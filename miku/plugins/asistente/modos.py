@@ -40,6 +40,16 @@ class Modos(Plugin):
                 "parameters": {"type": "object", "properties": {}},
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "volver_resolucion_nativa",
+                "description": "Lleva la pantalla a su resolución nativa (la máxima del monitor). "
+                               "Red de seguridad si la resolución quedó rara después de un juego "
+                               "o macro. Ej: 'volvé a la resolución normal', 'arreglá la resolución'.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
     ]
 
     # ---------------------------------------------------------- #
@@ -52,4 +62,6 @@ class Modos(Plugin):
                      contexto: Dict[str, Any]) -> Any:
         if nombre_tool == "salir_modo":
             return modos.salir_modo()
+        if nombre_tool == "volver_resolucion_nativa":
+            return modos.volver_a_resolucion_nativa()
         return None

@@ -83,3 +83,8 @@ discord.py>=2.3.2
 # Lectura de variables de entorno desde archivo .env:
 # python-dotenv>=1.0.0
 
+
+# ---------- TIDAL por nombre (opcional) ----------
+# "Poné Bohemian Rhapsody" (plugins/multimedia/tidal.py): busca el tema en TU cuenta de TIDAL.
+# Sin esto, TIDAL solo se controla (pausa/siguiente/qué suena). Luego decí "conectá TIDAL".
+# tidalapi>=0.8.0

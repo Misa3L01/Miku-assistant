@@ -225,12 +225,17 @@ DISCORD_BOT_TOKEN = ""
 # Traductor de juegos y Game Booster
 # ======================================================================================
 
-# Idioma al que se traducen los mensajes de juego cuando no decís uno: 'inglés',
-# 'portugués', 'japonés'…
+# Idioma por defecto del traductor cuando no decís uno ('traducí X al portugués' siempre
+# gana): 'inglés', 'portugués', 'japonés'… Opcional.
 # (usado por: traductor_juegos)
 # IDIOMA_JUEGO = ""
 
-# Atajos de mensajes de juego: clave -> frase en español ('gg': 'buena partida').
+# Idioma del traductor por juego: si estás jugando uno de estos y no decís idioma, se
+# usa el suyo (tiene prioridad sobre IDIOMA_JUEGO). Clave: proceso sin .exe.
+# (usado por: traductor_juegos)
+# PERFILES_JUEGO = {"cs2": "portugués", "genshinimpact": "inglés"}
+
+# Atajos del traductor: clave -> frase en español ('gg': 'buena partida'). Opcional.
 # (usado por: traductor_juegos)
 # MENSAJES_JUEGO = {"gg": "buena partida"}
 

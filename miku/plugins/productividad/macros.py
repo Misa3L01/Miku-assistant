@@ -36,6 +36,7 @@ from typing import Any, Callable, Dict, List, Optional
 from miku.ajustes.carga import BASE_DIR
 from miku.plataforma import pantalla
 from miku.plugins.base import Plugin
+from miku.voz.frases.respuesta import exito, falla
 
 logger = logging.getLogger("miku.plugins.macros")
 
@@ -207,30 +208,38 @@ class Macros(Plugin):
         return None
 
     # ---------------- API de macros ----------------
+    #: Cuántas macros se nombran en voz alta (la lista completa va al log).
+    _MAX_HABLADAS = 5
+
+    def _nombres_hablados(self) -> str:
+        """Los primeros nombres ("a, b y c") para decirlos en voz alta."""
+        nombres = [n.replace("_", " ") for n in list(self._macros)[:self._MAX_HABLADAS]]
+        return nombres[0] if len(nombres) == 1 else ", ".join(nombres[:-1]) + " y " + nombres[-1]
+
     def listar_macros(self) -> str:
-        """Devuelve las macros disponibles (nombre + descripción)."""
+        """Dice cuántas macros hay y nombra solo las primeras (la lista completa queda en el log)."""
         if not self._macros:
-            return "No hay macros configuradas todavía."
-        lineas = []
-        for nombre, macro in self._macros.items():
-            desc = macro.get("descripcion") or "(sin descripción)"
-            lineas.append(f"- {nombre}: {desc}")
-        return "Macros disponibles:\n" + "\n".join(lineas)
+            return falla("macros.sin_macros")
+        logger.info("Macros disponibles:\n%s", "\n".join(
+            f"- {n}: {m.get('descripcion') or '(sin descripción)'}" for n, m in self._macros.items()))
+        cantidad = len(self._macros)
+        if cantidad <= self._MAX_HABLADAS:
+            return exito("macros.lista", cantidad=cantidad, nombres=self._nombres_hablados())
+        return exito("macros.lista_larga", cantidad=cantidad, nombres=self._nombres_hablados())
 
     def ejecutar_macro(self, nombre: str) -> str:
         """Ejecuta la macro `nombre` interpretando su campo 'comando'."""
         nombre = (nombre or "").strip().lower()
         if not nombre:
-            return "¿Qué macro querés que ejecute?"
+            return falla("macros.sin_nombre")
 
         if not self._macros:
-            return "No tengo macros configuradas."
+            return falla("macros.sin_macros")
 
         # Resolución tolerante del nombre (espacios -> guiones bajos).
         macro = self._buscar_macro(nombre)
         if macro is None:
-            disponibles = ", ".join(self._macros.keys())
-            return f"No conozco la macro '{nombre}'. Tengo: {disponibles}."
+            return falla("macros.desconocida", nombre=nombre, nombres=self._nombres_hablados())
 
         comando = macro.get("comando", "").strip()
         logger.info("Ejecutando macro '%s' -> comando '%s'.", nombre, comando)

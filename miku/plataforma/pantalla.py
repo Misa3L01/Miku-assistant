@@ -86,6 +86,25 @@ def resolucion_actual() -> Optional[Tuple[int, int]]:
     return (int(dm.dmPelsWidth), int(dm.dmPelsHeight)) if dm is not None else None
 
 
+def resolucion_nativa() -> Optional[Tuple[int, int]]:
+    """La resolución más alta que soporta el monitor principal (la nativa), o None si no se puede leer."""
+    try:
+        user32 = _user32()
+        mejor: Optional[Tuple[int, int]] = None
+        for indice in range(0, 500):
+            dm = _DEVMODE()
+            dm.dmSize = ctypes.sizeof(_DEVMODE)
+            if not user32.EnumDisplaySettingsW(None, indice, ctypes.byref(dm)):
+                break
+            candidata = (int(dm.dmPelsWidth), int(dm.dmPelsHeight))
+            if mejor is None or candidata[0] * candidata[1] > mejor[0] * mejor[1]:
+                mejor = candidata
+        return mejor
+    except Exception as e:  # noqa: BLE001
+        logger.debug("No pude enumerar las resoluciones: %s", e)
+        return None
+
+
 def cambiar_resolucion(ancho: int, alto: int, solo_probar: bool = False) -> Tuple[str, int]:
     """Cambia la resolución (o solo la prueba con ``solo_probar=True``, sin tocar la pantalla).
 

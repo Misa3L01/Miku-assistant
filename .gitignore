@@ -18,6 +18,10 @@ data/macros_config.json
 data/miku_memoria/
 data/miku_memoria.db
 data/*.db
+data/tidal_sesion.json
+data/proactivo_estado.json
+data/*.log*
+data/*.tmp
 # Capturas de pantalla (pueden contener información sensible)
 data/capturas/
 
