@@ -19,12 +19,12 @@ import logging
 import re
 import threading
 import time
-import unicodedata
 from typing import Any, Callable, List, Optional
 
 # Imports "pesados"/opcionales hechos de forma lazy dentro de los métodos
 # para acortar el arranque si no se usa modo voz (ver optimización).
 from miku.ajustes import carga as config_mod  # noqa: F401  (accede por config_mod.config)
+from miku.plataforma.texto import sin_acentos
 
 logger = logging.getLogger("miku.stt")
 
@@ -48,12 +48,6 @@ _MIN_DURACION_AUDIO = 0.4
 # Tope de duración de una frase en escucha continua (comando en la misma
 # frase que la wake word: "Miku, abrí Brave y poné Discord a la derecha").
 _LIMITE_FRASE_WAKE = 8
-
-
-def _sin_acentos(texto: str) -> str:
-    """Minúsculas sin acentos, para comparar transcripciones."""
-    descompuesto = unicodedata.normalize("NFD", (texto or "").lower())
-    return "".join(c for c in descompuesto if unicodedata.category(c) != "Mn")
 
 
 def _duracion_audio(audio) -> float:
@@ -173,7 +167,7 @@ class SpeechToText:
             logger.error("Error llamando a la API de transcripción de Groq: %s", e)
             return ""
 
-        normalizado = _sin_acentos(texto)
+        normalizado = sin_acentos(texto)
         if any(a in normalizado for a in _ALUCINACIONES_WHISPER):
             logger.debug("Descarto alucinación de Whisper: %r", texto)
             return ""

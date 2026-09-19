@@ -24,17 +24,11 @@ import requests
 
 from miku.ajustes import carga as config_mod
 from miku.plugins.base import Plugin
+from miku.plataforma.texto import normalizar
 
 logger = logging.getLogger("miku.plugins.todoist")
 
 _BASE = "https://api.todoist.com/rest/v2"
-
-
-def _normalizar(texto: str) -> str:
-    """Minúsculas + sin acentos, para matching tolerante."""
-    tabla = str.maketrans("áàäâãéèëêíìïîóòöôõúùüûñç",
-                          "aaaaaeeeeiiiiooooouuuunc")
-    return (texto or "").lower().translate(tabla).strip()
 
 
 class Todoist(Plugin):
@@ -193,9 +187,9 @@ class Todoist(Plugin):
             logger.error("Error listando para completar: %s", e)
             return "No pude conectar con Todoist."
 
-        objetivo = _normalizar(descripcion)
+        objetivo = normalizar(descripcion)
         coincidencias = [t for t in tareas
-                         if objetivo in _normalizar(t.get("content", ""))]
+                         if objetivo in normalizar(t.get("content", ""))]
         if not coincidencias:
             return f"No encontré ninguna tarea que diga '{descripcion}'."
         if len(coincidencias) > 1:

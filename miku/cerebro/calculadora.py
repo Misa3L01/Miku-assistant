@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 from typing import List, Optional, Tuple
+from miku.plataforma.texto import normalizar
 
 # Números: enteros o decimales (con coma o punto).
 _RE_NUMERO = re.compile(r"\d+(?:[.,]\d+)?")
@@ -39,20 +40,13 @@ _REEMPLAZOS: List[Tuple[str, str]] = [
 ]
 
 
-def _normalizar(texto: str) -> str:
-    """Minúsculas + sin acentos, para reconocer palabras del español."""
-    tabla = str.maketrans("áàäâãéèëêíìïîóòöôõúùüûñç",
-                          "aaaaaeeeeiiiiooooouuuunc")
-    return (texto or "").lower().translate(tabla)
-
-
 def parece_calculo(texto: str) -> bool:
     """Heurística: ¿el texto parece una operación aritmética?
 
     Exige al menos un operador reconocible y al menos un número. Evita gastar
     la API en frases que no son cálculos.
     """
-    t = _normalizar(texto)
+    t = normalizar(texto)
     if not _RE_NUMERO.search(t):
         return False
     # Algún operador (símbolo o palabra).
@@ -101,7 +95,7 @@ def _a_expresion(texto: str) -> Optional[str]:
     reemplaza las palabras operadoras por símbolos. Devuelve None si no hay
     nada aprovechable.
     """
-    t = _normalizar(texto)
+    t = normalizar(texto)
 
     # Quitamos prefijos conversacionales típicos.
     for prefijo in ("cuanto es", "cuanto da", "cuanto seria", "cuanto son",

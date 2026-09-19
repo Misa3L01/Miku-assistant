@@ -20,13 +20,13 @@ import logging
 import re
 import threading
 import time
-import unicodedata
 from datetime import date
 from typing import Any, Dict, List, Optional
 
 import requests
 
 from miku.ajustes import carga as config_mod
+from miku.plataforma.texto import sin_acentos
 
 logger = logging.getLogger("miku.parser")
 
@@ -56,19 +56,13 @@ def obtener_cache(clave: str) -> Optional[str]:
         return _CACHE.get(clave)
 
 
-def _sin_acentos(texto: str) -> str:
-    """Pasa a minúsculas y quita los acentos ("Qué" -> "que")."""
-    descompuesto = unicodedata.normalize("NFD", (texto or "").lower())
-    return "".join(c for c in descompuesto if unicodedata.category(c) != "Mn")
-
-
 def _normalizar_frase(texto: str) -> str:
     """Normaliza una frase para comparar: sin acentos ni signos de puntuación.
 
     Whisper devuelve "¿Qué hora es?" con acentos y signos; esto lo deja como
     "que hora es" para poder comparar contra las frases del fast-path.
     """
-    limpio = re.sub(r"[¿?¡!.,;:\"']", " ", _sin_acentos(texto))
+    limpio = re.sub(r"[¿?¡!.,;:\"']", " ", sin_acentos(texto))
     return re.sub(r"\s+", " ", limpio).strip()
 
 
@@ -769,7 +763,7 @@ class CommandParser:
         """
         # ``t``: minúsculas SIN acentos (Whisper devuelve "¿Qué hora es?");
         # ``frase``: además sin signos, para comparar frases exactas.
-        t = _sin_acentos(texto).strip()
+        t = sin_acentos(texto).strip()
         frase = _normalizar_frase(texto)
 
         from datetime import datetime

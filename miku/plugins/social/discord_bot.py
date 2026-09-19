@@ -42,6 +42,7 @@ import threading
 from typing import Any, Dict, List, Optional
 
 from miku.plugins.base import Plugin
+from miku.plataforma.texto import clave_compacta, normalizar
 
 logger = logging.getLogger("miku.plugins.discord_control")
 
@@ -54,22 +55,6 @@ _AMBIGUO = object()
 _TIMEOUTS = (concurrent.futures.TimeoutError, asyncio.TimeoutError)
 _MSG_TIMEOUT = ("Discord tardó en confirmar. La acción pudo haberse aplicado: "
                 "fijate en Discord antes de repetirla.")
-
-
-def _normalizar_texto(texto: Optional[str]) -> str:
-    """Minúsculas + sin acentos, para matching de nombres tolerante."""
-    if not texto:
-        return ""
-    texto = str(texto).lower()
-    reemplazos = str.maketrans(
-        "áàäâãéèëêíìïîóòöôõúùüûñç",
-        "aaaaaeeeeiiiiooooouuuunc")
-    return texto.translate(reemplazos).strip()
-
-
-def _clave_compacta(texto: Optional[str]) -> str:
-    """Normaliza y quita separadores (espacios, guiones, guiones bajos)."""
-    return "".join(ch for ch in _normalizar_texto(texto) if ch.isalnum())
 
 
 class DiscordControl(Plugin):
@@ -365,8 +350,8 @@ class DiscordControl(Plugin):
     @staticmethod
     def _coincide_miembro(miembro: Any, objetivo: str) -> bool:
         """True si `miembro` matchea `objetivo` (nombre/nick/username/id)."""
-        objetivo_n = _normalizar_texto(objetivo)
-        objetivo_c = _clave_compacta(objetivo)
+        objetivo_n = normalizar(objetivo)
+        objetivo_c = clave_compacta(objetivo)
         if not objetivo_n:
             return False
 
@@ -381,8 +366,8 @@ class DiscordControl(Plugin):
             getattr(miembro, "nick", "") or "",
         ]
         for cand in candidatos:
-            cn = _normalizar_texto(cand)
-            cc = _clave_compacta(cand)
+            cn = normalizar(cand)
+            cc = clave_compacta(cand)
             if not cn:
                 continue
             if cn == objetivo_n or cc == objetivo_c:
@@ -391,8 +376,8 @@ class DiscordControl(Plugin):
         # candidatos NO vacíos y con la clave compacta, para evitar que un
         # nombre vacío matchee siempre ("" in "x" == True).
         for cand in candidatos:
-            cn = _normalizar_texto(cand)
-            cc = _clave_compacta(cand)
+            cn = normalizar(cand)
+            cc = clave_compacta(cand)
             if not cn or not cc:
                 continue
             if objetivo_n in cn or objetivo_c in cc:
@@ -435,8 +420,8 @@ class DiscordControl(Plugin):
         Nota: si hay una coincidencia EXACTA y además otras por substring,
         gana la exacta (desambigua sola).
         """
-        objetivo_n = _normalizar_texto(objetivo)
-        objetivo_c = _clave_compacta(objetivo)
+        objetivo_n = normalizar(objetivo)
+        objetivo_c = clave_compacta(objetivo)
 
         # 1) Exactas (nombre completo / username / id).
         exactos = [m for m in miembros if cls._es_coincidencia_exacta(
@@ -464,8 +449,8 @@ class DiscordControl(Plugin):
             cand = getattr(miembro, attr, "") or ""
             if not cand:
                 continue
-            if _normalizar_texto(cand) == objetivo_n or \
-                    _clave_compacta(cand) == objetivo_c:
+            if normalizar(cand) == objetivo_n or \
+                    clave_compacta(cand) == objetivo_c:
                 return True
         return False
 

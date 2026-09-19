@@ -28,14 +28,13 @@ extensible: sumar un manejador nuevo = agregar una entrada en
 """
 from __future__ import annotations
 
-import ctypes
 import json
 import logging
 import re
-from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from miku.ajustes.carga import BASE_DIR
+from miku.plataforma import pantalla
 from miku.plugins.base import Plugin
 
 logger = logging.getLogger("miku.plugins.macros")
@@ -301,101 +300,20 @@ class Macros(Plugin):
 
 
 # ===================================================================== #
-#                      Cambio de resolución (ctypes)                    #
+#                      Cambio de resolución                             #
 # ===================================================================== #
-# Estructuras/constantes de Windows para ChangeDisplaySettings.
-# Se declaran a nivel de módulo pero SOLO se usan dentro de la función (y esa
-# función se ejecuta solo en Windows con ctypes disponible).
-_ENUM_CURRENT_SETTINGS = -1
-_DM_PELSWIDTH = 0x00080000
-_DM_PELSHEIGHT = 0x00100000
-_CDS_TEST = 0x00000002
-_CDS_UPDATEREGISTRY = 0x00000001
-_DISP_CHANGE_SUCCESSFUL = 0
-_DISP_CHANGE_BADMODE = -2
-
-
-class _DEVMODE(ctypes.Structure):  # noqa: N801 - nombre estilo Win32
-    """Subconjunto de la estructura DEVMODEW de Windows (suficiente para cambiar
-    resolución por ancho/alto)."""
-
-    _fields_ = [
-        ("dmDeviceName", ctypes.c_wchar * 32),
-        ("dmSpecVersion", ctypes.c_ushort),
-        ("dmDriverVersion", ctypes.c_ushort),
-        ("dmSize", ctypes.c_ushort),
-        ("dmDriverExtra", ctypes.c_ushort),
-        ("dmFields", ctypes.c_ulong),
-        ("dmPositionX", ctypes.c_long),
-        ("dmPositionY", ctypes.c_long),
-        ("dmDisplayOrientation", ctypes.c_ulong),
-        ("dmDisplayFixedOutput", ctypes.c_ulong),
-        ("dmColor", ctypes.c_short),
-        ("dmDuplex", ctypes.c_short),
-        ("dmYResolution", ctypes.c_short),
-        ("dmTTOption", ctypes.c_short),
-        ("dmCollate", ctypes.c_short),
-        ("dmFormName", ctypes.c_wchar * 32),
-        ("dmLogPixels", ctypes.c_ushort),
-        ("dmBitsPerPel", ctypes.c_ulong),
-        ("dmPelsWidth", ctypes.c_ulong),
-        ("dmPelsHeight", ctypes.c_ulong),
-        ("dmDisplayFlags", ctypes.c_ulong),
-        ("dmDisplayFrequency", ctypes.c_ulong),
-        ("dmICMMethod", ctypes.c_ulong),
-        ("dmICMIntent", ctypes.c_ulong),
-        ("dmMediaType", ctypes.c_ulong),
-        ("dmDitherType", ctypes.c_ulong),
-        ("dmReserved1", ctypes.c_ulong),
-        ("dmReserved2", ctypes.c_ulong),
-        ("dmPanningWidth", ctypes.c_ulong),
-        ("dmPanningHeight", ctypes.c_ulong),
-    ]
-
-
 def cambiar_resolucion(ancho: int, alto: int) -> str:
-    """Cambia la resolución de pantalla a `ancho`x`alto` (Windows, ctypes).
+    """Cambia la resolución de pantalla a `ancho`x`alto` y devuelve un mensaje natural.
 
-    Estrategia:
-      1. Arma un DEVMODE con ancho/alto pedidos y el resto en "actual".
-      2. Prueba el modo con ``ChangeDisplaySettingsW(..., CDS_TEST)``.
-      3. Si es válido, lo aplica con ``CDS_UPDATEREGISTRY``.
-
-    Devuelve un mensaje natural. Si el modo no existe o falla, lo dice claro
-    (no deja la pantalla a medias).
+    La lógica (probar el modo con ``CDS_TEST`` y recién después aplicarlo) vive en
+    ``miku.plataforma.pantalla``, compartida con los snapshots de "salir del modo".
     """
-    try:
-        user32 = ctypes.windll.user32
-    except Exception:  # noqa: BLE001
-        return "El cambio de resolución solo funciona en Windows."
-
-    dm = _DEVMODE()
-    dm.dmSize = ctypes.sizeof(_DEVMODE)
-    # Partimos del modo ACTUAL y solo cambiamos ancho/alto.
-    if not user32.EnumDisplaySettingsW(None, _ENUM_CURRENT_SETTINGS,
-                                       ctypes.byref(dm)):
-        return "No pude leer la configuración de pantalla actual."
-
-    dm.dmPelsWidth = ancho
-    dm.dmPelsHeight = alto
-    dm.dmFields = _DM_PELSWIDTH | _DM_PELSHEIGHT
-
-    # 1) Prueba (no cambia nada todavía).
-    prueba = user32.ChangeDisplaySettingsW(ctypes.byref(dm), _CDS_TEST)
-    if prueba == _DISP_CHANGE_BADMODE:
-        return f"Tu pantalla no soporta la resolución {ancho}x{alto}."
-    if prueba != _DISP_CHANGE_SUCCESSFUL:
-        return (f"No pude aplicar la resolución {ancho}x{alto} "
-                f"(código {prueba}).")
-
-    # 2) Aplicación real.
-    res = user32.ChangeDisplaySettingsW(ctypes.byref(dm), _CDS_UPDATEREGISTRY)
-    if res == _DISP_CHANGE_SUCCESSFUL:
-        logger.info("Resolución cambiada a %dx%d.", ancho, alto)
+    estado, codigo = pantalla.cambiar_resolucion(ancho, alto)
+    if estado == pantalla.OK:
         return f"Listo, cambié la resolución a {ancho}x{alto}."
-
-    # OJO: "restart required" (códigos > 0) NO es error fatal; avisamos igual.
-    if res > 0:
+    if estado == pantalla.REINICIO:
         return (f"Cambié la resolución a {ancho}x{alto}, "
                 f"pero puede pedir reiniciar para quedar fija.")
-    return f"No pude cambiar la resolución (código {res})."
+    if estado == pantalla.NO_SOPORTADA:
+        return f"Tu pantalla no soporta la resolución {ancho}x{alto}."
+    return f"No pude cambiar la resolución a {ancho}x{alto} (código {codigo})."

@@ -19,12 +19,12 @@ Todo es best-effort: si ningún motor está disponible, se avisa con claridad
 from __future__ import annotations
 
 import logging
-import subprocess
 import tempfile
 import os
 from typing import Any, Dict, List, Optional
 
 from miku.ajustes import carga as config_mod
+from miku.plataforma.subprocesos import PREAMBULO_WINRT, correr_powershell
 from miku.plugins.base import Plugin
 
 logger = logging.getLogger("miku.plugins.ocr")
@@ -182,12 +182,7 @@ class Ocr(Plugin):
         idioma del sistema.
         """
         ruta_ps = ruta_img.replace("'", "''")
-        ps = (
-            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
-            "Add-Type -AssemblyName System.Runtime.WindowsRuntime > $null; "
-            "$asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | "
-            "Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]; "
-            "function Await($op, $t) { $m = $asTask.MakeGenericMethod($t); $task = $m.Invoke($null, @($op)); $task.Wait(); $task.Result }; "
+        ps = PREAMBULO_WINRT + (
             "[Windows.Media.Ocr.OcrEngine, Windows.Media.Ocr, ContentType = WindowsRuntime] > $null; "
             "[Windows.Graphics.Imaging.BitmapDecoder, Windows.Graphics.Imaging, ContentType = WindowsRuntime] > $null; "
             "[Windows.Storage.StorageFile, Windows.Storage, ContentType = WindowsRuntime] > $null; "
@@ -201,12 +196,7 @@ class Ocr(Plugin):
             "Write-Output $res.Text;"
         )
         try:
-            proc = subprocess.run(
-                ["powershell", "-NoProfile", "-NonInteractive", "-WindowStyle",
-                 "Hidden", "-Command", ps],
-                shell=False, timeout=25, capture_output=True,
-                encoding="utf-8", errors="replace",
-                creationflags=_sin_ventana())
+            proc = correr_powershell(ps, timeout=25)
             salida = (proc.stdout or "").strip()
             # Si no hay motor/idioma, devolvemos None para que se avise.
             if proc.returncode != 0 and not salida:
@@ -231,10 +221,3 @@ def _bbox_monitor(monitor: int) -> Optional[tuple]:
     except Exception:  # noqa: BLE001
         return None
 
-
-def _sin_ventana() -> int:
-    """Flags de creación para no abrir ventana de consola (Windows)."""
-    try:
-        return subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
-    except Exception:  # noqa: BLE001
-        return 0x08000000  # CREATE_NO_WINDOW

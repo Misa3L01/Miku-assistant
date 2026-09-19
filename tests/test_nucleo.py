@@ -151,3 +151,19 @@ def test_guardar_preferencias_concurrente(tmp_path):
     [h.start() for h in hilos]
     [h.join() for h in hilos]
     assert len(json.loads(ruta.read_text(encoding="utf-8"))) == 12
+
+
+# ---------------------------------------------------------------- plataforma: texto
+from miku.plataforma.texto import clave_compacta, normalizar, sin_acentos  # noqa: E402
+
+
+@pytest.mark.parametrize("entrada,esperado", [
+    ("¿Qué Hora Es?", "¿que hora es?"), ("Ñandú", "nandu"), ("  Química ", "  quimica "), (None, ""), ("", ""),
+])
+def test_sin_acentos(entrada, esperado):
+    assert sin_acentos(entrada) == esperado
+
+
+def test_normalizar_recorta_y_clave_compacta_quita_separadores():
+    assert normalizar("  Visual Studio  ") == "visual studio"
+    assert clave_compacta("Lista_Animes 2") == clave_compacta("lista animes2") == "listaanimes2"

@@ -17,10 +17,10 @@ Ver también: control multimedia genérico en ``miku/plugins/sistema/system_cont
 from __future__ import annotations
 
 import logging
-import subprocess
 from typing import Any, Dict, List, Optional
 
 from miku.ajustes import carga as config_mod
+from miku.plataforma.subprocesos import PREAMBULO_WINRT, correr_powershell
 from miku.plugins.base import Plugin
 
 logger = logging.getLogger("miku.plugins.tidal")
@@ -148,12 +148,7 @@ class Tidal(Plugin):
         """Lee título/artista del media actual vía SMTC (PowerShell/WinRT)."""
         # PowerShell 5.1 no puede llamar ``GetAwaiter()`` sobre las operaciones
         # async de WinRT (son COM); se usa el patrón AsTask/Wait (igual que ocr.py).
-        ps = (
-            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
-            "Add-Type -AssemblyName System.Runtime.WindowsRuntime > $null; "
-            "$asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | "
-            "Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]; "
-            "function Await($op, $t) { $m = $asTask.MakeGenericMethod($t); $task = $m.Invoke($null, @($op)); $task.Wait(); $task.Result }; "
+        ps = PREAMBULO_WINRT + (
             "$T = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager, Windows.Media.Control, ContentType = WindowsRuntime]; "
             "$mgr = Await ($T::RequestAsync()) ($T); "
             "$ses = $mgr.GetCurrentSession(); "
@@ -163,12 +158,7 @@ class Tidal(Plugin):
             "Write-Output ($props.Title + [char]9 + $props.Artist);"
         )
         try:
-            proc = subprocess.run(
-                ["powershell", "-NoProfile", "-NonInteractive", "-WindowStyle",
-                 "Hidden", "-Command", ps],
-                shell=False, timeout=12, capture_output=True,
-                encoding="utf-8", errors="replace",
-                creationflags=_sin_ventana())
+            proc = correr_powershell(ps, timeout=12)
         except Exception as e:  # noqa: BLE001
             logger.debug("No pude leer SMTC: %s", e)
             return None
@@ -186,10 +176,3 @@ class Tidal(Plugin):
         return {"title": partes[0].strip(),
                 "artist": partes[1].strip() if len(partes) > 1 else ""}
 
-
-def _sin_ventana() -> int:
-    """Flags de creación para no abrir ventana de consola (Windows)."""
-    try:
-        return subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
-    except Exception:  # noqa: BLE001
-        return 0x08000000  # CREATE_NO_WINDOW

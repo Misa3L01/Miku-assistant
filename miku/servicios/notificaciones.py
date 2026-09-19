@@ -18,8 +18,9 @@ aparte para no demorar la respuesta del asistente.
 from __future__ import annotations
 
 import logging
-import subprocess
 import threading
+
+from miku.plataforma.subprocesos import correr_powershell
 
 logger = logging.getLogger("miku.notificaciones")
 
@@ -96,12 +97,7 @@ def _toast_powershell(titulo: str, mensaje: str, duracion_seg: int) -> bool:
         "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Miku Assistant').Show($toast);"
     )
     try:
-        proc = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-WindowStyle",
-             "Hidden", "-Command", ps],
-            shell=False, timeout=10,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            creationflags=_sin_ventana())
+        proc = correr_powershell(ps, timeout=10, capturar=False)
         # Un código != 0 (WinRT no disponible, XML inválido...) NO es un toast
         # mostrado: devolvemos False para que se registre en el log.
         return proc.returncode == 0
@@ -132,10 +128,3 @@ def _escapar_xml(texto: str) -> str:
         salida.append(reemplazos.get(ch, ch))
     return "".join(salida)
 
-
-def _sin_ventana() -> int:
-    """Flags de creación para no abrir ventana de consola (Windows)."""
-    try:
-        return subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
-    except Exception:  # noqa: BLE001
-        return 0x08000000  # CREATE_NO_WINDOW

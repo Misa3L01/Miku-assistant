@@ -24,21 +24,9 @@ from typing import Any, Dict, List, Optional
 
 from miku.ajustes import carga as config_mod
 from miku.plugins.base import Plugin
+from miku.plataforma.texto import normalizar
 
 logger = logging.getLogger("miku.plugins.favoritos")
-
-# Mapa de reemplazo de diacríticos (comparaciones sin acentos).
-_DIACRITICOS = str.maketrans(
-    "áàäâãéèëêíìïîóòöôõúùüûñç",
-    "aaaaaeeeeiiiiooooouuuunc")
-
-
-def _normalizar(texto: Optional[str]) -> str:
-    """Minúsculas + sin acentos, para matching tolerante."""
-    if not texto:
-        return ""
-    return str(texto).lower().translate(_DIACRITICOS).strip()
-
 
 class Favoritos(Plugin):
     """Abre y aprende carpetas favoritas por nombre."""
@@ -174,17 +162,17 @@ class Favoritos(Plugin):
 
         Matching: exacto (normalizado), luego substring en cualquier dirección.
         """
-        objetivo = _normalizar(nombre)
+        objetivo = normalizar(nombre)
         if not objetivo:
             return None
 
         # 1) Exacto normalizado.
         for clave, ruta in self._carpetas.items():
-            if _normalizar(clave) == objetivo:
+            if normalizar(clave) == objetivo:
                 return ruta
         # 2) Substring (tolerante a "carpeta de animes" -> "animes").
         for clave, ruta in self._carpetas.items():
-            ck = _normalizar(clave)
+            ck = normalizar(clave)
             if ck and (ck in objetivo or objetivo in ck):
                 return ruta
         return None

@@ -190,3 +190,86 @@ def test_bandeja_y_subtitulos_conviven():
     time.sleep(0.3)
     assert panel._widget.isVisible() and panel._label.text() == "Otra frase"
     b.detener()
+
+
+# ---------------------------------------------------------------- plataforma: pantalla / subprocesos
+from miku.plataforma import pantalla, subprocesos  # noqa: E402
+
+
+class _User32Falso:
+    """user32 simulado: registra qué se pidió sin tocar la pantalla real."""
+
+    def __init__(self, prueba=0, real=0, tiene_modo=True):
+        self.prueba, self.real, self.tiene_modo = prueba, real, tiene_modo
+        self.llamadas = []
+
+    def EnumDisplaySettingsW(self, dispositivo, modo, ref):
+        return 1 if self.tiene_modo else 0
+
+    def ChangeDisplaySettingsW(self, ref, flags):
+        self.llamadas.append(flags)
+        return self.prueba if flags == pantalla._CDS_TEST else self.real
+
+
+@pytest.mark.parametrize("prueba,real,esperado", [
+    (0, 0, pantalla.OK), (0, 1, pantalla.REINICIO), (-2, 0, pantalla.NO_SOPORTADA),
+    (-1, 0, pantalla.ERROR), (0, -1, pantalla.ERROR),
+])
+def test_cambiar_resolucion_estados(monkeypatch, prueba, real, esperado):
+    falso = _User32Falso(prueba, real)
+    monkeypatch.setattr(pantalla, "_user32", lambda: falso)
+    assert pantalla.cambiar_resolucion(1920, 1440)[0] == esperado
+
+
+def test_cambiar_resolucion_no_aplica_si_el_modo_no_existe(monkeypatch):
+    falso = _User32Falso(prueba=-2)
+    monkeypatch.setattr(pantalla, "_user32", lambda: falso)
+    pantalla.cambiar_resolucion(1234, 567)
+    assert falso.llamadas == [pantalla._CDS_TEST], "solo se probó: nunca se aplicó"
+
+
+def test_solo_probar_no_cambia_la_pantalla(monkeypatch):
+    falso = _User32Falso()
+    monkeypatch.setattr(pantalla, "_user32", lambda: falso)
+    assert pantalla.cambiar_resolucion(1920, 1440, solo_probar=True)[0] == pantalla.OK
+    assert falso.llamadas == [pantalla._CDS_TEST]
+
+
+def test_sin_acceso_a_la_pantalla_devuelve_error(monkeypatch):
+    monkeypatch.setattr(pantalla, "_user32", lambda: _User32Falso(tiene_modo=False))
+    assert pantalla.cambiar_resolucion(1920, 1080)[0] == pantalla.ERROR
+    assert pantalla.resolucion_actual() is None
+
+
+def test_la_resolucion_real_se_puede_leer():
+    actual = pantalla.resolucion_actual()          # solo lectura
+    assert actual is None or (actual[0] > 0 and actual[1] > 0)
+
+
+def test_macro_de_resolucion_usa_la_capa_de_plataforma(monkeypatch):
+    from miku.plugins.productividad import macros
+    monkeypatch.setattr(pantalla, "cambiar_resolucion", lambda a, b: (pantalla.NO_SOPORTADA, -2))
+    assert "no soporta" in macros.cambiar_resolucion(1, 1)
+
+
+def test_restaurar_resolucion_de_los_snapshots(monkeypatch):
+    from miku.servicios import modos
+    monkeypatch.setattr(pantalla, "cambiar_resolucion", lambda a, b: (pantalla.REINICIO, 1))
+    assert modos._restaurar_resolucion("1920", 1080) is True
+    monkeypatch.setattr(pantalla, "cambiar_resolucion", lambda a, b: (pantalla.ERROR, -1))
+    assert modos._restaurar_resolucion(1920, 1080) is False
+    assert modos._restaurar_resolucion("x", 1080) is False
+
+
+def test_powershell_utf8_y_sin_ventana(monkeypatch):
+    capturado = {}
+
+    def falso(cmd, **kw):
+        capturado.update(cmd=cmd, **kw)
+        return "ok"
+
+    monkeypatch.setattr(subprocess, "run", falso)
+    subprocesos.correr_powershell("Write-Output 'hola'", timeout=5)
+    assert capturado["cmd"][-1].startswith("[Console]::OutputEncoding")
+    assert capturado["encoding"] == "utf-8" and capturado["creationflags"] == subprocesos.sin_ventana()
+    assert capturado["shell"] is False

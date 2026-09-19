@@ -16,9 +16,10 @@ falta: si se cierra el asistente, un modo activo tampoco sobrevive.
 """
 from __future__ import annotations
 
-import ctypes
 import logging
 from typing import Any, Dict, Optional
+
+from miku.plataforma import pantalla
 
 logger = logging.getLogger("miku.modos")
 
@@ -164,86 +165,20 @@ def _restaurar_volumen(datos: Dict[str, Any]) -> bool:
 
 
 # --------------------------------------------------------------------------- #
-# Resolución (ctypes DEVMODE, mismo enfoque que miku/plugins/productividad/macros.py)
+# Resolución (miku.plataforma.pantalla)
 # --------------------------------------------------------------------------- #
-_ENUM_CURRENT_SETTINGS = -1
-_DM_PELSWIDTH = 0x00080000
-_DM_PELSHEIGHT = 0x00100000
-_CDS_UPDATEREGISTRY = 0x00000001
-_DISP_CHANGE_SUCCESSFUL = 0
-
-
-class _DEVMODE(ctypes.Structure):  # noqa: N801 - nombre estilo Win32
-    _fields_ = [
-        ("dmDeviceName", ctypes.c_wchar * 32),
-        ("dmSpecVersion", ctypes.c_ushort),
-        ("dmDriverVersion", ctypes.c_ushort),
-        ("dmSize", ctypes.c_ushort),
-        ("dmDriverExtra", ctypes.c_ushort),
-        ("dmFields", ctypes.c_ulong),
-        ("dmPositionX", ctypes.c_long),
-        ("dmPositionY", ctypes.c_long),
-        ("dmDisplayOrientation", ctypes.c_ulong),
-        ("dmDisplayFixedOutput", ctypes.c_ulong),
-        ("dmColor", ctypes.c_short),
-        ("dmDuplex", ctypes.c_short),
-        ("dmYResolution", ctypes.c_short),
-        ("dmTTOption", ctypes.c_short),
-        ("dmCollate", ctypes.c_short),
-        ("dmFormName", ctypes.c_wchar * 32),
-        ("dmLogPixels", ctypes.c_ushort),
-        ("dmBitsPerPel", ctypes.c_ulong),
-        ("dmPelsWidth", ctypes.c_ulong),
-        ("dmPelsHeight", ctypes.c_ulong),
-        ("dmDisplayFlags", ctypes.c_ulong),
-        ("dmDisplayFrequency", ctypes.c_ulong),
-        ("dmICMMethod", ctypes.c_ulong),
-        ("dmICMIntent", ctypes.c_ulong),
-        ("dmMediaType", ctypes.c_ulong),
-        ("dmDitherType", ctypes.c_ulong),
-        ("dmReserved1", ctypes.c_ulong),
-        ("dmReserved2", ctypes.c_ulong),
-        ("dmPanningWidth", ctypes.c_ulong),
-        ("dmPanningHeight", ctypes.c_ulong),
-    ]
-
-
 def _capturar_resolucion() -> Optional[Dict[str, int]]:
-    try:
-        user32 = ctypes.windll.user32
-        dm = _DEVMODE()
-        dm.dmSize = ctypes.sizeof(_DEVMODE)
-        if not user32.EnumDisplaySettingsW(None, _ENUM_CURRENT_SETTINGS,
-                                           ctypes.byref(dm)):
-            return None
-        return {"ancho": int(dm.dmPelsWidth), "alto": int(dm.dmPelsHeight)}
-    except Exception as e:  # noqa: BLE001
-        logger.debug("No pude capturar la resolución: %s", e)
-        return None
+    actual = pantalla.resolucion_actual()
+    return {"ancho": actual[0], "alto": actual[1]} if actual else None
 
 
 def _restaurar_resolucion(ancho: Any, alto: Any) -> bool:
     try:
-        ancho = int(ancho)
-        alto = int(alto)
+        ancho, alto = int(ancho), int(alto)
     except (TypeError, ValueError):
         return False
-    try:
-        user32 = ctypes.windll.user32
-        dm = _DEVMODE()
-        dm.dmSize = ctypes.sizeof(_DEVMODE)
-        if not user32.EnumDisplaySettingsW(None, _ENUM_CURRENT_SETTINGS,
-                                           ctypes.byref(dm)):
-            return False
-        dm.dmPelsWidth = ancho
-        dm.dmPelsHeight = alto
-        dm.dmFields = _DM_PELSWIDTH | _DM_PELSHEIGHT
-        res = user32.ChangeDisplaySettingsW(ctypes.byref(dm),
-                                            _CDS_UPDATEREGISTRY)
-        return res == _DISP_CHANGE_SUCCESSFUL or res > 0
-    except Exception as e:  # noqa: BLE001
-        logger.debug("No pude restaurar la resolución: %s", e)
-        return False
+    estado, _ = pantalla.cambiar_resolucion(ancho, alto)
+    return estado in (pantalla.OK, pantalla.REINICIO)
 
 
 # --------------------------------------------------------------------------- #
