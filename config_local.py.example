@@ -277,7 +277,8 @@ DISCORD_BOT_TOKEN = ""
 # Tareas, control remoto y avisos automáticos
 # ======================================================================================
 
-# Avisos automáticos de batería baja y disco casi lleno.
+# Avisos automáticos de Miku (clima, estado de la PC, batería, disco). Es el interruptor
+# general.
 # (usado por: asistente_proactivo)
 # PROACTIVO_ACTIVO = True
 
@@ -296,6 +297,57 @@ DISCORD_BOT_TOKEN = ""
 # Minutos mínimos entre dos avisos iguales.
 # (usado por: asistente_proactivo)
 # PROACTIVO_COOLDOWN_MIN = 30
+
+# Máximo de avisos por hora (para que no moleste). 0 = sin límite.
+# (usado por: asistente_proactivo)
+# PROACTIVO_MAX_POR_HORA = 4
+
+# Desde qué hora no avisa nada (HH:MM). Vacío junto con la de abajo = sin horario de
+# silencio.
+# (usado por: asistente_proactivo)
+# PROACTIVO_SILENCIO_DESDE = "23:00"
+
+# Hasta qué hora no avisa nada (HH:MM).
+# (usado por: asistente_proactivo)
+# PROACTIVO_SILENCIO_HASTA = "08:00"
+
+# Mientras jugás solo avisa lo urgente (temperatura de la GPU) y el estado al empezar.
+# (usado por: asistente_proactivo)
+# PROACTIVO_NO_MOLESTAR_EN_JUEGO = True
+
+# Avisar del clima cuando importa (lluvia, frío o calor fuertes). Necesita CIUDAD_CLIMA
+# o CLIMA_LAT/CLIMA_LON. Avisa como mucho una vez por día por cada condición.
+# (usado por: asistente_proactivo)
+# PROACTIVO_CLIMA = True
+
+# Cada cuántos minutos consulta el pronóstico para los avisos.
+# (usado por: asistente_proactivo)
+# PROACTIVO_CLIMA_INTERVALO_MIN = 120
+
+# Avisar de lluvia cuando la probabilidad en las próximas horas sea de este % o más.
+# (usado por: asistente_proactivo)
+# PROACTIVO_LLUVIA_PROB = 60
+
+# Avisar de frío cuando la sensación térmica sea de estos grados o menos.
+# (usado por: asistente_proactivo)
+# PROACTIVO_FRIO_C = 12
+
+# Avisar de calor cuando la sensación térmica sea de estos grados o más.
+# (usado por: asistente_proactivo)
+# PROACTIVO_CALOR_C = 32
+
+# Contar cómo está la PC (CPU, RAM, GPU) un rato después de que empieza un juego de
+# JUEGOS_BOOSTER.
+# (usado por: asistente_proactivo)
+# PROACTIVO_ESTADO_JUEGO = True
+
+# Avisar cuando CPU o RAM se mantengan por encima de este % durante unos minutos.
+# (usado por: asistente_proactivo)
+# PROACTIVO_CARGA_PCT = 92
+
+# Avisar (aunque estés jugando) cuando la GPU NVIDIA pase de estos grados.
+# (usado por: asistente_proactivo)
+# PROACTIVO_GPU_TEMP_C = 85
 
 
 # ======================================================================================

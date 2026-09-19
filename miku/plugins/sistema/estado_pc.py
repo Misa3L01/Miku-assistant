@@ -13,8 +13,9 @@ exponen de forma fiable).
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
+from miku.plataforma import hardware
 from miku.plugins.base import Plugin
 
 logger = logging.getLogger("miku.plugins.system_status")
@@ -96,7 +97,7 @@ class SystemStatus(Plugin):
 
         # --- Disco principal (donde está Windows) ---
         try:
-            disco = self._disco_principal(psutil)
+            disco = hardware.disco_principal(psutil)
             if disco is not None:
                 libre_gb = disco.free / (1024 ** 3)
                 partes.append(f"te quedan {libre_gb:.0f} GB libres en disco")
@@ -116,33 +117,3 @@ class SystemStatus(Plugin):
             return "No pude leer el estado del sistema ahora mismo."
 
         return "Ahora mismo, " + ", ".join(partes) + "."
-
-    @staticmethod
-    def _disco_principal(psutil_mod: Any) -> Optional[Any]:
-        """Devuelve el uso del disco principal (el de la unidad del sistema).
-
-        Se prefiere la partición donde está instalado el sistema (C: en
-        Windows); si no se detecta, usa la primera partición disponible.
-        """
-        objetivo = "C:"
-        try:
-            import os
-            objetivo = os.environ.get("SystemDrive", "C:")
-        except Exception:  # noqa: BLE001
-            pass
-
-        particiones = psutil_mod.disk_partitions(all=False)
-        for p in particiones:
-            montaje = (p.mountpoint or "").upper()
-            if montaje.startswith(objetivo.upper()):
-                try:
-                    return psutil_mod.disk_usage(p.mountpoint)
-                except Exception:  # noqa: BLE001
-                    continue
-        # Fallback: primera partición que responda.
-        for p in particiones:
-            try:
-                return psutil_mod.disk_usage(p.mountpoint)
-            except Exception:  # noqa: BLE001
-                continue
-        return None

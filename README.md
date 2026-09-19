@@ -155,7 +155,7 @@ sacale el `#`. Las opciones principales:
 | `GEMINI_API_KEY`, `GEMINI_MODELO` | Visión de pantalla | `vision` |
 | `TODOIST_API_TOKEN` | Tareas | `todoist` |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Control remoto (el ID es **tu id de usuario**) | `telegram_control` |
-| `PROACTIVO_*` | Avisos de batería/disco | `asistente_proactivo` |
+| `PROACTIVO_*` | Avisos proactivos: clima, estado de la PC, batería, disco, horario de silencio | `asistente_proactivo` |
 | `DISCORD_BOT_TOKEN`, `DISCORD_GUILD_ID` | Bot de Discord | `discord_control` |
 
 Macros y alias: `data/macros_config.json` (lo lee el plugin `macros`).
@@ -178,7 +178,7 @@ miku-assistant/
 ├── extern/VOICEVOX/              # (gitignored) motor de voz local
 ├── docs/                         # Bitácoras, plan de reestructuración, empaquetado, interpolación
 └── miku/
-    ├── plataforma/               # Helpers de Windows compartidos: texto · subprocesos · pantalla · audio · everything
+    ├── plataforma/               # Helpers de Windows compartidos: texto · subprocesos · pantalla · audio · everything · openmeteo · hardware · procesos
     ├── app.py                    # Ensambla todo: Asistente, modos (voz/texto) en caliente, F22, cierre ordenado
     ├── ajustes/                  # Configuración
     │   ├── esquema.py            #   Esquema ÚNICO de opciones (tipo, default, descripción)
@@ -193,9 +193,9 @@ miku-assistant/
     ├── voz/
     │   ├── entrada/escucha.py    #   STT: wake word "Miku" + invocación por F22, Whisper (Groq)
     │   ├── salida/               #   tts.py (VOICEVOX + fallback pyttsx3) · traduccion.py (Groq, compartida)
-    │   └── frases/tono.py        #   Variantes de tono anti-repetición
+    │   └── frases/               #   tono.py (variantes de tono) · banco.py (frases con variantes que rotan) · catalogo_proactivo.py
     ├── ui/                       #   qt_hilo.py (UN hilo de Qt) · bandeja.py · subtitulos.py · selector_modo.py · consola.py (modo texto)
-    ├── servicios/                #   instancia.py (una sola Miku) · arranque.py (inicio con Windows, atajo F22) · eventos · scheduler · notificaciones · modos · briefing · personalidad
+    ├── servicios/                #   instancia.py (una sola Miku) · arranque.py (inicio con Windows, atajo F22) · eventos · scheduler · notificaciones · modos · briefing · personalidad · proactivo (motor de avisos) · reglas_proactivas
     └── plugins/
         ├── base.py               #   Clase base Plugin (contrato documentado en el módulo)
         ├── registro.py           #   Catálogo de plugins con carga perezosa y aislada
@@ -264,8 +264,22 @@ Se cargan de forma perezosa desde `miku/plugins/registro.py`; uno roto o sin dep
 | `traductor_juegos` | `traducir_mensaje_juego` (traduce y copia al portapapeles) | `IDIOMA_JUEGO`, `MENSAJES_JUEGO` |
 | `discord_control` | `silenciar_usuario_discord` ⚠️, `volumen_usuario_discord` ⚠️, `expulsar_usuario_discord` ⚠️ | `DISCORD_BOT_TOKEN`, intent *Server Members* |
 | `game_booster` | *(automático)* baja el volumen de apps al detectar un juego y lo restaura al salir | `JUEGOS_BOOSTER` |
-| `asistente_proactivo` | *(automático)* avisa batería baja / disco casi lleno | psutil |
+| `asistente_proactivo` | *(automático)* avisos proactivos (ver abajo) | psutil, `CIUDAD_CLIMA` para el clima |
 | `telegram_control` | *(automático)* comandos remotos: texto libre, `/estado`, `/pendientes` | `python-telegram-bot`, token + tu user ID |
+
+### Avisos proactivos
+
+Un motor (`miku/servicios/proactivo.py`) revisa en segundo plano y Miku avisa **sin que se lo pidas**, con toast y voz. Cada aviso tiene varias frases que rotan (no repite la anterior) y pasa por una política para no molestar:
+
+| Aviso | Cuándo |
+|---|---|
+| **Clima** | Va a llover en las próximas 6 h (≥60 %), está lloviendo, sensación térmica ≤12 °C (frío) o ≥32 °C (calor). **Como mucho una vez por día por condición**, y se recuerda aunque reinicies Miku. Necesita `CIUDAD_CLIMA` (o `CLIMA_LAT`/`CLIMA_LON`). |
+| **Estado al jugar** | ~45 s después de que arranca un juego de `JUEGOS_BOOSTER`: "todo tranquilo, CPU al 35 %, RAM…, GPU al 70 % a 65 grados", o una advertencia si va exigida. |
+| **Carga sostenida** | CPU o RAM ≥92 % durante ~5 minutos (no por picos). |
+| **GPU caliente** | GPU NVIDIA por encima de 85 °C (avisa incluso jugando; usa `nvidia-smi`). |
+| **Batería / disco** | Batería baja sin cargador; poco espacio libre en el disco del sistema. |
+
+Política: **horario de silencio** (23:00–08:00 por defecto), **no molestar mientras jugás** (salvo estado al empezar y GPU caliente), cooldown por aviso y **máximo 4 por hora**. Todo se ajusta con las opciones `PROACTIVO_*` (`python -m miku.ajustes estado` las lista) y se apaga con `PROACTIVO_ACTIVO = False`.
 
 Detalles que conviene saber:
 

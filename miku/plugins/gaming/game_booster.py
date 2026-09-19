@@ -25,6 +25,7 @@ import threading
 from typing import Any, List, Optional
 
 from miku.ajustes import carga as config_mod
+from miku.plataforma import procesos
 from miku.plugins.base import Plugin
 
 logger = logging.getLogger("miku.plugins.game_booster")
@@ -254,26 +255,7 @@ class GameBooster(Plugin):
     # ---------------- Utilidades ---------------- #
     def _proceso_primer_plano(self) -> Optional[str]:
         """Nombre del proceso (sin .exe) de la ventana en primer plano."""
-        try:
-            import win32gui  # type: ignore
-            import win32process  # type: ignore
-            import psutil  # type: ignore
-        except Exception as e:  # noqa: BLE001
-            logger.debug("GameBooster: falta win32/psutil: %s", e)
-            return None
-        try:
-            hwnd = win32gui.GetForegroundWindow()
-            if not hwnd:
-                return None
-            _, pid = win32process.GetWindowThreadProcessId(hwnd)
-            if not pid:
-                return None
-            proc = psutil.Process(pid)
-            nombre = (proc.name() or "").lower()
-            return nombre[:-4] if nombre.endswith(".exe") else nombre
-        except Exception as e:  # noqa: BLE001
-            logger.debug("GameBooster: no pude obtener el proceso: %s", e)
-            return None
+        return procesos.proceso_primer_plano()
 
     def _avisar(self, titulo: str, mensaje: str) -> None:
         """Muestra un toast y, si hay voz, dice una frase corta."""
