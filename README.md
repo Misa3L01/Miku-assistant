@@ -333,6 +333,7 @@ Detalles que conviene saber:
 Reglas del contrato (detalle en el docstring de `miku/plugins/base.py`):
 
 - `manejar_tool` devuelve un **texto** (lo que Miku dice), `None` si la tool no es suya, o un dict `{"desambiguar": True, "tool_origen": ..., "args_origen": ..., "opciones": [{"indice", "etiqueta", "valor"}]}` para preguntarle al usuario cuál elegir.
+- **Respuestas naturales:** en vez de texto fijo, devolvé `falla("ventana.no_encontrada", app=nombre)` / `exito("audio.volumen", pct=30)` (`miku/voz/frases/respuesta.py`). La frase sale de un **banco con varias variantes** (`catalogo_respuestas.py`) que rota sin repetir la anterior. Es un `str` normal, pero además lleva `ok` / `intencion` / `datos`: **nunca hagas `res.startswith("No encontré")`**, usá `hubo_falla(res)`. Devolver un `str` común sigue siendo válido. Regla de honestidad: "no lo encuentro" ≠ "no está instalado" (un test lo vigila).
 - `contexto` trae `cfg`, `voice` (puede ser `None`) y `scheduler`. Los plugins que avisan por su cuenta usan `event_bus.voice`.
 - Imports pesados **dentro** de funciones. Leé la config con `config.config` (no recargues: `config.cargar()` es idempotente) y guardá preferencias con `config.config.guardar_preferencias({...})` (escritura atómica).
 - Los nombres de tool deben ser únicos; si se repiten, el parser ignora la segunda y lo avisa.

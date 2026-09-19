@@ -15,6 +15,8 @@ import logging
 from datetime import datetime
 from typing import Any, List, Optional
 
+from miku.voz.frases.respuesta import hubo_falla
+
 logger = logging.getLogger("miku.briefing")
 
 
@@ -77,9 +79,7 @@ def _clima_resumen() -> str:
         logger.debug("Briefing sin clima: %s", e)
         return ""
 
-    if not texto or texto.startswith(("No sé de qué ciudad",
-                                      "No pude consultar",
-                                      "No pude obtener")):
+    if not texto or hubo_falla(texto):
         return ""
     # Comprimimos a una frase corta: tomamos hasta el primer punto.
     corto = texto.split(".")[0].strip()

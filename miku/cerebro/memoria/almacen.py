@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from miku.ajustes.carga import BASE_DIR
+from miku.voz.frases.respuesta import falla
 
 logger = logging.getLogger("miku.memoria")
 
@@ -329,8 +330,7 @@ class Memoria:
                     params).fetchall()
 
                 if not coincidencias:
-                    return (f"No encontré ningún recuerdo sobre "
-                            f"'{texto_aproximado}'.")
+                    return falla("memoria.sin_recuerdos", consulta=texto_aproximado)
                 if len(coincidencias) > 1:
                     listado = ", ".join(t for _, t in coincidencias[:5])
                     return (f"Tengo varios recuerdos que coinciden: {listado}. "

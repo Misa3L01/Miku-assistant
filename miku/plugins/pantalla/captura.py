@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional
 
 from miku.ajustes import carga as config_mod
 from miku.plugins.base import Plugin
+from miku.voz.frases.respuesta import falla
 
 logger = logging.getLogger("miku.plugins.captura")
 
@@ -120,7 +121,7 @@ class Captura(Plugin):
             except Exception as e:  # noqa: BLE001
                 logger.debug("No pude calcular la bbox del monitor: %s", e)
             if bbox is None and monitor is not None:
-                return f"No encontré el monitor {monitor}."
+                return falla("captura.monitor_invalido", monitor=monitor)
 
         try:
             # ``all_screens=True`` también con bbox: sin eso Pillow (Windows)

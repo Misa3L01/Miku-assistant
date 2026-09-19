@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 from miku.plataforma.texto import normalizar
 from miku.plugins.base import Plugin
 from miku.plugins.utiles import a_entero
+from miku.voz.frases.respuesta import exito, falla, hubo_falla
 
 logger = logging.getLogger("miku.plugins.ventanas")
 
@@ -251,22 +252,22 @@ class Ventanas(Plugin):
         """Minimiza la ventana del programa indicado."""
         hwnd = self._hwnd_de(nombre_app)
         if not hwnd:
-            return f"No encontré ninguna ventana de {nombre_app}."
+            return falla("ventana.no_encontrada", app=nombre_app)
         try:
             self._w["gui"].ShowWindow(hwnd, self._w["con"].SW_MINIMIZE)
-            return f"Minimicé {nombre_app}."
+            return exito("ventana.minimizada", app=nombre_app)
         except Exception:  # noqa: BLE001
-            return f"No pude minimizar {nombre_app}."
+            return falla("ventana.error", app=nombre_app, accion="minimizar")
 
     def mover_ventana(self, nombre_app: str, monitor: int = 1) -> str:
         """Mueve la ventana de `nombre_app` al `monitor` indicado."""
         hwnd = self._hwnd_de(nombre_app)
         if not hwnd:
-            return f"No encontré ninguna ventana de {nombre_app}."
+            return falla("ventana.no_encontrada", app=nombre_app)
 
         rect = self._rect_monitor(monitor)
         if rect is None:
-            return "No encontré ese monitor."
+            return falla("ventana.monitor_invalido")
         x1, y1, x2, y2 = rect
 
         # Al mover a otro monitor, la dejamos MAXIMIZADA ocupando todo el
@@ -394,7 +395,7 @@ class Ventanas(Plugin):
         """
         rect = self._rect_monitor(monitor)
         if rect is None:
-            return "No encontré ese monitor."
+            return falla("ventana.monitor_invalido")
         x1, y1, x2, y2 = rect
 
         lay = (layout or "izquierda-derecha").lower().strip()
@@ -420,23 +421,20 @@ class Ventanas(Plugin):
         hwnd_b = self._hwnd_de(ventana_b)
 
         if hwnd_a is None and hwnd_b is None:
-            return (f"No encontré ninguna ventana ni de {ventana_a} "
-                    f"ni de {ventana_b}.")
+            return falla("ventana.ninguna_de_dos", a=ventana_a, b=ventana_b)
 
         # Si falta una, acomodamos la que SÍ está y avisamos cuál faltó.
         if hwnd_a is None:
             self._mover_a_rect(hwnd_b, *rect_b, maximizar=False)
             self._traer_al_frente(hwnd_b)
-            return (f"No encontré ninguna ventana de {ventana_a}, pero "
-                    f"acomodé {ventana_b}.")
+            return falla("ventana.falta_una", falta=ventana_a, puesta=ventana_b)
         if hwnd_b is None:
             self._mover_a_rect(hwnd_a, *rect_a, maximizar=False)
             self._traer_al_frente(hwnd_a)
-            return (f"No encontré ninguna ventana de {ventana_b}, pero "
-                    f"acomodé {ventana_a}.")
+            return falla("ventana.falta_una", falta=ventana_b, puesta=ventana_a)
 
         self._acoplar_par(hwnd_a, rect_a, hwnd_b, rect_b)
-        return (f"Listo, acoplé {ventana_a} y {ventana_b} {orientacion}.")
+        return exito("ventana.acoplada", a=ventana_a, b=ventana_b, orientacion=orientacion)
 
     def _compensar_marco_dwm(self, hwnd: Any, x: int, y: int,
                              ancho: int, alto: int) -> None:
@@ -491,11 +489,11 @@ class Ventanas(Plugin):
         """
         hwnd = self._hwnd_de(nombre_app)
         if not hwnd:
-            return f"No encontré ninguna ventana de {nombre_app}."
+            return falla("ventana.no_encontrada", app=nombre_app)
 
         rect = self._rect_monitor(monitor)
         if rect is None:
-            return "No encontré ese monitor."
+            return falla("ventana.monitor_invalido")
         x1, y1, x2, y2 = rect
 
         pos = (posicion or "").lower().strip()
@@ -521,15 +519,12 @@ class Ventanas(Plugin):
             rx1, ry1, rx2, ry2 = x1, y1, x2, y2
             maximizar = True  # igual que mover_ventana
         else:
-            return ("No entendí la posición. Usá izquierda, derecha, "
-                    "arriba, abajo o completa.")
+            return falla("ventana.posicion_invalida")
 
         if self._mover_a_rect(hwnd, rx1, ry1, rx2, ry2, maximizar=maximizar):
-            if pos in ("completa", "completo", "entera", "entero", "full",
-                       "pantalla completa"):
-                return f"Puse {nombre_app} a pantalla completa."
-            return f"Puse {nombre_app} a la {pos}."
-        return f"No pude posicionar {nombre_app}."
+            lugar = ("a pantalla completa" if maximizar else f"a la {pos}")
+            return exito("ventana.posicionada", app=nombre_app, lugar=lugar)
+        return falla("ventana.error", app=nombre_app, accion="posicionar")
 
     def dividir_pantalla(self, app_izquierda: str, app_derecha: str,
                          monitor: int = 1) -> str:
@@ -553,22 +548,18 @@ class Ventanas(Plugin):
         res_izq = self.posicionar_ventana(app_izquierda, "izquierda", monitor)
         res_der = self.posicionar_ventana(app_derecha, "derecha", monitor)
 
-        izq_ok = not res_izq.startswith("No encontré") and \
-            not res_izq.startswith("No pude")
-        der_ok = not res_der.startswith("No encontré") and \
-            not res_der.startswith("No pude")
+        izq_ok = not hubo_falla(res_izq)
+        der_ok = not hubo_falla(res_der)
 
         if izq_ok and der_ok:
-            return (f"Listo, {app_izquierda} a la izquierda y "
-                    f"{app_derecha} a la derecha.")
-        if izq_ok and not der_ok:
-            return (f"Puse {app_izquierda} a la izquierda, pero no encontré "
-                    f"ninguna ventana de {app_derecha}.")
-        if der_ok and not izq_ok:
-            return (f"Puse {app_derecha} a la derecha, pero no encontré "
-                    f"ninguna ventana de {app_izquierda}.")
-        return (f"No encontré ninguna ventana ni de {app_izquierda} "
-                f"ni de {app_derecha}.")
+            return exito("ventana.organizada", izq=app_izquierda, der=app_derecha)
+        if izq_ok:
+            return falla("ventana.organizada_parcial", puesta=app_izquierda,
+                         lado="a la izquierda", falta=app_derecha)
+        if der_ok:
+            return falla("ventana.organizada_parcial", puesta=app_derecha,
+                         lado="a la derecha", falta=app_izquierda)
+        return falla("ventana.ninguna_de_dos", a=app_izquierda, b=app_derecha)
 
     def organizar_ventanas(self, ventana_izquierda: str,
                            ventana_derecha: str = "",

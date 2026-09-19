@@ -90,7 +90,8 @@ def test_cerrar_programa_permitido_usa_taskkill(sc, monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", lambda cmd, **k: comandos.append(cmd) or R())
     monkeypatch.setattr(time, "sleep", lambda s: None)
-    assert "Cerré" in sc.cerrar_programa("notepad")
+    r = sc.cerrar_programa("notepad")
+    assert r.intencion == "programa.cerrado" and r.ok and "notepad" in r
     assert comandos[0][:2] == ["taskkill", "/IM"]
 
 

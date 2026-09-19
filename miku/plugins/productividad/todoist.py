@@ -25,6 +25,7 @@ import requests
 from miku.ajustes import carga as config_mod
 from miku.plugins.base import Plugin
 from miku.plataforma.texto import normalizar
+from miku.voz.frases.respuesta import falla
 
 logger = logging.getLogger("miku.plugins.todoist")
 
@@ -191,7 +192,7 @@ class Todoist(Plugin):
         coincidencias = [t for t in tareas
                          if objetivo in normalizar(t.get("content", ""))]
         if not coincidencias:
-            return f"No encontré ninguna tarea que diga '{descripcion}'."
+            return falla("todoist.tarea_no_encontrada", descripcion=descripcion)
         if len(coincidencias) > 1:
             lista = ", ".join(t.get("content", "?")
                               for t in coincidencias[:5])

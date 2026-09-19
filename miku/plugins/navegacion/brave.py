@@ -32,6 +32,7 @@ import requests
 
 from miku.ajustes import carga as config_mod
 from miku.plugins.base import Plugin
+from miku.voz.frases.respuesta import falla
 
 logger = logging.getLogger("miku.plugins.browser")
 
@@ -244,7 +245,7 @@ class Browser(Plugin):
 
         pestanas = [p for p in self._pestanas() if p.get("type", "page") == "page"]
         if not pestanas:
-            return "No encontré pestañas para cerrar."
+            return falla("brave.sin_pestanas")
         actual = pestanas[0]
         pid = actual.get("id")
         if not pid:

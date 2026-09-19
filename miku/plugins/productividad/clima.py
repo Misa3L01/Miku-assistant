@@ -22,6 +22,7 @@ from typing import Any, Dict, List
 from miku.ajustes import carga as config_mod
 from miku.plataforma import openmeteo
 from miku.plugins.base import Plugin
+from miku.voz.frases.respuesta import falla
 
 logger = logging.getLogger("miku.plugins.clima")
 
@@ -77,12 +78,11 @@ class Clima(Plugin):
         """Devuelve una frase natural con el clima actual y del día."""
         lat, lon, nombre = openmeteo.resolver_ubicacion(config_mod.config, ciudad)
         if lat is None or lon is None:
-            return ("No sé de qué ciudad me hablás. Configurá CIUDAD_CLIMA en "
-                    "config_local.py o decime una ciudad.")
+            return falla("clima.sin_ciudad")
 
         p = openmeteo.obtener_pronostico(lat, lon, nombre)
         if p is None:
-            return "No pude consultar el clima ahora mismo."
+            return falla("clima.sin_datos")
 
         frase = [f"En {p.nombre} ahora {p.descripcion}"]
         if p.temperatura is not None:

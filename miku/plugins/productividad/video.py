@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from miku.plugins.base import Plugin
+from miku.voz.frases.respuesta import falla
 
 logger = logging.getLogger("miku.plugins.video_interpolador")
 
@@ -175,7 +176,7 @@ class VideoInterpolador(Plugin):
 
         videos = _listar_videos(carpeta)
         if not videos:
-            return f"No encontré videos para interpolar en '{carpeta}'."
+            return falla("video.sin_videos", carpeta=carpeta)
 
         # 2) Elegir el video objetivo.
         nombre = (nombre or "").strip().lower()

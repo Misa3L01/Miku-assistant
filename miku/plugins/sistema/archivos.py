@@ -13,6 +13,7 @@ from miku.plataforma.texto import clave_compacta, normalizar
 from miku.plugins.base import Plugin
 from miku.plataforma.everything import Everything
 from miku.plugins.utiles import RutasOfrecidas, abrir_resultado
+from miku.voz.frases.respuesta import falla
 
 logger = logging.getLogger("miku.plugins.archivos")
 
@@ -180,7 +181,7 @@ class Archivos(Plugin):
         if not rutas:
             etiqueta = f" .{ext}" if ext else ""
             print(f"[buscar_archivo] SIN resultados para '{nombre}'{etiqueta}.")
-            return f"No encontré archivos{etiqueta} para '{nombre}'."
+            return falla("archivos.sin_resultados", etiqueta=etiqueta, nombre=nombre)
 
         # Ordenamos por coincidencia en el NOMBRE del archivo (no en carpetas).
         terminos = [t for t in normalizar(nombre).split() if t]

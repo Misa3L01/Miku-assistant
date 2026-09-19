@@ -8,6 +8,7 @@ import subprocess
 from typing import Any, Dict, List, Optional
 
 from miku.plugins.base import Plugin
+from miku.voz.frases.respuesta import exito, falla
 
 logger = logging.getLogger("miku.plugins.energia")
 
@@ -318,7 +319,7 @@ class Energia(Plugin):
 
         if scheduler.cancelar(tarea_id):
             return "Listo, cancelé la acción programada."
-        return "No encontré esa acción programada."
+        return falla("energia.accion_no_encontrada")
 
     # ---------------- Brillo ---------------- #
     def controlar_brillo(self, accion: str, valor: Optional[int] = None) -> str:
@@ -345,6 +346,6 @@ class Energia(Plugin):
             else:
                 return "No entendí qué querés hacer con el brillo."
             sbc.set_brightness(nuevo)
-            return f"Brillo en {nuevo}%."
+            return exito("energia.brillo", pct=nuevo)
         except Exception:  # noqa: BLE001
             return "No pude cambiar el brillo."

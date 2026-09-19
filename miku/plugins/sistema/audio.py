@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from miku.plataforma import audio as audio_plat
 from miku.plugins.base import Plugin
 from miku.plugins.utiles import a_entero
+from miku.voz.frases.respuesta import exito, falla
 
 logger = logging.getLogger("miku.plugins.audio")
 
@@ -259,7 +260,7 @@ class Audio(Plugin):
                 except Exception:  # noqa: BLE001
                     pass
                 pct = int(round(nuevo * 100))
-                return f"Volumen en {pct}%."
+                return exito("audio.volumen", pct=pct)
             except Exception as e:  # noqa: BLE001
                 logger.error("Error ajustando volumen con pycaw. Usando VK: %s", e)
                 # caemos al fallback por teclas
@@ -294,9 +295,9 @@ class Audio(Plugin):
                         vol.SetMute(0, None)
                 except Exception:  # noqa: BLE001
                     pass
-                return f"Volumen en {nivel}%."
+                return exito("audio.volumen", pct=nivel)
             # nivel == 0: lo dejamos en 0 (silencio por nivel, no mute).
-            return "Volumen en 0%."
+            return exito("audio.volumen", pct=0)
         except Exception as e:  # noqa: BLE001
             logger.error("Error fijando volumen con pycaw: %s", e)
             return "No pude fijar el volumen."
@@ -361,8 +362,7 @@ class Audio(Plugin):
         accion = (accion or "").lower().strip()
         sesiones = self._sesiones_de_app(nombre_app)
         if not sesiones:
-            return (f"No encontré ninguna app sonando que se llame "
-                    f"'{nombre_app}'. ¿Está abierta y reproduciendo audio?")
+            return falla("audio.app_no_suena", app=nombre_app)
 
         app_txt = nombre_app
         afectadas = 0
@@ -444,8 +444,7 @@ class Audio(Plugin):
 
         sesiones = self._sesiones_de_app(nombre_app)
         if not sesiones:
-            return (f"No encontré ninguna app sonando que se llame "
-                    f"'{nombre_app}'. ¿Está abierta y reproduciendo audio?")
+            return falla("audio.app_no_suena", app=nombre_app)
 
         afectadas = 0
         for sesion in sesiones:

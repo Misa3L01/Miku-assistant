@@ -69,7 +69,8 @@ def test_olvidar_pide_precision_si_hay_varios(mem):
 
 def test_olvidar_ignora_stopwords(mem):
     mem.guardar_recuerdo("mis cosas están en el placard")
-    assert "No encontré" in mem.olvidar_recuerdo("mis cosas del auto")
+    r = mem.olvidar_recuerdo("mis cosas del auto")
+    assert r.intencion == "memoria.sin_recuerdos" and not r.ok
 
 
 def test_memoria_es_segura_entre_hilos(mem):

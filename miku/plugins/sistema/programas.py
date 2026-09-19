@@ -18,6 +18,7 @@ from miku.plugins.base import Plugin
 from miku.plataforma.everything import Everything
 from miku.plugins.sistema.biblioteca_juegos import BibliotecaJuegos
 from miku.plugins.utiles import RutasOfrecidas, abrir_resultado
+from miku.voz.frases.respuesta import exito, falla
 
 logger = logging.getLogger("miku.plugins.programas")
 
@@ -195,7 +196,7 @@ class Programas(Plugin):
                 return "No tengo el módulo AppOpener para abrir programas."
             try:
                 app_open(app, match_closest=True)
-                return f"Abriendo {nombre}."
+                return exito("programa.abriendo", nombre=nombre)
             except Exception as e:  # noqa: BLE001
                 logger.error("Error abriendo %s: %s", app, e)
                 return f"No pude abrir {nombre}."
@@ -207,7 +208,7 @@ class Programas(Plugin):
                 os.startfile(f"steam://rungameid/{appid}")  # type: ignore[attr-defined]
                 logger.info("Lanzando juego de Steam '%s' (appid=%s).",
                             nombre, appid)
-                return f"Dale, abriendo {nombre}."
+                return exito("programa.abriendo", nombre=nombre)
             except Exception as e:  # noqa: BLE001
                 logger.error("No pude lanzar el juego de Steam '%s': %s",
                              nombre, e)
@@ -221,7 +222,7 @@ class Programas(Plugin):
                     f"com.epicgames.launcher://apps/{item_epic}?action=launch")
                 logger.info("Lanzando juego de Epic '%s' (id=%s).",
                             nombre, item_epic)
-                return f"Dale, abriendo {nombre}."
+                return exito("programa.abriendo", nombre=nombre)
             except Exception as e:  # noqa: BLE001
                 logger.error("No pude lanzar el juego de Epic '%s': %s",
                              nombre, e)
@@ -237,11 +238,7 @@ class Programas(Plugin):
 
         # 5) Nada: mensaje con pista ACCIONABLE (para que la próxima vez sea
         #    instantánea, sin pasar por la búsqueda).
-        return (f"No encontré '{nombre}' ni como programa instalado, ni en "
-                f"Steam, ni en Epic, ni como ejecutable en el disco. Si lo "
-                f"usás seguido, agregalo a _APPS en miku/plugins/sistema/programas.py "
-                f"(o configurá JUEGOS_EPIC / STEAM_RUTA) y la próxima lo abro "
-                f"al instante.")
+        return falla("programa.no_encontrado", nombre=nombre)
 
     def _buscar_alias(self, nombre: str) -> Optional[str]:
         """Busca ``nombre`` en el mapa de apps por PALABRAS, no por substring.
@@ -431,7 +428,7 @@ class Programas(Plugin):
             subprocess.run(
                 ["taskkill", "/F", "/IM", proceso, "/T"], shell=False,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return f"Cerré {nombre}."
+            return exito("programa.cerrado", nombre=nombre)
         except Exception as e:  # noqa: BLE001
             logger.error("Error cerrando %s: %s", nombre, e)
             return f"No pude cerrar {nombre}."
