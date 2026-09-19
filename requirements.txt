@@ -44,8 +44,33 @@ screen-brightness-control>=0.21.0
 keyboard>=0.13.5
 # Control de volumen y MUTE real (no toggle) en el Sistema: lo usa
 # plugins/system_control.py vía IAudioEndpointVolume de pycaw.
-pycaw>=20181223
+# El código usa ``AudioUtilities.GetSpeakers().EndpointVolume`` (API de pycaw
+# 2024+); con versiones más viejas el volumen quedaba inoperante en silencio.
+pycaw>=20240210
 comtypes>=1.1.12
+
+# ---------- Estado del sistema y capturas ----------
+# Estado del sistema (CPU/RAM/disco/batería) para plugins/system_status.py.
+psutil>=5.9.0
+# Captura de pantalla (plugins/captura.py) vía PIL.ImageGrab.
+Pillow>=10.0.0
+
+# ---------- OCR (opcional) ----------
+# OCR de pantalla (plugins/ocr.py). OPCIONAL: si falta, se usa el OCR nativo
+# de Windows (Windows.Media.Ocr). Requiere además el binario de Tesseract
+# instalado en el sistema (con el paquete de idioma "spa" para español).
+# pytesseract>=0.3.10
+
+# ---------- Memoria semántica (opcional) ----------
+# Embeddings livianos (ONNX, sin torch) para memoria/búsqueda semántica.
+# OPCIONAL: si falta, la memoria usa LIKE y la búsqueda de archivos usa su
+# scoring normal. Suma onnxruntime (~100-200 MB en disco).
+# fastembed>=0.3.0
+
+# ---------- Telegram (opcional) ----------
+# Control remoto por Telegram (plugins/telegram_control.py). OPCIONAL: si
+# falta, el plugin queda inactivo.
+# python-telegram-bot>=21.0
 
 # ---------- Discord (bot de moderación) ----------
 # Corre en su propio hilo/loop async (plugins/discord_control.py). Se importa

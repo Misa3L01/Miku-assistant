@@ -1,343 +1,375 @@
 # Miku Assistant
 
-Asistente de voz personal para Windows (Python 3.10+), pensado para programación,
-gaming (CS:GO, Fortnite, Genshin Impact), uso diario y comunicación en Discord.
-Arquitectura modular: un núcleo (`core/`) + plugins enchufables (`plugins/`).
+Asistente de voz personal para **Windows** (Python 3.10+), pensado para programar,
+jugar (CS, Fortnite, Genshin Impact), el uso diario y Discord. Lo controlás hablando
+("Miku, abrí Brave y poné Discord a la derecha"), escribiendo o desde el celular
+(Telegram). Arquitectura modular: un **núcleo** (`miku/cerebro`, `voz`, `ui`, `servicios`) y
+**plugins** enchufables (`miku/plugins/`) que le publican *tools* al cerebro (un LLM en Groq).
 
-> **Estado actual:** base funcional operativa — control de sistema, voz (VOICEVOX),
-> confirmación de acciones peligrosas, push-to-talk real, búsqueda de archivos y
-> control multimedia/volumen (**general y por app**), **acciones diferidas programadas
-> (scheduler)**, **búsqueda web**, **variantes de tono**, **subtítulos sincronizados por
-> frase**, **memoria persistente (SQLite)**, **macros personalizadas**, **interpolación
-> de video**, **traductor para juegos** y **control de Discord (bot)**. Quedan pendientes
-> los plugins "grandes" heredados del sistema anterior (Game Booster, navegador por CDP)
-> — el framework de plugins (`Plugin` + `tools`) ya está listo para sumarlos.
+- **Voz de entrada:** wake word "Miku" (escucha continua) o push-to-talk, transcripción con Whisper (Groq).
+- **Voz de salida:** VOICEVOX local (traduce ES→JA con Groq) con subtítulos estilo anime; cae a la voz del sistema si VOICEVOX no está.
+- **Cerebro:** Groq con *function calling*, más un *fast-path* local (hora, saludos, calculadora, memoria) que no gasta API.
+- **Seguridad:** las acciones peligrosas (apagar la PC, expulsar a alguien de Discord) piden un "sí" explícito.
+- **Degradación elegante:** casi todo lo pesado o de terceros es opcional; si falta algo, esa función avisa y el resto sigue.
 
 ---
 
-## Estructura de carpetas
+## Contenido
 
-```
-miku-assistant/
-├── main.py                     # Punto de entrada (orquesta todo el asistente)
-├── config.py                   # Carga de configuración (defaults + prefs + config_local + entorno)
-├── config_local.py             # (NO versionado) secretos y rutas privadas de tu PC
-├── config_local.py.example     # Plantilla versionada de config_local.py, sin datos reales
-├── requirements.txt            # Dependencias agrupadas por función
-│
-├── core/                        # Núcleo reutilizable
-│   ├── __init__.py
-│   ├── event_bus.py             # Bus de eventos + registro de plugins
-│   ├── speech_to_text.py        # STT: wake word "Miku" + push-to-talk real, vía Groq/Whisper
-│   ├── text_to_speech.py        # TTS: VOICEVOX (auto-arranque) + traducción ES→JA (Groq) + pygame, fallback pyttsx3
-│   ├── command_parser.py        # "Cerebro": fast path local + LLM (tools) + confirmaciones persistentes
-│   ├── subtitles.py             # Overlay de subtítulos estilo anime (PyQt5)
-│   ├── scheduler.py             # Programador de acciones diferidas (timers) + cancelación
-│   ├── tono.py                  # Variantes de tono para respuestas cortas (anti-repetición)
-│   ├── traduccion.py            # Traducción por API de Groq, COMPARTIDA (TTS ES→JA y traductor de juegos)
-│   └── memoria.py               # Memoria persistente de recuerdos (SQLite, stdlib)
-│
-├── plugins/                     # Capacidades enchufables
-│   ├── __init__.py               # Base Plugin + registro
-│   ├── system_control.py         # Programas, brillo, ventanas, multimedia, volumen (general y por app), energía, búsqueda
-│   ├── web_search.py             # Búsqueda/apertura de sitios web en el navegador
-│   ├── video_interpolador.py     # Dispara el pipeline de interpolación de video (.bat) y avisa al terminar
-│   ├── traductor_juegos.py       # Traduce mensajes de juego predefinidos y los copia al portapapeles
-│   ├── discord_control.py        # Bot de Discord (mute/deafen de VOZ y expulsar) en su propio hilo/loop async
-│   └── macros.py                 # Ejecuta macros/alias definidos en data/macros_config.json
-│
-├── data/                         # Datos persistentes del usuario (gitignored)
-│   ├── preferences.json          # Preferencias (juegos, programas favoritos, notas)
-│   ├── macros_config.json        # Macros/alias configurables (los consume plugins/macros.py)
-│   └── miku_memoria.db           # Base SQLite de la memoria persistente (recuerdos)
-│
-├── bin/                          # Binarios externos
-│   └── es.exe                    # Everything CLI (búsqueda instantánea de archivos)
-│
-├── extern/                       # Motores externos
-│   └── VOICEVOX/vv-engine/       # Motor local de síntesis de voz (run.exe)
-│
-├── docs/
-│   ├── informe_implementacion_base.md   # Bitácora técnica de la implementación
-│   └── informe_sesion_3.md              # Bitácora de la Sesión 3 (scheduler, web, tono, VOICEVOX)
-│
-├── CONTEXTO.md                  # (raíz) Bitácora de decisiones / sesiones de trabajo
-│
-├── .gitignore                    # Ignora config_local.py, data/, __pycache__, etc.
-└── README.md
-```
+1. [Requisitos](#requisitos)
+2. [Instalación](#instalación)
+3. [Cómo correr](#cómo-correr)
+4. [Configuración](#configuración)
+5. [Arquitectura](#arquitectura)
+6. [Plugins disponibles](#plugins-disponibles)
+7. [Crear un plugin nuevo](#crear-un-plugin-nuevo)
+8. [Seguridad y privacidad](#seguridad-y-privacidad)
+9. [Empaquetado (.exe)](#empaquetado-exe)
+10. [Solución de problemas](#solución-de-problemas)
+11. [Límites conocidos y roadmap](#límites-conocidos-y-roadmap)
+
+---
+
+## Requisitos
+
+| Necesario | Para qué |
+|---|---|
+| Windows 10/11 y Python 3.10+ | Todo (usa Win32, COM/pycaw, WinRT) |
+| Clave de [Groq](https://console.groq.com) (`GROQ_API_KEY`) | El cerebro (LLM) y la transcripción de voz (Whisper) |
+| Un micrófono | Modos de voz |
+
+Opcionales (cada uno habilita una función; ver [Plugins](#plugins-disponibles)):
+[VOICEVOX](https://voicevox.hiroshiba.jp) (voz), Everything + `es.exe` (búsqueda de archivos; ya viene en `bin/`),
+Tesseract (OCR), `fastembed` (memoria semántica), `python-telegram-bot`, un bot de Discord,
+clave de Gemini, token de Todoist.
 
 ---
 
 ## Instalación
 
-Requiere **Python 3.10+** sobre **Windows**.
-
-1. Crear y activar un entorno virtual:
+1. **Entorno virtual y dependencias**
    ```bash
    python -m venv venv
    .\venv\Scripts\activate
-   ```
-
-2. Instalar dependencias:
-   ```bash
    pip install -r requirements.txt
    ```
-   Todas las dependencias pesadas/opcionales (PyQt5, pygame, pyttsx3,
-   SpeechRecognition, pyaudio, keyboard, AppOpener, pywin32, screen-brightness-control,
-   pycaw, comtypes, discord.py)
-   se importan de forma **lazy**: si falta alguna, el asistente sigue arrancando y
-   simplemente esa función particular avisa que no está disponible.
+   `requirements.txt` incluye lo necesario para el uso normal. Los paquetes pesados
+   (PyQt5, pygame, pyaudio, pycaw, discord.py...) se importan **recién cuando se usan**:
+   si falta uno, esa función avisa y el asistente sigue arrancando.
+   Los opcionales (`pytesseract`, `fastembed`, `python-telegram-bot`) están comentados
+   en el archivo: descomentalos si los querés.
 
-3. Copiar `config_local.py.example` → `config_local.py` y completar tus datos reales:
-   - `GROQ_API_KEY` / `GROQ_API_KEY_STT` — claves de [console.groq.com](https://console.groq.com) (STT vacío = usa la principal).
-   - `VOICEVOX_URL` / `VOICEVOX_SPEAKER_ID` — si tu VOICEVOX corre en otro puerto o preferís otra voz.
-   - `MICROFONO_INDEX` — si tenés varios micrófonos y querés fijar uno.
-   - `BRAVE_RUTA_EXE`, `BRAVE_PERFIL_DIR`, `TIDAL_RUTA_EXE` — rutas de instalación (para cuando se implementen esos plugins).
-   - `CARPETA_VIDEOS`, `RUTA_BAT_INTERPOLAR` — rutas del pipeline de interpolación de video.
-   - `MEMORIA_ACTIVA` — `False` para desactivar la memoria persistente (default `True`).
-   - `IDIOMA_JUEGO`, `MENSAJES_JUEGO` — idioma destino y diccionario de mensajes del traductor de juegos.
-   - `DISCORD_BOT_TOKEN`, `DISCORD_GUILD_ID`, `DISCORD_CANAL_DEFAULT` — token del bot de Discord y (opcional) servidor/canal por defecto. Sin token, el plugin de Discord queda inactivo (no rompe el arranque).
+2. **Configuración privada:** copiá `config_local.py.example` → `config_local.py` y completá
+   tus datos (claves, rutas). Ese archivo **nunca se versiona** (está en `.gitignore`).
+   Sin `GROQ_API_KEY` el asistente igual arranca: el fast-path local funciona y el resto avisa
+   que falta la clave. Para ver qué tenés configurado y qué falta: `python -m miku.ajustes estado`
+   (ver [Configuración](#configuración)).
 
-   **`config_local.py` nunca se sube al repo** (está en `.gitignore`). `config.py`
-   trae todos los defaults públicos vacíos o genéricos, sin ningún dato real.
+3. **VOICEVOX (opcional):** si dejás el motor en `extern/VOICEVOX/vv-engine/run.exe` (o indicás
+   `VOICEVOX_RUN_EXE`), Miku lo **arranca sola y oculto** la primera vez que necesita hablar,
+   y lo cierra al salir si lo lanzó ella. Sin VOICEVOX habla con la voz del sistema (pyttsx3).
 
-   Si todavía no tenés `GROQ_API_KEY`, el asistente igual arranca: los comandos
-   fast-path (hora, saludo, listar plugins) funcionan sin API, y cualquier otra
-   consulta devuelve un aviso claro en vez de romperse.
-
-4. (Opcional) Asegurate de que `bin/es.exe` (Everything CLI) esté presente para
-   habilitar la búsqueda de archivos por voz/texto — ya viene incluido en este repo.
-
-5. (Opcional) Si querés voz VOICEVOX, el motor puede estar en
-   `extern/VOICEVOX/vv-engine/run.exe`; el asistente lo detecta y lo **arranca
-   automáticamente** la primera vez que necesita hablar, si no está corriendo.
+4. **Búsqueda de archivos:** `bin/es.exe` (Everything CLI) ya está en el repo. Requiere
+   [Everything](https://www.voidtools.com) corriendo en segundo plano.
 
 ---
 
 ## Cómo correr
 
-```bash
-python main.py
+```bat
+run.bat
+```
+o `python main.py`. `run.bat` / `run.ps1` (atajos a `scripts/`) crean el `venv` si falta, reinstalan las dependencias
+cuando `requirements.txt` cambia y arrancan VOICEVOX si no está corriendo
+(`run.bat sinvoicevox` / `.\run.ps1 -SinVoicevox` para saltearlo).
+
+Al arrancar aparece un **icono en la bandeja del sistema** y una **ventanita** para elegir el modo:
+
+| Modo | Cómo se usa |
+|---|---|
+| **Modo Voz** | Escucha continua. Decí **"Miku"** y esperá el "¿Sí? Decime."; o todo junto: **"Miku, qué hora es"** (usa lo que sigue a "Miku" como comando). Mientras Miku habla, el micrófono espera para no oírla. Al iniciar da un *briefing* (hora, clima, recordatorios). |
+| **Modo Texto** | Consola con `Vos:`; **siempre con voz** (sirve para probar el TTS sin micrófono). `salir` cierra. |
+| Push-to-talk | Mantenés **F22** para grabar y soltás para enviar. **Solo está en el menú de consola**, que aparece cuando PyQt5 no está instalado o cerrás la ventanita sin elegir (ver [límites](#límites-conocidos-y-roadmap)). |
+
+- **F22 (global):** abre de nuevo la ventanita y guarda el modo para la próxima vez (no en push-to-talk, donde F22 es la tecla de hablar).
+- **Bandeja:** el menú "Salir" cierra ordenadamente; el tooltip muestra el estado.
+- Para salir también: `Ctrl+C`.
+
+---
+
+## Configuración
+
+`config.py` carga, en este orden de prioridad creciente:
+
+1. **Defaults** (`_defaults()` en `config.py`, sin datos privados).
+2. `data/preferences.json` — preferencias que Miku guarda sola (modo, personalidad, carpetas favoritas).
+3. `config_local.py` — tus secretos y rutas (claves en MAYÚSCULAS, se pasan a minúsculas).
+4. **Variables de entorno** con el mismo nombre (`GROQ_API_KEY=...`), para secretos.
+
+**Asistente de configuración** (`python -m miku.ajustes ...`). Todas las opciones están
+declaradas una sola vez, con su descripción, en `miku/ajustes/esquema.py`, y de ahí salen los
+valores por defecto, el `config_local.py.example` y la validación:
+
+| Comando | Qué hace |
+|---|---|
+| `estado` | Lista cada opción con su valor (las claves y tokens **se ocultan**), de dónde viene, y qué funciones quedan sin configurar |
+| `validar` | Avisa de opciones mal escritas (con sugerencia: "¿quisiste decir `CARPETA_CAPTURAS`?"), obsoletas o con tipo incorrecto |
+| `completar` | Agrega a **tu** `config_local.py` las opciones que no tenés, **comentadas** y con su explicación. No toca ninguno de tus valores y guarda una copia `config_local.py.bak` |
+| `ejemplo` | Regenera `config_local.py.example` |
+
+Al arrancar, Miku ejecuta la misma validación y deja los avisos en el log. En `config_local.py`,
+una línea que empieza con `#` está desactivada (usa el valor por defecto): para cambiar una opción,
+sacale el `#`. Las opciones principales:
+
+| Clave | Para qué | Plugin/módulo |
+|---|---|---|
+| `GROQ_API_KEY`, `GROQ_API_KEY_STT` | LLM y Whisper/traducción TTS (la de STT cae a la principal si está vacía) | parser, STT, TTS |
+| `VOICEVOX_URL`, `VOICEVOX_SPEAKER_ID`, `VOICEVOX_RUN_EXE` | Motor de voz y voz elegida | TTS |
+| `MICROFONO_INDEX` | Micrófono fijo (`None` = el del sistema) | STT |
+| `MODO_ENTRADA`, `LOG_LEVEL` | Modo por defecto de la consola; nivel de log | `main` |
+| `MEMORIA_ACTIVA`, `EMBEDDINGS_ACTIVOS`, `EMBEDDINGS_UMBRAL` | Memoria persistente y búsqueda semántica | memoria |
+| `APP_WHITELIST` | Apps que se pueden cerrar por voz (`explorer` **nunca** se cierra) | `system_control` |
+| `STEAM_RUTA`, `JUEGOS_EPIC` | Abrir juegos | `system_control` |
+| `CARPETA_VIDEOS`, `RUTA_BAT_INTERPOLAR` | Interpolación de video | `video_interpolador` |
+| `IDIOMA_JUEGO`, `MENSAJES_JUEGO` | Traductor de mensajes de juego | `traductor_juegos` |
+| `CARPETAS_FAVORITAS`, `CARPETA_CAPTURAS` | Carpetas rápidas y destino de capturas | `favoritos`, `captura` |
+| `CIUDAD_CLIMA` (o `CLIMA_LAT`/`CLIMA_LON`) | Clima y briefing | `clima` |
+| `PERSONALIDAD` | Estilo por defecto | `personalidad` |
+| `JUEGOS_BOOSTER`, `BOOSTER_*` | Modo gaming automático | `game_booster` |
+| `BRAVE_RUTA_EXE`, `BRAVE_DEBUG_PORT`, `TIDAL_RUTA_EXE` | Brave por CDP y TIDAL | `browser`, `tidal` |
+| `TESSERACT_RUTA`, `OCR_IDIOMA` | OCR | `ocr` |
+| `GEMINI_API_KEY`, `GEMINI_MODELO` | Visión de pantalla | `vision` |
+| `TODOIST_API_TOKEN` | Tareas | `todoist` |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Control remoto (el ID es **tu id de usuario**) | `telegram_control` |
+| `PROACTIVO_*` | Avisos de batería/disco | `asistente_proactivo` |
+| `DISCORD_BOT_TOKEN`, `DISCORD_GUILD_ID` | Bot de Discord | `discord_control` |
+
+Macros y alias: `data/macros_config.json` (lo lee el plugin `macros`).
+
+---
+
+## Arquitectura
+
+```
+miku-assistant/
+├── main.py                       # Punto de entrada (3 líneas): arranca miku.app
+├── config_local.py               # (no versionado) tus secretos y rutas
+├── config_local.py.example       # GENERADO desde el esquema (python -m miku.ajustes ejemplo)
+├── requirements.txt / requirements-dev.txt
+├── run.bat / run.ps1             # Atajos a scripts/ (para no romper accesos directos)
+├── scripts/                      # run.bat, run.ps1 (lanzadores) y miku.spec (PyInstaller)
+├── tests/                        # pytest (no tocan tus datos ni tus claves)
+├── data/                         # (gitignored) preferences.json, macros_config.json, miku_memoria.db, capturas/
+├── bin/es.exe                    # Everything CLI
+├── extern/VOICEVOX/              # (gitignored) motor de voz local
+├── docs/                         # Bitácoras, plan de reestructuración, empaquetado, interpolación
+└── miku/
+    ├── app.py                    # Ensambla todo: Asistente, modos (voz/push/texto), cierre ordenado
+    ├── ajustes/                  # Configuración
+    │   ├── esquema.py            #   Esquema ÚNICO de opciones (tipo, default, descripción)
+    │   ├── carga.py              #   Capas defaults → preferences → config_local → entorno + guardado atómico
+    │   ├── validacion.py         #   Typos con sugerencia, tipos, plugins sin configurar
+    │   ├── ejemplo.py            #   Genera el .example y completa tu config_local.py
+    │   └── __main__.py           #   python -m miku.ajustes estado|validar|completar|ejemplo
+    ├── cerebro/
+    │   ├── parser.py             #   Fast-path local, LLM (Groq) + tools, confirmaciones, desambiguación
+    │   ├── calculadora.py        #   Calculadora local (sin LLM ni eval)
+    │   └── memoria/              #   almacen.py (SQLite) · embeddings.py (fastembed, opcional)
+    ├── voz/
+    │   ├── entrada/escucha.py    #   STT: wake word "Miku" + push-to-talk, Whisper (Groq)
+    │   ├── salida/               #   tts.py (VOICEVOX + fallback pyttsx3) · traduccion.py (Groq, compartida)
+    │   └── frases/tono.py        #   Variantes de tono anti-repetición
+    ├── ui/                       #   qt_hilo.py (UN hilo de Qt) · bandeja.py · subtitulos.py · selector_modo.py
+    ├── servicios/                #   eventos.py · scheduler.py · notificaciones.py · modos.py · briefing.py · personalidad.py
+    └── plugins/
+        ├── base.py               #   Clase base Plugin (contrato documentado en el módulo)
+        ├── registro.py           #   Catálogo de plugins con carga perezosa y aislada
+        ├── sistema/              #   system_control · estado_pc
+        ├── navegacion/           #   web (búsqueda) · brave (pestañas por CDP)
+        ├── multimedia/           #   tidal
+        ├── pantalla/             #   captura · ocr · vision
+        ├── productividad/        #   todoist · clima · favoritos · macros · video (interpolación)
+        ├── gaming/               #   game_booster · traductor
+        ├── social/               #   discord_bot · telegram_bot
+        └── asistente/            #   personalidad · modos · proactivo
 ```
 
-Al arrancar pregunta el **modo de entrada** (Enter usa el default de `config.py`):
+### Flujo de un comando
 
-1. **Hablando** — escucha continua con wake word. Podés decir **"Miku"** y
-   esperar a que responda "¿Sí? Decime." y recién ahí dar el comando (flujo en
-   dos pasos), **o** decir **"Miku, qué hora es"** todo junto en una sola frase
-   (en ese caso Miku usa directo el contenido posterior a "Miku" y salta la
-   segunda escucha).
-2. **Push-to-talk** — mantenés apretada la tecla F22: graba mientras la tenés
-   presionada y corta al soltarla (implementación real, no depende solo del
-   timeout de silencio).
-3. **Escribiendo** — modo texto por consola. Preguntá si querés que además
-   hable (para probar el pipeline de TTS) o que sea 100% silencioso.
+1. **Entrada:** el STT (wake word o F22), la consola o Telegram producen un texto y llaman a `Asistente.responder()`.
+2. **`CommandParser.procesar()`** (serializado con un lock: lo llaman hilos distintos) decide, en orden:
+   1. ¿Hay una **confirmación** pendiente? → se resuelve (ver abajo).
+   2. ¿Hay una **desambiguación** pendiente ("¿cuál de estos 3?")? → se resuelve con "el segundo", "2" o parte del nombre.
+   3. **Fast-path local** (sin API): calculadora, hora, saludos, "plugins", "acordate que…".
+   4. **LLM (Groq)** con las *tools* que publican los plugins. Se ejecutan **todas** las `tool_calls` del turno, en orden. Una tool inventada por el LLM no se ejecuta ni responde "Listo".
+3. **Salida:** el texto pasa por `tono` (variantes) y `personalidad` (coletilla) y se habla (VOICEVOX + subtítulo por frase) o se imprime.
 
-Para salir: `Ctrl+C` (o escribí "salir" en modo texto).
+### Confirmaciones
 
----
+Cada plugin declara en `peligrosas` qué tools exigen confirmación (`system_control`: `control_energia` y `programar_accion`; `discord_control`: las tres). El parser guarda `{tool, args}`, pregunta y espera:
 
-## Cómo funciona (flujo de un comando)
+- **Confirma** solo con palabras completas ("sí", "dale", "ok", "confirmo"…). "No, dejalo así" **no** confirma.
+- **Cancelar tiene prioridad** ("no, dale" cancela).
+- **Vence a los 60 s**: un "sí" perdido más tarde no dispara nada.
 
-1. **`main.py`** prepara logging, carga la config y ensambla el `Asistente`.
-2. Crea el `EventBus` y registra los plugins activos (`SystemControl`, `WebSearch`,
-   `Macros`, `VideoInterpolador`, `TraductorJuegos`, `DiscordControl`).
-3. El `CommandParser` recibe el texto y:
-   - atiende **fast path local** (hora, saludos, "acordate que...") sin gastar API;
-   - deja responder a un **plugin** si conoce el comando directamente;
-   - si hay una **confirmación pendiente** (p. ej. apagar la PC, o programar un
-     apagado diferido), la resuelve antes de seguir — este estado vive en el
-     propio parser y persiste entre turnos, no se resetea en cada mensaje. La
-     confirmación es **genérica**: sirve para cualquier tool peligrosa
-     (`control_energia`, `programar_accion`, y futuras);
-   - si nada de lo anterior aplica, consulta al **LLM** (Groq, vía `BrainGroq`)
-     con las `tools` que publicaron los plugins. Si el LLM llama una tool
-     **peligrosa** (`control_energia`, `programar_accion`, o las de **Discord**
-     que afectan a otro usuario), se pide confirmación explícita antes de
-     ejecutarla.
-4. La respuesta se habla (VOICEVOX + subtítulos) o se imprime, según el modo.
-   Antes de hablar/imprimir, una respuesta **corta** puede pasar por
-   `core/tono.variar()` para no sonar repetitiva (ver más abajo).
+### Pipeline de voz e hilos
+
+- **Escucha** (hilo `escucha_voz`): captura frases cortas, descarta ruidos <0,4 s, transcribe con Whisper y busca "Miku" como **palabra completa**. Antes de escuchar espera a que Miku termine de hablar.
+- **Habla** (hilo `tts_player`): cola de textos; cada frase se traduce/sintetiza (con *prefetch* de la siguiente) y se subtitula en sincronía. `decir()` es seguro desde cualquier hilo.
+- **Qt** (hilo `miku_qt`): un único event loop para bandeja, subtítulos y ventanita.
+- **Otros hilos daemon:** Discord (su propio `asyncio`), Telegram, Game Booster, asistente proactivo, timers del scheduler. Cada plugin los cierra en `cerrar()`; `Asistente.cerrar()` es idempotente.
 
 ---
 
-## Plugins (cómo agregar capacidades en el futuro)
+## Plugins disponibles
 
-Cada plugin es una clase en `plugins/` que:
-- hereda de la base `Plugin`,
-- define `nombre` y `descripcion`,
-- opcionalmente publica `tools` (schemas tipo OpenAI function-calling) y
-  el método `manejar_tool(nombre, args, contexto)`.
+Se cargan de forma perezosa desde `miku/plugins/registro.py`; uno roto o sin dependencias se omite sin afectar al resto. ⚠️ = pide confirmación.
 
-Se registra en `main.instalar_core()` dentro de `candidatos`. El framework
-(`core.event_bus.EventBus` y `plugins.registrar_plugins`) hace el resto: el
-cerebro "ve" esas tools y puede invocarlas por voz o texto.
+| Plugin | Tools | Requiere |
+|---|---|---|
+| `system_control` | `abrir_programa`, `cerrar_programa`, `controlar_brillo`, `listar_ventanas`, `mover_ventana`, `posicionar_ventana`, `organizar_ventanas`, `minimizar_ventana`, `control_multimedia`, `ajustar_volumen` (general o por `app`), `mutear_app`, `buscar_archivo`, `actualizar_biblioteca_juegos`, `control_energia` ⚠️, `programar_accion` ⚠️, `cancelar_accion_programada` | AppOpener, pywin32, pycaw, Everything (opcional) |
+| `web_search` | `buscar_en_web` (MercadoLibre, YouTube, Google, Wikipedia, GitHub o dominio) | — |
+| `browser` | `abrir_pestana`, `cerrar_pestana`, `buscar_en_pestana_actual` | Brave (`BRAVE_RUTA_EXE`), CDP |
+| `tidal` | `controlar_tidal`, `que_esta_sonando` | TIDAL / Windows SMTC |
+| `system_status` | `estado_pc` (CPU, RAM, disco, batería) | psutil |
+| `favoritos` | `abrir_carpeta_favorita`, `guardar_carpeta_favorita` | — |
+| `captura` | `capturar_pantalla` | Pillow |
+| `ocr` | `leer_pantalla` | Tesseract (opcional; si no, OCR de Windows) |
+| `vision` | `ver_pantalla` (**envía la captura a Google**) | `GEMINI_API_KEY` |
+| `clima` | `clima` (Open-Meteo, sin clave) | `CIUDAD_CLIMA` |
+| `todoist` | `tareas_hoy`, `agregar_tarea`, `completar_tarea` | `TODOIST_API_TOKEN` |
+| `personalidad` | `cambiar_personalidad`, `listar_personalidades` | — |
+| `modos` | `salir_modo` (revierte resolución/volumen/brillo) | — |
+| `macros` | `listar_macros`, `ejecutar_macro` | `data/macros_config.json` |
+| `video_interpolador` | `interpolar_video` (lanza el `.bat` en segundo plano y avisa al terminar) | `CARPETA_VIDEOS`, `RUTA_BAT_INTERPOLAR` |
+| `traductor_juegos` | `traducir_mensaje_juego` (traduce y copia al portapapeles) | `IDIOMA_JUEGO`, `MENSAJES_JUEGO` |
+| `discord_control` | `silenciar_usuario_discord` ⚠️, `volumen_usuario_discord` ⚠️, `expulsar_usuario_discord` ⚠️ | `DISCORD_BOT_TOKEN`, intent *Server Members* |
+| `game_booster` | *(automático)* baja el volumen de apps al detectar un juego y lo restaura al salir | `JUEGOS_BOOSTER` |
+| `asistente_proactivo` | *(automático)* avisa batería baja / disco casi lleno | psutil |
+| `telegram_control` | *(automático)* comandos remotos: texto libre, `/estado`, `/pendientes` | `python-telegram-bot`, token + tu user ID |
 
-**Disponible hoy:** `system_control`, `web_search`, `video_interpolador`,
-`traductor_juegos`, `discord_control` y `macros`, con las siguientes tools:
+Detalles que conviene saber:
 
-### `system_control` (control del sistema)
-
-| Tool | Qué hace |
-|---|---|
-| `abrir_programa` | Abre un programa por nombre/alias (AppOpener). Si no es un programa instalado, busca en la **biblioteca de Steam** (`steam://rungameid/<appid>`) o en los juegos de Epic configurados (`JUEGOS_EPIC`) |
-| `cerrar_programa` | Cierra un proceso vía `taskkill`, solo si está en la whitelist (coincidencia exacta) |
-| `controlar_brillo` | Sube, baja o fija el brillo de la pantalla |
-| `listar_ventanas` | Lista las ventanas visibles actualmente |
-| `mover_ventana` | Mueve una ventana a otro monitor (maximizada) |
-| `posicionar_ventana` | Coloca una ventana en una mitad del monitor (izquierda/derecha/arriba/abajo) o completa |
-| `dividir_pantalla` | Parte la pantalla en dos: una app a la izquierda, otra a la derecha (estilo Snap 11) |
-| `actualizar_biblioteca_juegos` | Re-escanea la biblioteca de Steam a demanda (juego nuevo sin reiniciar) |
-| `minimizar_ventana` | Minimiza la ventana de un programa |
-| `control_multimedia` | Play / pausa / siguiente / anterior (teclas virtuales) |
-| `ajustar_volumen` | Sube, baja, **fija** un nivel exacto (0-100), o silencia/desmutea (mute real, no toggle). Con `app` ajusta el volumen de **una app puntual** (ej. "bajá el volumen de Brave") |
-| `buscar_archivo` | Búsqueda instantánea con Everything (`bin/es.exe`), con filtro por extensión, apertura directa y desambiguación cuando hay varias coincidencias |
-| `control_energia` | Apagar / reiniciar / suspender — **siempre pide confirmación** antes de ejecutar |
-| `programar_accion` | Programa una acción **diferida**: apagar/reiniciar/suspender la PC o un **recordatorio hablado**, dentro de N minutos. **Siempre pide confirmación** |
-| `cancelar_accion_programada` | Cancela la última acción programada (o una por `id`) |
-
-### `web_search` (búsqueda web)
-
-| Tool | Qué hace |
-|---|---|
-| `buscar_en_web` | Abre el navegador con una **búsqueda o sitio**: `mercadolibre`, `youtube`, `google` (default), `wikipedia`, `github`, o un dominio/URL directo. **Solo envía la búsqueda; no lee los resultados** |
-
-### `video_interpolador` (pipeline de interpolación de video)
-
-Requiere `CARPETA_VIDEOS` y `RUTA_BAT_INTERPOLAR` en `config_local.py`.
-
-| Tool | Qué hace |
-|---|---|
-| `interpolar_video` | Lista los videos (`mp4/mkv/avi/mov/wmv/webm/flv`) de la carpeta y dispara el `.bat` de interpolación **en segundo plano** (sin ventana). Si hay varios y no se aclara cuál, **pregunta** (desambiguación, reutilizando el mecanismo de `buscar_archivo`). Al terminar, **avisa por voz** (o consola) con el resultado. Si falta config, lo dice claro (no adivina rutas) |
-
-### `traductor_juegos` (traductor + portapapeles)
-
-Requiere `IDIOMA_JUEGO` y `MENSAJES_JUEGO` en `config_local.py`.
-
-| Tool | Qué hace |
-|---|---|
-| `traducir_mensaje_juego` | Toma un mensaje predefinido (por clave, parte de la clave, o la propia frase), lo traduce al `IDIOMA_JUEGO` con **Groq** y lo **copia al portapapeles** para pegar con Ctrl+V en el chat del juego. Reutiliza `core/traduccion.py` (misma lógica que el TTS) con cache |
-
-### `macros` (macros/alias configurables)
-
-Lee `data/macros_config.json`.
-
-| Tool | Qué hace |
-|---|---|
-| `listar_macros` | Lista las macros/alias definidas |
-| `ejecutar_macro` | Ejecuta la macro pedida (secuencia de acciones predefinidas) |
-
-### `discord_control` (moderación de voz por bot)
-
-Requiere `DISCORD_BOT_TOKEN` (y, recomendado, `DISCORD_GUILD_ID`) en `config_local.py`.
-El bot corre en **su propio hilo con su propio event loop** (asyncio), sin bloquear
-el asistente; las tools (sync) le piden trabajo con `run_coroutine_threadsafe`.
-El usuario se resuelve **por nombre** (display/username/nick, tolerante a
-acentos y mayúsculas) o por **ID**; si hay **varias coincidencias**, Miku pide
-el nombre completo en vez de adivinar.
-
-| Tool | Qué hace |
-|---|---|
-| `silenciar_usuario_discord` | Silencia (o quita el silencio de) el **micrófono** de un usuario (server mute de voz). **Pide confirmación** |
-| `volumen_usuario_discord` | **Mute / ensordecer (deafen)** de voz de un usuario. **Pide confirmación** |
-| `expulsar_usuario_discord` | Expulsa (**kick**) a un usuario del servidor. **Pide confirmación** |
-
-> **Límite real de la API de Discord (no nuestro):** un bot **no** puede cambiar
-> el **volumen** de reproducción de otro usuario (eso es local de cada cliente).
-> Por eso `volumen_usuario_discord` se implementa como **mute/deafen de voz**.
-> Requiere los *Privileged Intents* **Server Members** y **Message Content**
-> activados en el portal, y que el rol del bot esté **por encima** del usuario
-> objetivo con los permisos *Kick Members* / *Mute Members*.
-
-> **Pendiente (fuera de esta tanda):** `traducir_a_canal` (traducir y postear en
-> un canal) — el config `discord_canal_default` queda reservado por si se retoma.
+- **`abrir_programa`** busca en: alias/AppOpener → biblioteca de **Steam** → **Epic** (`JUEGOS_EPIC`) → ejecutable por nombre con **Everything**; si hay varios candidatos, **pregunta cuál**.
+- **`buscar_archivo`** nunca lanza ejecutables (`.exe`, `.bat`, `.ps1`…): los muestra en su carpeta.
+- **`cerrar_programa`** solo cierra apps de `APP_WHITELIST` (coincidencia exacta) y nunca el Explorador.
+- **`programar_accion`** acepta minutos o una hora (`HH:MM`); los recordatorios se hablan por voz. Se cancelan al cerrar el asistente.
+- **Discord:** un bot **no** puede cambiar el volumen de otro usuario (límite de la API), por eso `volumen_usuario_discord` es mute/deafen. El rol del bot debe estar por encima del usuario objetivo.
+- **TIDAL:** no tiene API pública; los controles usan las teclas multimedia del sistema y "qué suena" sale de Windows SMTC.
+- **Telegram:** solo responde al **usuario** autorizado (no al chat/grupo) y no puede prender la PC.
 
 ---
 
-## Notas técnicas
+## Crear un plugin nuevo
 
-- **Lazy loading:** todo lo pesado u opcional (PyQt5, pygame, pyttsx3,
-  SpeechRecognition, pyaudio, keyboard, AppOpener, pywin32,
-  screen-brightness-control, pycaw, comtypes, discord.py) se importa recién
-  cuando el modo/comando lo necesita.
-- **Threading:** la voz y la escucha de micrófono corren en hilos separados
-  para no bloquear la consola; el overlay de subtítulos corre en su propio
-  hilo con event loop de Qt; las acciones diferidas usan `threading.Timer`; el
-  bot de Discord corre en **su propio hilo con su propio asyncio event loop**
-  (las tools sync le piden trabajo con `run_coroutine_threadsafe`).
-- **Cola de voz:** las respuestas se encolan y se reproducen una atrás de otra.
-- **VOICEVOX:** el texto de la respuesta se **traduce ES→JA** (ver "Traducción"
-  más abajo) y se sintetiza con una voz **genérica** de VOICEVOX (configurable
-  con `voicevox_speaker_id`), no una voz clonada de Miku. Si VOICEVOX no
-  responde, el asistente intenta arrancarlo automáticamente (oculto, sin
-  ventana); si eso también falla, cae a `pyttsx3` (voz del sistema).
-- **Traducción ES→JA (y compartida):** la traducción se hace con la **API de
-  Groq** — NO con `deep-translator`. La lógica vive en `core/traduccion.py` y la
-  comparten el **TTS** (ES→JA con la cuenta de STT, `GROQ_API_KEY_STT`) y el
-  **traductor de juegos** (con la cuenta principal, `GROQ_API_KEY`). Hay una
-  **cache en memoria** (dict) por frase exacta dentro de la sesión, así las
-  frases repetidas (p. ej. las de tono: "Listo", "Ya está") se traducen **una
-  sola vez**. La traducción actúa sobre el **texto final** de *cualquier*
-  respuesta (LLM, fast-path o tool hardcodeada) sin tocar cómo se genera ese texto.
-- **Subtítulos sincronizados por frase:** una respuesta larga se divide en
-  frases; cada frase se **sintetiza y se subtitula de a una** (con *prefetch*
-  de la siguiente) para que el subtítulo coincida con el audio que suena, en
-  vez de mostrar el texto completo de golpe.
-- **Tono (anti-repetición):** las respuestas **cortas** conocidas ("Listo",
-  "Ya está", "Dale", el saludo de arranque) pasan por `core/tono.py`, que elige
-  una variante al azar evitando repetir la última usada. Las respuestas largas
-  del LLM pasan intactas.
-- **Confirmaciones:** el estado de "esperando confirmación" vive en el
-  `CommandParser` (no se pierde entre turnos), y es **genérico**
-  (`{tool, args}`), así que acciones como apagar la PC o **programar un apagado
-  diferido** siempre requieren un sí/no explícito antes de ejecutarse.
-- **Acciones diferidas (Scheduler):** `core/scheduler.py` programa callbacks
-  con `threading.Timer`. El `Scheduler` vive en el `Asistente` y se pasa a las
-  tools vía `contexto["scheduler"]`. Al **cerrar** el asistente se cancelan
-  todas las pendientes (no se deja un timer que apague la PC al salir).
-- **Memoria:** `core/memoria.py` es una memoria persistente sobre **SQLite**
-  (stdlib, sin dependencias). Guarda "recuerdos" (`data/miku_memoria.db`) y los
-  consulta por coincidencia de texto (LIKE, sin embeddings por ahora). Se
-  activa/desactiva con `memoria_activa` en `config.py`/`config_local.py` y se
-  degrada sola (no tumba el arranque) si SQLite falla.
-- **Volumen por app:** `ajustar_volumen` acepta un parámetro `app`; cuando se
-  indica, ajusta **todas las sesiones de audio** de esa app (vía pycaw
-  `GetAllSessions`), no el volumen general. Útil para el "Game Booster".
-- **Traductor de juegos:** reutiliza `core/traduccion.py` y copia el resultado
-  al portapapeles con `win32clipboard` (pywin32). El diccionario de mensajes y
-  el idioma salen de `config_local.py`.
-- **Interpolación de video:** `plugins/video_interpolador.py` lanza el `.bat`
-  configurado en un hilo aparte (sin ventana), pasándole la ruta del video como
-  argumento, y avisa por voz/consola al terminar (según el código de salida).
-- **Seguridad:** ningún comando de sistema usa `shell=True`; `cerrar_programa`
-  valida contra una whitelist exacta antes de matar un proceso; `buscar_archivo`
-  y `buscar_en_web` se ejecutan por `subprocess`/`webbrowser` sin shell.
+1. Creá `miku/plugins/<tema>/mi_plugin.py` (p. ej. `miku/plugins/productividad/mi_plugin.py`):
+
+   ```python
+   from typing import Any, Dict
+   from miku.plugins.base import Plugin
+
+   class MiPlugin(Plugin):
+       nombre = "mi_plugin"
+       descripcion = "Qué hace, en una línea."
+       peligrosas = frozenset()          # nombres de tools que piden confirmación
+
+       tools = [{
+           "type": "function",
+           "function": {
+               "name": "saludar",
+               "description": "Saluda a alguien por su nombre.",
+               "parameters": {
+                   "type": "object",
+                   "properties": {"nombre": {"type": "string"}},
+                   "required": ["nombre"],
+               },
+           },
+       }]
+
+       def manejar_tool(self, nombre_tool: str, args: Dict[str, Any], contexto: Dict[str, Any]) -> Any:
+           if nombre_tool == "saludar":
+               return f"Hola {args.get('nombre', '')}."
+           return None                    # None = "esta tool no es mía"
+
+       def cerrar(self) -> None:          # opcional: liberar hilos/sockets
+           ...
+   ```
+
+2. Sumá una línea a `_CATALOGO` en `miku/plugins/registro.py` (`_Entrada("productividad.mi_plugin", "MiPlugin")`) (con una condición de config si no tiene sentido sin credenciales).
+
+Reglas del contrato (detalle en el docstring de `miku/plugins/base.py`):
+
+- `manejar_tool` devuelve un **texto** (lo que Miku dice), `None` si la tool no es suya, o un dict `{"desambiguar": True, "tool_origen": ..., "args_origen": ..., "opciones": [{"indice", "etiqueta", "valor"}]}` para preguntarle al usuario cuál elegir.
+- `contexto` trae `cfg`, `voice` (puede ser `None`) y `scheduler`. Los plugins que avisan por su cuenta usan `event_bus.voice`.
+- Imports pesados **dentro** de funciones. Leé la config con `config.config` (no recargues: `config.cargar()` es idempotente) y guardá preferencias con `config.config.guardar_preferencias({...})` (escritura atómica).
+- Los nombres de tool deben ser únicos; si se repiten, el parser ignora la segunda y lo avisa.
 
 ---
 
-## 🛠️ Próximos pasos (roadmap)
+## Seguridad y privacidad
 
-- **Game Booster**: bajar volumen del navegador (**ya existe volumen por app**), pausar Wallpaper Engine, monitorear temperatura.
-- **Navegador (Brave) por CDP**: abrir/cerrar pestañas, buscar, autocompletar (más profundo que el `buscar_en_web` actual, que solo abre la búsqueda).
-- **Discord (resto)**: `traducir_a_canal` y, a futuro, más moderación.
+- **Secretos:** claves y tokens viven solo en `config_local.py` o variables de entorno (ambos fuera del repo). ⚠️ No subas archivos `.zip` del proyecto: pueden incluir `config_local.py` y `data/` (`.gitignore` ya los excluye).
+- Ningún comando usa `shell=True`; no hay `eval`/`exec` (la calculadora es un parser propio).
+- `cerrar_programa` con lista blanca exacta; acciones peligrosas con confirmación vigente 60 s.
+- `interpolar_video` valida que el video esté dentro de `CARPETA_VIDEOS` y rechaza nombres con `& % ^ ! ( ) | < > "` (el `.bat` corre por `cmd.exe`).
+- **Privacidad:** el audio y los textos van a Groq (transcripción, LLM, traducción); `ver_pantalla` envía la captura a Google (Gemini); Open-Meteo recibe la ciudad. La clave de Gemini viaja en un *header*, no en la URL.
 
-### Hecho recientemente (ya no son "próximos pasos")
+---
 
-- **Discord** (`discord_control`): mute/deafen de voz y expulsar a usuarios, con la confirmación genérica (bot corriendo en su propio hilo/loop async).
-- **Volumen por app** (`ajustar_volumen` con `app`) — base del futuro Game Booster.
-- **Traductor para juegos** (`traductor_juegos`): mensajes predefinidos traducidos + portapapeles.
-- **Macros personalizadas** (`macros`): conectadas a `data/macros_config.json`.
-- **Memoria persistente**: reactivada con backend liviano (SQLite).
-- **Interpolación de video** (`video_interpolador`): conecta `carpeta_videos` / `ruta_bat_interpolar` a un comando real, con aviso por voz al terminar.
+## Desarrollo y tests
 
-### Ideas de lanzador / experiencia de escritorio (sesión aparte, NO implementadas)
+```bash
+pip install -r requirements-dev.txt
+python -m pytest                      # ~120 tests, unos 5 segundos
+```
 
-Deliberadamente **no** hechas todavía porque tocan `main.py`, que ya maneja
-voz/push/texto con lógica delicada de confirmaciones y push-to-talk que funciona:
+Los tests **no leen** tu `config_local.py` ni tu carpeta `data/`: usan una configuración de fábrica
+y directorios temporales (y Qt en modo *offscreen*), así que corren en cualquier PC. Cubren
+confirmaciones, wake word, caché del LLM, memoria, calculadora, contrato de plugins, validaciones de
+seguridad y la configuración. Si cambiás `miku/ajustes/esquema.py`, regenerá el ejemplo con
+`python -m miku.ajustes ejemplo` (un test lo comprueba).
 
-- **Bandeja del sistema** (`QSystemTrayIcon`) con menú de modos.
-- **Modo `always_on`** configurable que arranca escucha continua sin preguntar.
-- **Hotkey global F22 como toggle** de escucha (distinto del push-to-talk actual, que se mantiene tal cual).
-- **Ventanita flotante de selección de modo** (PyQt5) al apretar F22.
-- **Empaquetado a `.exe` con PyInstaller** (nota: PyQt5/pygame/speech_recognition suelen necesitar *hooks* específicos; no se armó el `.exe`).
+---
+
+## Empaquetado (.exe)
+
+`scripts/miku.spec` + `requirements-dev.txt` arman un ejecutable con PyInstaller (`pyinstaller --clean scripts/miku.spec` → `dist/Miku/Miku.exe`; sin probar desde la reestructuración). En el ejecutable, `config_local.py`, `data/` y `bin/` se leen **junto al `.exe`**. VOICEVOX no se incluye. Detalles y hooks en [docs/empaquetado.md](docs/empaquetado.md).
+
+---
+
+## Solución de problemas
+
+| Síntoma | Causa probable |
+|---|---|
+| "No tengo mi clave de acceso configurada" | Falta `GROQ_API_KEY` en `config_local.py` o el entorno |
+| Habla con voz robótica | VOICEVOX no responde (mirá los logs `[VOICEVOX]`); se reintenta a los 30 s |
+| No oye / "no se pudo abrir el micrófono" | Probá `MICROFONO_INDEX` (la lista aparece al iniciar el modo voz) |
+| Se activa sola con conversaciones | Bajá el ruido ambiente; la wake word ya exige la palabra "Miku" completa |
+| Sin bandeja ni subtítulos | Falta PyQt5 (`pip install PyQt5`) |
+| "El bot de Discord todavía no está conectado" | Tarda unos segundos en conectar; revisá el token y el intent *Server Members* |
+| El volumen por app no anda | `pycaw>=20240210` y que la app esté reproduciendo audio |
+| Sube la búsqueda pero no encuentra archivos | Everything tiene que estar abierto (`es.exe` le consulta) |
+
+Subí el nivel de log con `LOG_LEVEL = "DEBUG"` en `config_local.py`.
+
+---
+
+## Límites conocidos y roadmap
+
+**Límites actuales (por diseño o pendientes):**
+
+- **Push-to-talk (F22):** el selector gráfico solo ofrece Voz y Texto; push-to-talk se elige desde el menú de consola, que solo aparece si PyQt5 no está disponible o se cierra la ventanita sin elegir.
+- Los recordatorios y acciones programadas **no sobreviven** a cerrar el asistente.
+- El Modo Texto siempre habla (necesita VOICEVOX o la voz del sistema).
+- La wake word usa Whisper por API: cada frase de la escucha continua es una llamada (se filtran ruidos cortos, pero consume cuota).
+- Telegram/Discord/Todoist/Tidal/Brave dependen de servicios externos y no tienen pruebas automáticas.
+
+**Ideas pendientes:** `traducir_a_canal` de Discord, modo `always_on`, ventanita desde la bandeja, pausar Wallpaper Engine y temperatura en el Game Booster, OCR de regiones/ventanas puntuales, motores de voz alternativos y auto-actualización del `.exe`.
+
+---
+
+## Documentación interna
+
+- [CONTEXTO.md](CONTEXTO.md): bitácora de decisiones y sesiones.
+- [docs/informe_auditoria.md](docs/informe_auditoria.md): auditoría técnica y lista de cambios de la última revisión.
+- `docs/informe_*.md`: bitácoras por sesión. [docs/empaquetado.md](docs/empaquetado.md): build del `.exe`.

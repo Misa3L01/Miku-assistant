@@ -7,7 +7,7 @@ Asistente virtual personal para PC con IA, orientado a:
 - Uso diario
 - Comunicación en Discord
 
-## 📅 Última actualización: Sesión 4
+## 📅 Última actualización: Sesión 10 (fases A, B y C de la reestructuración — ver `docs/plan_reestructuracion.md`)
 
 ## 🏗️ Estado Actual del Proyecto
 
@@ -33,16 +33,18 @@ Asistente virtual personal para PC con IA, orientado a:
 - Plugin `traductor_juegos.py` (`traducir_mensaje_juego`): traduce mensajes predefinidos y los copia al portapapeles (`win32clipboard`)
 - **Volumen por app** en `ajustar_volumen` (parámetro `app`, ajusta todas las sesiones de audio de la app vía pycaw)
 - requirements.txt depurado (solo libs realmente usadas, imports lazy documentados)
+- **Tanda fácil (F1–F7):** acoplar/dividir ventanas (hoy con la tool `organizar_ventanas`; `acoplar_ventanas`/`dividir_pantalla` quedaron internas), mute por app (`mutear_app`), estado del sistema (`system_status`/`estado_pc`), carpetas favoritas (`favoritos`), calculadora local (`core/calculadora.py`), captura de pantalla (`captura`) y comandos encadenados (varias `tool_calls` por turno)
+- **Tanda intermedia (I1–I10):** Brave por CDP (`browser`), TIDAL (`tidal`), salir de modos (`modos`/`core/modos.py`), recordatorios a hora exacta (`programar_accion` con `hora`), clima Open-Meteo (`clima`), personalidad configurable (`personalidad`/`core/personalidad.py`), toasts (`core/notificaciones.py`), Auto-Game Booster (`game_booster`), OCR de pantalla (`ocr`) y briefing de arranque (`core/briefing.py`)
+- **Tanda final (Z1–Z6):** memoria/búsqueda **semántica** (`core/embeddings.py` fastembed opcional + `core/memoria.py` + re-rank en `buscar_archivo`), **visión de pantalla con Gemini** (`vision`), **Todoist** (`todoist`), **control remoto por Telegram** (`telegram_control`), **asistente proactivo** (`asistente_proactivo`). Pendiente gated: Z7 (lanzador/F22/bandeja) y Z8 (.exe), que van paso a paso con confirmación.
+- **Ciclo de vida, apertura de juegos y ventanas (tanda A–E):** `Plugin` declara `cerrar()` (no-op) y `main` cierra cada plugin **aislado** (un plugin roto no impide cerrar el resto); `game_booster` **revierte su snapshot** (`core.modos.salir_modo`) si cerrás el asistente en medio de un juego y **reusa el `SystemControl` del bus** (no instancia pycaw/win32 por ciclo); `abrir_programa` suma **fallback por Everything** (`.exe`/`.lnk` por nombre, scoring, descarte de ruido y **desambiguación** si hay varios) para juegos fuera de AppOpener/Steam/Epic; y el split de pantalla se unificó en la tool **`organizar_ventanas`** (1 o 2 ventanas, 50/50, con aviso si es la misma ventana de los dos lados).
 
 ### 🚧 En Progreso:
 - (ninguno crítico abierto — los de Sesión 1/2 quedaron resueltos en Sesión 3)
 
 ### 📝 Pendiente:
-- Plugins "grandes" heredados: Discord, Game Booster, traductor de juegos, macros
-- Navegador (Brave) por CDP (más profundo que `buscar_en_web`, que solo abre la búsqueda)
-- Sistema de macros (ya existe `macros_config.json`, pero ningún plugin lo lee todavía)
-- Decidir si se reactiva `memoria.py` (hoy es un stub desactivado a propósito, sin backend)
-- Ideas de lanzador/experiencia de escritorio: bandeja del sistema (QSystemTrayIcon), modo `always_on`, hotkey F22 como toggle, ventanita flotante de modo, empaquetado a `.exe` con PyInstaller (ver `docs/informe_sesion_3.md`)
+- Decisiones abiertas de la Sesión 9 (ver `docs/informe_auditoria.md`): push-to-talk inalcanzable desde la ventanita (solo Voz/Texto), recordatorios que piden confirmación y no sobreviven a reiniciar, `vision` sin confirmación, verificar si Gemini `gemini-2.0-flash` y Todoist REST v2 siguen vigentes.
+- Ideas: `traducir_a_canal` de Discord, modo `always_on`, ventanita desde la bandeja, temperatura/Wallpaper Engine en el Game Booster, OCR de regiones, motores de voz alternativos.
+- Pruebas automáticas: hoy solo hay pruebas de humo manuales (no versionadas).
 
 ## 🔧 Decisiones de Arquitectura
 
@@ -123,6 +125,48 @@ docs/    -> Documentación
 - **Bloque 10 — Documentación de cierre:** README (tabla de tools + secciones de traducción/subtítulos/tono/scheduler), CONTEXTO (esta sesión), `docs/informe_sesion_3.md`. requirements.txt confirmado (pycaw/comtypes ya estaban; sin deps nuevas).
 - Ideas de lanzador/escritorio dejadas **explícitamente** para una sesión aparte (bandeja, `always_on`, hotkey F22 toggle, ventanita de modo, `.exe` con PyInstaller).
 
+### Sesión 5 (tanda fácil F1–F7):
+- **F1 — Acoplar/dividir ventanas (fix):** en `plugins/system_control.py` se sumó la tool `acoplar_ventanas(ventana_a, ventana_b, layout, monitor)` y los helpers `_traer_al_frente()` (SW_RESTORE + SetWindowPos(HWND_TOP) + SetForegroundWindow con fallback de tecla Alt) y `_acoplar_par()` (restaura AMBAS ventanas y las sube al frente). `dividir_pantalla` reusa el acoplado cuando encuentra las dos ventanas. Arregla el bug de "la segunda ventana queda atrás/escondida". (Nota posterior: esas dos dejaron de exponerse al LLM; la tool de cara al usuario es `organizar_ventanas`, que delega en ellas.)
+- **F2 — Mute por app:** nueva tool `mutear_app(nombre, accion)` (alias `silenciar_app`) en `system_control.py`; usa las sesiones de audio (pycaw) y hace `SetMute` por proceso sin tocar el master; mensaje claro si no hay sesión sonando.
+- **F3 — Estado del sistema:** nuevo `plugins/system_status.py` con la tool `estado_pc` (alias `como_esta_la_pc`): CPU %, RAM usada/total, disco libre y batería si hay. Sin temperatura. Usa `psutil` (lazy).
+- **F4 — Carpetas favoritas:** nuevo `plugins/favoritos.py` con `abrir_carpeta_favorita` y `guardar_carpeta_favorita`. El mapa sale de `CARPETAS_FAVORITAS` (config_local) y de las "enseñadas" por voz, persistidas en `data/preferences.json` (merge que preserva el resto del JSON).
+- **F5 — Calculadora rápida (sin LLM):** nuevo `core/calculadora.py` (parser de descenso recursivo: `+ - * / %`, paréntesis y palabras en español; porcentaje contextual "X más 10%" y módulo). Fast-path en `command_parser._comandos_inmediatos` que nunca llama a la API.
+- **F6 — Captura de pantalla:** nuevo `plugins/captura.py` con `capturar_pantalla(monitor, formato)`; guarda PNG/JPG con fecha-hora en `CARPETA_CAPTURAS` (config_local) o `data/capturas/`. Usa `PIL.ImageGrab` (lazy).
+- **F7 — Comandos encadenados:** `command_parser.procesar` ahora ejecuta TODAS las `tool_calls` del turno en orden (no solo la primera); las peligrosas se siguen gateando con UNA confirmación sin perder las seguras del mismo turno.
+- **Config/integ:** `config.py` suma `carpetas_favoritas` y `carpeta_capturas`; `config_local.py.example` documenta `CARPETAS_FAVORITAS` y `CARPETA_CAPTURAS`; `main.py` registra `SystemStatus`, `Favoritos` y `Captura`; `requirements.txt` suma `psutil` y `Pillow`. `py_compile` OK.
+
+### Sesión 8 (lanzador Z7 — pasos 1–5, incremental):
+- **Z7.1 — Bandeja sola:** nuevo `core/bandeja.py` (`QSystemTrayIcon` en hilo propio con event loop Qt; reutiliza la `QApplication` si existe; icono + menú "Miku está activa"/"Salir"; degrada si falta PyQt5). `main.py` la arranca tras el núcleo y la cierra al salir; "Salir" interrumpe el hilo principal (`_thread.interrupt_main`) para un cierre ordenado.
+- **Z7.2 — Ventanita Voz/Texto:** nuevo `core/ventanita.py` (diálogo "Modo Voz"/"Modo Texto"); se muestra DESDE el hilo Qt de la bandeja (`Bandeja.pedir_modo`). `main.py` la usa para elegir modo y cae a la consola si no hay bandeja.
+- **Z7.3 — Texto siempre con voz:** se quitó el "texto sin voz"; el modo texto llama a `run_modo_texto(con_voz=True)`.
+- **Z7.4 — F22 global → ventanita:** `keyboard.add_hotkey("f22", ...)` abre la ventanita y **persiste** el modo en `data/preferences.json`. **No se registra en modo push** (ahí F22 sigue siendo push-to-talk).
+- **Z7.5 — Modo Voz → bandeja:** en modo voz, el tooltip de la bandeja pasa a "Miku - Modo Voz (escuchando)".
+- **Verificado:** `py_compile` OK; `import main` OK; `bandeja`/`ventanita` OK.
+- **Nota:** el aviso Qt "Timers cannot be stopped from another thread" al cerrar es cosmético (mismo patrón que `subtitles.py`).
+
+### Sesión 7 (tanda final Z1–Z6):
+- **Z1 — Memoria semántica:** nuevo `core/embeddings.py` (motor liviano **fastembed**, opcional; degrada a LIKE si falta) y `core/memoria.py` con la MISMA API pero búsqueda por similitud coseno (columna `embedding` por migración + umbral en config). "cuándo es mi cumpleaños" → "nací el 15 de julio".
+- **Z2 — Búsqueda semántica de archivos:** `plugins/system_control._rerank_semantico` re-rankea los resultados de Everything por significado (bonus 0-20 puntos). NO reemplaza Everything; sin motor, todo igual.
+- **Z3 — Visión de pantalla (Gemini):** nuevo `plugins/vision.py` (`ver_pantalla`/`que_error_me_tira`/`que_hay_en_pantalla`). Captura → comprime (1280px, JPEG q70) → REST `generateContent`. Avisa privacidad (se envía a Google). `GEMINI_API_KEY` en config_local.
+- **Z4 — Todoist:** nuevo `plugins/todoist.py` (`tareas_hoy`, `agregar_tarea`, `completar_tarea`, REST v2 Bearer). Plan FREE alcanza. `TODOIST_API_TOKEN` en config_local.
+- **Z5 — Telegram:** nuevo `plugins/telegram_control.py` (bot en hilo daemon + loop propio; texto del celu → MISMO parser vía `bus.parser`; solo responde al `TELEGRAM_CHAT_ID`; NO prende la PC). Comandos `/start`, `/estado`, `/pendientes`.
+- **Z6 — Asistente proactivo:** nuevo `plugins/asistente_proactivo.py` (hilo daemon; batería baja / disco casi lleno; avisa por toast + voz con cooldown; sin temperatura; config `PROACTIVO_*`).
+- **Config/integ:** `config.py` y `config_local.py.example` suman embeddings/Gemini/Todoist/Telegram/proactivo; `main.py` registra 4 plugins nuevos (total **20**) y expone `bus.parser`; `requirements.txt` con `fastembed` y `python-telegram-bot` opcionales (comentados). `py_compile` OK.
+- **Pendiente gated:** Z7 (lanzador/F22/bandeja, incremental con confirmación) y Z8 (empaquetado .exe).
+
+### Sesión 6 (tanda intermedia I1–I10):
+- **I1 — Brave por CDP:** nuevo `plugins/browser.py` (`abrir_pestana`, `cerrar_pestana`, `buscar_en_pestana_actual`). Usa el HTTP JSON API del puerto de depuración (`brave_debug_port`, default 9222); si no está, LANZA Brave con `brave_ruta_exe` + `--remote-debugging-port`. Mensaje claro si no puede conectar/lanzar. No se "arregla" la restauración de pestañas (es de Brave).
+- **I2 — TIDAL:** nuevo `plugins/tidal.py` (`controlar_tidal`, `que_esta_sonando`). Controles por teclas multimedia del sistema (TIDAL no tiene API pública); "qué suena" vía Windows SMTC (PowerShell/WinRT). Límite documentado.
+- **I3 — Salir de modos:** nuevo `core/modos.py` (snapshot de volumen/resolución/brillo + reversión) y `plugins/modos.py` (`salir_modo`). `plugins/macros.py` captura el snapshot ANTES de aplicar una macro; si no hay snapshot, avisa sin romper.
+- **I4 — Recordatorios a hora exacta:** `programar_accion` acepta `hora` (HH:MM/18h/18); `_segundos_hasta_hora` calcula el delta y, si la hora ya pasó, asume mañana. Cancelar sigue igual.
+- **I5 — Clima (Open-Meteo):** nuevo `plugins/clima.py` (sin API key). Geocodifica `CIUDAD_CLIMA` (o usa `CLIMA_LAT/LON`) y arma frase natural con recomendación ("hace frío, abrigate").
+- **I6 — Personalidad configurable:** nuevo `core/personalidad.py` (perfiles neutral/tsundere/formal/entusiasta; `prompt_extra()` + `adorno_corto()`) y `plugins/personalidad.py` (`cambiar_personalidad`, `listar_personalidades`). `BrainGroq` inyecta el prompt del perfil en cada consulta; `main.responder()` aplica el adorno a respuestas cortas. Persistible en preferences.json.
+- **I7 — Toasts:** nuevo `core/notificaciones.py` (win10toast → PowerShell+WinRT → log; no bloqueante, con escape XML).
+- **I8 — Auto-Game Booster:** nuevo `plugins/game_booster.py` (hilo daemon; detecta juego en primer plano por proceso vía win32+psutil; snapshot + baja volumen de `BOOSTER_APPS_VOLUMEN`; avisa por toast/voz; revierte al salir; sin spam).
+- **I9 — OCR de pantalla:** nuevo `plugins/ocr.py` (`leer_pantalla`/`que_dice_esta_ventana`). Motor elegido: **Tesseract** (pytesseract, primario, paquete `spa`) con **fallback a Windows.Media.Ocr** (WinRT) sin instalar nada. Todo lazy/best-effort.
+- **I10 — Briefing:** nuevo `core/briefing.py`; `run_modo_voz` reemplaza el "Ya estoy lista" seco por hora + clima (si hay) + recordatorios pendientes (del Scheduler) en una frase.
+- **Config/integ:** `config.py` suma clima, personalidad, booster y OCR; `config_local.py.example` documenta `CIUDAD_CLIMA`, `PERSONALIDAD`, `JUEGOS_BOOSTER`, `BOOSTER_*`, `TESSERACT_RUTA`, `OCR_IDIOMA`; `main.py` registra `PersonalidadPlugin`, `Modos`, `Clima`, `Browser`, `Tidal`, `Ocr`, `GameBooster` (16 plugins). requirements.txt: `pytesseract` opcional comentado. `py_compile` OK.
+
 ### Sesión 4 (Memoria SQLite, traducción compartida, volumen por app, video, traductor de juegos, wake word):
 - **Bloque 13 — Interpolación de video:** nuevo `plugins/video_interpolador.py` con la tool `interpolar_video`. Lista videos de `CARPETA_VIDEOS`, elige por nombre o "el último", y dispara `RUTA_BAT_INTERPOLAR` **en segundo plano** (sin ventana), en un hilo aparte, pasando la ruta completa del video como argumento. Al terminar **avisa por voz** (o consola) según el código de salida. Desambigua si hay varios. Respuestas honestas si falta config.
 - **Bloque 13 (fix del .bat):** comparado contra el `interpolar_miku.bat` real del usuario, se corrigió el **desacople de formato de argumento** (el `.bat` ahora recibe la **RUTA COMPLETA** y se eliminó `VIDEOS_DIR` hardcodeado; `TARGET_VIDEO=%%~fV` directo) y la **extensión de 5 caracteres** (`.webm`): se usa `%%~nV` (nombre sin extensión) en vez del offset fijo `~0,-4`. Además se sacaron los `::` dentro del bloque `for` (pasados a `rem`) y los emojis (ASCII puro, sin BOM). Python **no** se tocó (ya pasaba la ruta completa). Verificado con simulación `echo` (mkv/webm/espacios/varios).
@@ -130,3 +174,22 @@ docs/    -> Documentación
 - **Bloque 15 — Volumen por app:** `ajustar_volumen` acepta el parámetro opcional `app`: ajusta **todas las sesiones de audio** de esa app (pycaw `GetAllSessions`, matching tolerante a acentos y `.exe`); sin `app` se comporta como antes (volumen general). Base para el futuro Game Booster.
 - **Bloque 11 — Wake word en una sola frase:** `core/speech_to_text.py` ahora soporta AMBOS flujos. Nuevo helper `_extraer_comando_en_linea()`: tras detectar la wake word, toma lo que vino DESPUÉS (primera variante de `_VARIANTES_MIKU`), limpia separadores sueltos y, si queda contenido significativo (>2 chars), lo usa como **comando directo** en `_bucle_escucha_permanente()` vía `on_comando(...)` **sin** segunda escucha. Si el usuario dijo solo "Miku" (o "Miku."/"Miku,"), sigue el flujo de dos pasos sin cambios. Se mantiene `on_wake()` ("¿Sí? Decime.") en ambos flujos por consistencia. Probado con 17 casos de parsing + 4 escenarios de flujo completo con STT simulado (audio real no disponible en el entorno de desarrollo).
 - **Nota:** plugins `video_interpolador` y `traductor_juegos` registrados en `main.instalar_core()`. requirements.txt: pywin32 ya cubría `win32clipboard`; sin deps nuevas.
+
+### Sesión 9 (auditoría completa y endurecimiento):
+- **Diagnóstico:** revisión de núcleo, plugins, config, lanzadores y empaquetado; hallazgos verificados leyendo el código (varios reproducidos). Detalle completo en `docs/informe_auditoria.md`.
+- **Seguridad:** la confirmación de acciones peligrosas usaba *substring* ("no, dejalo así" confirmaba) y no vencía → palabras completas, cancelar primero, TTL 60 s. Wake word por *substring* ("amigo", "química") → palabra completa. Lista blanca de `cerrar_programa` real (el Explorador nunca), `ruta_elegida` solo si fue ofrecida, ejecutables de `buscar_archivo` solo se muestran, validación de videos (`.bat` por cmd.exe), Telegram por id de usuario, clave de Gemini en header. `.gitignore` cubre `*.zip`/`dist`/`build`/`data/capturas`; había un `miku-assistant.zip` sin trackear con `config_local.py` adentro.
+- **Núcleo:** nuevo `core/qt_hilo.py` (un solo hilo Qt: los subtítulos no funcionaban con la bandeja activa), Miku ya no se escucha a sí misma (`esperar_libre`), lock en `decir()` y `procesar()`, caché del LLM solo para charla pura, tools inventadas por el LLM ya no responden "Listo", fast-path con acentos, `cerrar()` idempotente, `bus.voice` asignado.
+- **Plugins:** contrato `Plugin.peligrosas` (una sola fuente de verdad) y carga perezosa en `plugins/registro.py` (un plugin roto no tumba el arranque; `miku.spec` usa `collect_submodules`). Arreglos en tidal (SMTC), game_booster (volumen por app, snapshot con dueño), discord (estado por eventos, timeouts), telegram (`to_thread`, cierre limpio), video, browser, capturas/OCR, macros, calculadora, memoria (lock, backfill, stopwords).
+- **Config:** `config.cargar()` idempotente + `recargar()`, `guardar_preferencias()` atómico con lock (favoritos, personalidad y modo), `BASE_DIR` respeta `sys.frozen`.
+- **Docs/lanzadores:** README reescrito contra el código real; `run.bat`/`run.ps1` reinstalan si cambia `requirements.txt`; `pycaw>=20240210`.
+- **No verificado en este entorno:** micrófono, VOICEVOX/audio, Telegram (`python-telegram-bot` no instalado), Brave por CDP, Todoist, Gemini, Game Booster con un juego real.
+
+### Sesión 10 (reestructuración: fases A y B):
+- **Decisiones del dueño:** estructura completa `miku/` (opción A); se ELIMINA push-to-talk; el modo texto queda como depuración (elegible en bandeja/ventanita); inicio con Windows opcional y F22 = invocar a Miku (si está residente, saluda y escucha; si no, hace falta un lanzador: a probar el atajo de `.lnk` o un proceso residente mínimo); traductor de juegos para CUALQUIER idioma, resultado solo al portapapeles; macro `modo_fortnite` = 1920x1440 (aplicado en `data/macros_config.json`, el driver lo acepta según `CDS_TEST`).
+- **Fase A (tests):** carpeta `tests/` con pytest (119 tests, ~5 s): confirmaciones, fast-path, caché del LLM, wake word, TTS, memoria, calculadora, scheduler, config, contrato de plugins, seguridad de system_control/video y Qt offscreen. No leen `config_local.py` ni `data/`.
+- **Fase B (configuración):** nuevo paquete `miku/ajustes/`: `esquema.py` (cada opción declarada UNA vez: tipo, default, descripción, plugin), `validacion.py` (typos con sugerencia, obsoletas, tipos, plugins sin configurar), `ejemplo.py` (genera `config_local.py.example` y agrega opciones faltantes a `config_local.py` comentadas, con `.bak`) y `python -m miku.ajustes estado|validar|completar|ejemplo` (los secretos nunca se imprimen). `config.py` toma sus defaults del esquema (idénticos a los anteriores; se quitaron 4 claves muertas y se sumó `voicevox_run_exe`, que VOICEVOX leía saltándose la config). `Config` registra `origenes` y `claves_locales`; `main` valida al arrancar (solo log).
+- **Tu `config_local.py`:** se le agregaron 38 opciones COMENTADAS (mismas 13 variables y valores, verificado por hash); falta completar lo que uses: `GEMINI_API_KEY`, `CARPETA_CAPTURAS`, `BRAVE_RUTA_EXE`, `TIDAL_RUTA_EXE`, `CIUDAD_CLIMA`, etc.
+- **Interpolación de video (prueba real):** funciona (1080p -> 47,95 fps, audio y subtítulos intactos, sin temporales). Hallazgos: el `.bat` devolvía siempre 0 aunque fallara (versión revisada en `docs/interpolacion/`, más `LEEME.md`) y el `.vpy` recorta 8 px de más (`Crop(bottom=16)` debe ser `8`; salida 1920x1072). El plugin ahora verifica que exista `<nombre>-2x.mkv`.
+- **Pendiente:** fases D–I del plan (partir `system_control`, respuestas naturales, interfaces LLM/STT/TTS, quitar push-to-talk + F22 invoca, motor proactivo, plugins).
+- **Fase C (mudanza a `miku/`):** `core/` y `plugins/` desaparecen; todo vive en el paquete `miku/`: `ajustes/`, `cerebro/` (parser, calculadora, `memoria/`), `voz/` (`entrada`, `salida`, `frases`), `ui/` (qt_hilo, bandeja, subtítulos, selector de modo), `servicios/` (eventos, scheduler, notificaciones, modos, briefing, personalidad) y `plugins/` por tema (`sistema`, `navegacion`, `multimedia`, `pantalla`, `productividad`, `gaming`, `social`, `asistente`). `config.py` -> `miku/ajustes/carga.py` (alias `config_mod` en los imports), `main.py` queda como shim de 3 líneas, `run.bat`/`run.ps1`/`miku.spec` -> `scripts/` (con atajos en la raíz). Sin cambios de comportamiento. Verificado: 119 tests, 135 imports `miku.*` resueltos (incluidos los perezosos), arranque del núcleo con 18 plugins / 42 tools. **Sin probar:** `scripts/miku.spec` (PyInstaller no está instalado) y la ejecución completa de `run.bat` con la ventanita.
+- `data/preferences.json` se limpió de claves sin uso (`juegos`, `notas`, `programas_favoritos`; copia en `preferences.json.bak`). La clave `juegos: {"zzz": ["tidal", "discord"]}` parece una idea de perfil de juego (abrir esas apps al lanzarlo).

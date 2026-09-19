@@ -6,7 +6,7 @@ venv/
 env/
 .env
 
-# Archivos de configuración
+# Archivos de configuración (secretos)
 config_local.py
 keys.txt
 *.key
@@ -18,6 +18,13 @@ data/macros_config.json
 data/miku_memoria/
 data/miku_memoria.db
 data/*.db
+# Capturas de pantalla (pueden contener información sensible)
+data/capturas/
+
+# Empaquetado / distribución (los .zip pueden incluir config_local.py y data/)
+*.zip
+build/
+dist/
 
 # VS Code
 .vscode/settings.json
@@ -43,5 +50,8 @@ modelos_voz/
 # VOICEVOX (carpeta externa)
 extern/
 
-# Configuración local (secretos)
-config_local.py
+# Copias de seguridad de config_local.py (pueden contener secretos)
+*.bak
+
+# Caché de pytest
+.pytest_cache/

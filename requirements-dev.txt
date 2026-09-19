@@ -1,0 +1,6 @@
+# requirements-dev.txt - deps de desarrollo: empaquetado (PyInstaller) y tests (pytest). No son de runtime.
+# Usar junto a requirements.txt:  pip install -r requirements.txt -r requirements-dev.txt
+
+pyinstaller>=6.0
+# Tests (Fase A)
+pytest>=8.0

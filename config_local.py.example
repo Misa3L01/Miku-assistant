@@ -1,110 +1,306 @@
 # -*- coding: utf-8 -*-
+r"""
+config_local.py.example - PLANTILLA de configuración privada de Miku (NO se sube al repo).
+
+Para usarla: copiá este archivo como ``config_local.py`` (en la raíz del proyecto) y completá
+lo que necesites. ``config_local.py`` está en .gitignore porque guarda claves y rutas tuyas.
+
+Reglas simples:
+  * Todas las opciones van en MAYÚSCULAS.
+  * Una línea que empieza con ``#`` está desactivada: Miku usa el valor por defecto.
+    Para cambiar una opción, sacale el ``#`` y poné tu valor.
+  * Las rutas de Windows se escriben con una ``r`` delante: r"D:\Capturas".
+  * Para ver qué opciones tenés, cuáles faltan y cuáles no están bien escritas:
+        python -m miku.ajustes estado
+  * Para agregar a TU archivo las opciones nuevas (como comentarios, sin tocar tus valores):
+        python -m miku.ajustes completar
+
+NUNCA pongas valores reales en este archivo .example ni en ningún archivo versionado.
+Este archivo se GENERA desde miku/ajustes/esquema.py: no lo edites a mano
+(regenerarlo: python -m miku.ajustes ejemplo).
 """
-config_local.py.example  -  PLANTILLA de configuración local (NO versionada).
 
-Para usarla: copiá este archivo a ``config_local.py`` en la raíz del proyecto
-y completá los valores con TUS datos. El archivo ``config_local.py`` REAL está
-en ``.gitignore`` (nunca se sube al repo) porque contiene datos privados de tu
-máquina (rutas, API keys, índices de micrófono, etc.).
+# ======================================================================================
+# Claves de API y cuentas
+# ======================================================================================
 
-Todas las variables van en MAYÚSCULAS y config.py las carga fundiéndolas (en
-minúsculas) sobre los valores por defecto. Las variables que NO definas acá
-simplemente usan su default seguro de ``config.py``.
+# Clave de Groq (https://console.groq.com): es el cerebro (LLM) de Miku. Sin ella solo
+# funcionan los comandos locales (hora, calculadora, sistema).
+# (usado por: cerebro)
+GROQ_API_KEY = ""
 
-Importante: NUNCA pongas valores reales en este archivo ``.example`` ni en
-ningún archivo versionado.
-"""
-# ============================================================================ #
-# API KEYS (Groq) - cerebro + transcripción por voz (STT)
-# ============================================================================ #
-# Clave principal del cerebro (chat + tools). Obtenela en console.groq.com.
-GROQ_API_KEY = ""            # ej: "gsk_xxxxxxxxxxxxxxxx"
-
-# Clave de transcripción de voz (Whisper). Opcional: si la dejas vacía,
-# se usa GROQ_API_KEY para todo.
+# Clave de Groq para la transcripción de voz (Whisper) y la traducción de la voz. Si la
+# dejás vacía se usa la principal.
+# (usado por: voz)
 GROQ_API_KEY_STT = ""
 
-# ============================================================================ #
-# VOICEVOX (síntesis de voz local)
-# ============================================================================ #
-# URL del servidor VOICEVOX (suele ser el default).
-VOICEVOX_URL = "http://localhost:50021"
-# ID del hablante/VOICEBOX a usar (por defecto 6).
-VOICEVOX_SPEAKER_ID = 6
+# Modelo de Groq que usa el cerebro (debe soportar herramientas/tools).
+# (usado por: cerebro)
+# MODELO_API_EXTERNA = "openai/gpt-oss-20b"
 
-# ============================================================================ #
-# Microfono - índice del dispositivo de entrada (propio de tu máquina)
-# ============================================================================ #
-# Dejalo en None para usar el del sistema por defecto, o un entero (índice
-# que muestra el log de micrófonos). Ej: MICROFONO_INDEX = 2
-MICROFONO_INDEX = None
+# Clave de Google AI Studio (https://aistudio.google.com) para que Miku pueda MIRAR la
+# pantalla (`ver_pantalla`). OJO: la captura se envía a Google. No hace falta para leer
+# texto de la pantalla (eso es OCR local).
+# (usado por: vision)
+GEMINI_API_KEY = ""
 
-# ============================================================================ #
-# Navegador Brave (rutas de TU instalación)
-# ============================================================================ #
-# Ruta completa al ejecutable de Brave (como está instalado en tu PC).
-BRAVE_RUTA_EXE = ""
-# Ruta al perfil de datos de usuario de Brave (para lanzar con tu sesión).
-BRAVE_PERFIL_DIR = ""
+# Modelo de visión de Gemini.
+# (usado por: vision)
+# GEMINI_MODELO = "gemini-2.0-flash"
 
-# ============================================================================ #
-# TIDAL
-# ============================================================================ #
-# Ruta completa al ejecutable de la app de escritorio de TIDAL.
-TIDAL_RUTA_EXE = ""
+# Token personal de Todoist (Ajustes > Integraciones > Desarrollador). El plan gratis
+# alcanza.
+# (usado por: todoist)
+TODOIST_API_TOKEN = ""
 
-# ============================================================================ #
-# Interpolación de video (rutas específicas de este equipo)
-# ============================================================================ #
-# Carpeta donde están los videos a interpolar (ej: R:\\...\\videos).
-CARPETA_VIDEOS = ""
-# Ruta al script .bat que interpola (ej: R:\\...\\interpolar_miku.bat).
-RUTA_BAT_INTERPOLAR = ""
+# Token del bot de Telegram (lo crea @BotFather) para controlar Miku desde el celular.
+# (usado por: telegram_control)
+TELEGRAM_BOT_TOKEN = ""
 
-# ============================================================================ #
-# Memoria persistente (SQLite en data/miku_memoria.db)
-# ============================================================================ #
-# Poné False para desactivar la memoria (no guardar/consultar recuerdos).
-MEMORIA_ACTIVA = True
+# Tu ID NUMÉRICO de usuario de Telegram (p. ej. con @userinfobot). Miku solo obedece a
+# ese usuario.
+# (usado por: telegram_control)
+# TELEGRAM_CHAT_ID = ""
 
-# ============================================================================ #
-# Traductor para juegos
-# ============================================================================ #
-# Idioma destino al que se traducen los mensajes del juego.
-IDIOMA_JUEGO = ""            # ej: "inglés", "japonés", "portugués"
-# Diccionario de mensajes predefinidos {clave: frase_en_español}.
-# Cuando pidas "mandá buena partida", se traduce y copia al portapapeles.
-MENSAJES_JUEGO = {
-    # "gg": "buena partida",
-    # "gracias": "gracias por jugar",
-    # "nuevo": "perdón, soy nuevo",
-}
+# Token del bot de Discord (https://discord.com/developers/applications). Necesita el
+# intent privilegiado 'Server Members' activado.
+# (usado por: discord_control)
+DISCORD_BOT_TOKEN = ""
 
-# ============================================================================ #
-# Juegos (Steam / Epic)
-# ============================================================================ #
-# Ruta de instalación de Steam (opcional). Si la dejás vacía, se prueban las
-# ubicaciones típicas (C:\Program Files (x86)\Steam, C:\Program Files\Steam).
-# STEAM_RUTA = r"C:\Program Files (x86)\Steam"
 
-# Juegos de Epic (opcional, MANUAL): nombre -> id_del_item del juego.
-# Epic aún no se auto-detecta (sus manifiestos son más frágiles).
-#   JUEGOS_EPIC = {"fortnite": "fn", "rocket league": "sugar"}
-JUEGOS_EPIC = {}
+# ======================================================================================
+# Voz, micrófono y modo de arranque
+# ======================================================================================
 
-# ============================================================================ #
-# Discord (bot)
-# ============================================================================ #
-# Token del bot de Discord (secreto, NUNCA lo subas al repo).
-# Se crea en https://discord.com/developers/applications y necesita los
-# intents "Server Members" y "Message Content" activados.
-# Si lo dejás vacío, el plugin de Discord queda inactivo (no rompe el arranque).
-DISCORD_BOT_TOKEN = ""       # ej: "MTIz...abc"
+# Dirección del motor de voz VOICEVOX.
+# (usado por: voz)
+# VOICEVOX_URL = "http://localhost:50021"
 
-# ID del servidor (guild) por defecto, para resolver usuarios por nombre.
-# Clic derecho sobre el servidor (con Modo desarrollador activado) -> Copiar ID.
-DISCORD_GUILD_ID = ""
+# Número de la voz de VOICEVOX que usa Miku.
+# (usado por: voz)
+# VOICEVOX_SPEAKER_ID = 6
 
-# Canal por defecto (ID) reservado para futuras funciones de canal.
-DISCORD_CANAL_DEFAULT = ""
+# Ruta a run.exe de VOICEVOX si no está en extern/VOICEVOX/vv-engine/. Miku lo arranca
+# sola (oculto) si no está corriendo.
+# (usado por: voz)
+# VOICEVOX_RUN_EXE = r"D:\Programas\VOICEVOX\vv-engine\run.exe"
 
+# Número del micrófono a usar. None = el predeterminado de Windows. La lista de
+# micrófonos aparece en la consola al iniciar el modo voz.
+# (usado por: voz)
+# MICROFONO_INDEX = 2
+
+# Modelo de Whisper para detectar la palabra 'Miku'.
+# (usado por: voz)
+# MODELO_STT_WAKE = "whisper-large-v3"
+
+# Modelo de Whisper para transcribir lo que le pedís.
+# (usado por: voz)
+# MODELO_STT_COMANDO = "whisper-large-v3"
+
+# Modo con el que arranca cuando no se elige uno en la ventanita: 'voz' (escucha
+# continua) o 'texto' (consola de depuración).
+# Valores válidos: voz, texto, push
+# (usado por: app)
+# MODO_ENTRADA = "voz"
+
+# Detalle de los mensajes de diagnóstico: DEBUG, INFO, WARNING o ERROR.
+# Valores válidos: DEBUG, INFO, WARNING, ERROR
+# (usado por: app)
+# LOG_LEVEL = "INFO"
+
+
+# ======================================================================================
+# Memoria
+# ======================================================================================
+
+# Si Miku guarda y recuerda cosas que le pedís ('acordate que…').
+# (usado por: memoria)
+# MEMORIA_ACTIVA = True
+
+# Búsqueda por SIGNIFICADO en la memoria y en los archivos (requiere `pip install
+# fastembed`; si no está instalado se busca por palabras).
+# (usado por: memoria)
+# EMBEDDINGS_ACTIVOS = True
+
+# Qué tan parecido (0 a 1) debe ser un recuerdo para que Miku lo use. Más alto = más
+# estricto.
+# (usado por: memoria)
+# EMBEDDINGS_UMBRAL = 0.35
+
+
+# ======================================================================================
+# Sistema, programas y juegos
+# ======================================================================================
+
+# Apps que Miku puede CERRAR por voz (nombre exacto). El Explorador de Windows nunca se
+# cierra aunque esté acá.
+# (usado por: system_control)
+# APP_WHITELIST = ['brave', 'discord', 'tidal', 'vscode', 'code', 'chrome', 'edge', 'spotify', 'steam', 'obs', 'notepad', 'explorer', 'calculadora']
+
+# Ruta a es.exe (Everything CLI) para buscar archivos. Everything tiene que estar
+# abierto en segundo plano.
+# (usado por: system_control)
+# RUTA_EVERYTHING_ES = "bin/es.exe"
+
+# Carpeta de instalación de Steam si no está en la ubicación habitual.
+# (usado por: system_control)
+# STEAM_RUTA = r"D:\Steam"
+
+# Juegos de Epic Games a mano: nombre -> id del ítem (Epic no se detecta solo).
+# (usado por: system_control)
+# JUEGOS_EPIC = {"fortnite": "fn"}
+
+
+# ======================================================================================
+# Carpetas personales
+# ======================================================================================
+
+# Carpetas de acceso rápido: 'abrí la carpeta de animes'. También podés enseñarlas por
+# voz y se guardan solas.
+# (usado por: favoritos)
+# CARPETAS_FAVORITAS = {"animes": r"R:\Animes", "descargas": r"C:\Users\vos\Downloads"}
+
+# Dónde se guardan las capturas de pantalla. Vacío = data/capturas/ dentro del proyecto.
+# (usado por: captura)
+# CARPETA_CAPTURAS = r"D:\Capturas"
+
+
+# ======================================================================================
+# Capturas, OCR y visión
+# ======================================================================================
+
+# Ruta a tesseract.exe para leer texto de la pantalla con mejor precisión. Vacío = se
+# busca en el PATH y, si no está, se usa el OCR incluido en Windows.
+# (usado por: ocr)
+# TESSERACT_RUTA = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+# Idioma del OCR de Tesseract: spa, eng o spa+eng.
+# (usado por: ocr)
+# OCR_IDIOMA = "spa"
+
+
+# ======================================================================================
+# Navegador y música
+# ======================================================================================
+
+# Ruta a brave.exe. Miku lo lanza con el puerto de depuración para controlar las
+# pestañas.
+# (usado por: browser)
+# BRAVE_RUTA_EXE = r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe"
+
+# Carpeta del perfil de Brave a usar (para abrir con tu sesión).
+# (usado por: browser)
+# BRAVE_PERFIL_DIR = ""
+
+# Puerto de depuración remota de Brave.
+# (usado por: browser)
+# BRAVE_DEBUG_PORT = 9222
+
+# Ruta a TIDAL.exe.
+# (usado por: tidal)
+# TIDAL_RUTA_EXE = ""
+
+
+# ======================================================================================
+# Interpolación de video
+# ======================================================================================
+
+# Carpeta con los videos a interpolar. Miku solo procesa videos de esta carpeta.
+# (usado por: video_interpolador)
+# CARPETA_VIDEOS = r"R:\VapourSynth-Env\videos"
+
+# Ruta al .bat que interpola (recibe la ruta completa del video como argumento).
+# (usado por: video_interpolador)
+# RUTA_BAT_INTERPOLAR = r"R:\VapourSynth-Env\Python\interpolar_miku.bat"
+
+
+# ======================================================================================
+# Traductor de juegos y Game Booster
+# ======================================================================================
+
+# Idioma al que se traducen los mensajes de juego cuando no decís uno: 'inglés',
+# 'portugués', 'japonés'…
+# (usado por: traductor_juegos)
+# IDIOMA_JUEGO = ""
+
+# Atajos de mensajes de juego: clave -> frase en español ('gg': 'buena partida').
+# (usado por: traductor_juegos)
+# MENSAJES_JUEGO = {"gg": "buena partida"}
+
+# Procesos de juegos (sin .exe) que activan el modo gaming automático.
+# (usado por: game_booster)
+# JUEGOS_BOOSTER = ["cs2", "fortniteclient-win64-shipping", "genshinimpact"]
+
+# Apps a las que baja el volumen el modo gaming.
+# (usado por: game_booster)
+# BOOSTER_APPS_VOLUMEN = ['brave', 'chrome', 'edge', 'firefox']
+
+# Volumen (0-100) al que se bajan esas apps mientras jugás.
+# (usado por: game_booster)
+# BOOSTER_VOLUMEN_OBJETIVO = 20
+
+# Avisar (notificación + voz) al entrar y salir del modo gaming.
+# (usado por: game_booster)
+# BOOSTER_AVISO = True
+
+
+# ======================================================================================
+# Clima y personalidad
+# ======================================================================================
+
+# Tu ciudad para el clima (Open-Meteo, sin clave).
+# (usado por: clima)
+# CIUDAD_CLIMA = ""
+
+# Latitud, si preferís coordenadas exactas en vez de la ciudad.
+# (usado por: clima)
+# CLIMA_LAT = ""
+
+# Longitud (junto con la latitud).
+# (usado por: clima)
+# CLIMA_LON = ""
+
+# Estilo de Miku: neutral, tsundere, formal o entusiasta.
+# Valores válidos: neutral, tsundere, formal, entusiasta
+# (usado por: personalidad)
+# PERSONALIDAD = "neutral"
+
+
+# ======================================================================================
+# Tareas, control remoto y avisos automáticos
+# ======================================================================================
+
+# Avisos automáticos de batería baja y disco casi lleno.
+# (usado por: asistente_proactivo)
+# PROACTIVO_ACTIVO = True
+
+# Avisar cuando la batería baje de este porcentaje.
+# (usado por: asistente_proactivo)
+# PROACTIVO_BATERIA_MIN = 20
+
+# Avisar cuando queden menos de estos GB libres.
+# (usado por: asistente_proactivo)
+# PROACTIVO_DISCO_GB = 5.0
+
+# Cada cuántos minutos revisa el estado de la PC.
+# (usado por: asistente_proactivo)
+# PROACTIVO_INTERVALO_MIN = 5
+
+# Minutos mínimos entre dos avisos iguales.
+# (usado por: asistente_proactivo)
+# PROACTIVO_COOLDOWN_MIN = 30
+
+
+# ======================================================================================
+# Discord
+# ======================================================================================
+
+# ID del servidor de Discord por defecto (clic derecho en el servidor > Copiar ID, con
+# el Modo desarrollador activado).
+# (usado por: discord_control)
+# DISCORD_GUILD_ID = ""
+
+# Reservado: canal por defecto para futuras funciones.
+# (usado por: discord_control)
+# DISCORD_CANAL_DEFAULT = ""
