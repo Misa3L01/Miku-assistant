@@ -135,20 +135,20 @@ DISCORD_BOT_TOKEN = ""
 
 # Apps que Miku puede CERRAR por voz (nombre exacto). El Explorador de Windows nunca se
 # cierra aunque esté acá.
-# (usado por: system_control)
+# (usado por: programas)
 # APP_WHITELIST = ['brave', 'discord', 'tidal', 'vscode', 'code', 'chrome', 'edge', 'spotify', 'steam', 'obs', 'notepad', 'explorer', 'calculadora']
 
 # Ruta a es.exe (Everything CLI) para buscar archivos. Everything tiene que estar
 # abierto en segundo plano.
-# (usado por: system_control)
+# (usado por: archivos)
 # RUTA_EVERYTHING_ES = "bin/es.exe"
 
 # Carpeta de instalación de Steam si no está en la ubicación habitual.
-# (usado por: system_control)
+# (usado por: programas)
 # STEAM_RUTA = r"D:\Steam"
 
 # Juegos de Epic Games a mano: nombre -> id del ítem (Epic no se detecta solo).
-# (usado por: system_control)
+# (usado por: programas)
 # JUEGOS_EPIC = {"fortnite": "fn"}
 
 

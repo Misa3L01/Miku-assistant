@@ -186,7 +186,7 @@ def registrar_variantes(clave: str, variantes: List[str]) -> None:
 # --------------------------------------------------------------------------- #
 # Variantes registradas de respuestas ANTES hardcodeadas (plugins).
 #
-# Estas frases las produce `miku/plugins/sistema/system_control.py` y quedaban siempre
+# Estas frases las produce `miku/plugins/sistema/` y quedaban siempre
 # EXACTAMENTE iguales (el bug reportado: "canción anterior" -> "Volví a la
 # anterior" repetitivo). Se registran acá, con el mismo tono informal de
 # "listo"/"dale", para que `variar()` las intercepte. Se llama DESPUÉS de

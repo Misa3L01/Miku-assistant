@@ -158,7 +158,7 @@ class Captura(Plugin):
     def _bbox_monitor(monitor: int) -> Optional[tuple]:
         """Devuelve la bounding box (x1, y1, x2, y2) del monitor indicado.
 
-        Usa win32api si está disponible (misma técnica que system_control);
+        Usa win32api si está disponible (misma técnica que el plugin de ventanas);
         devuelve None si no se puede determinar.
         """
         try:

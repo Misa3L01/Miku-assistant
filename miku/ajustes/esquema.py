@@ -147,16 +147,16 @@ _OPCIONES: List[Opcion] = [
                          "spotify", "steam", "obs", "notepad", "explorer", "calculadora"],
        "sistema",
        "Apps que Miku puede CERRAR por voz (nombre exacto). El Explorador de Windows nunca se "
-       "cierra aunque esté acá.", "lista", usado_por="system_control"),
+       "cierra aunque esté acá.", "lista", usado_por="programas"),
     _o("ruta_everything_es", "bin/es.exe", "sistema",
        "Ruta a es.exe (Everything CLI) para buscar archivos. Everything tiene que estar "
-       "abierto en segundo plano.", "ruta", usado_por="system_control"),
+       "abierto en segundo plano.", "ruta", usado_por="archivos"),
     _o("steam_ruta", "", "sistema",
        "Carpeta de instalación de Steam si no está en la ubicación habitual.", "ruta",
-       r'r"D:\Steam"', "system_control"),
+       r'r"D:\Steam"', "programas"),
     _o("juegos_epic", {}, "sistema",
        "Juegos de Epic Games a mano: nombre -> id del ítem (Epic no se detecta solo).", "mapa",
-       'JUEGOS_EPIC = {"fortnite": "fn"}', "system_control"),
+       'JUEGOS_EPIC = {"fortnite": "fn"}', "programas"),
 
     # --------------------------------------------------------------- carpetas
     _o("carpetas_favoritas", {}, "carpetas",

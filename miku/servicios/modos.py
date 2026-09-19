@@ -20,6 +20,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from miku.plataforma import pantalla
+from miku.plataforma.audio import volumen_master
 
 logger = logging.getLogger("miku.modos")
 
@@ -135,9 +136,7 @@ def salir_modo() -> str:
 # --------------------------------------------------------------------------- #
 def _capturar_volumen() -> Optional[Dict[str, Any]]:
     try:
-        from pycaw.pycaw import AudioUtilities
-        dev = AudioUtilities.GetSpeakers()
-        vol = getattr(dev, "EndpointVolume", None)
+        vol = volumen_master()
         if vol is None:
             return None
         return {
@@ -151,9 +150,7 @@ def _capturar_volumen() -> Optional[Dict[str, Any]]:
 
 def _restaurar_volumen(datos: Dict[str, Any]) -> bool:
     try:
-        from pycaw.pycaw import AudioUtilities
-        dev = AudioUtilities.GetSpeakers()
-        vol = getattr(dev, "EndpointVolume", None)
+        vol = volumen_master()
         if vol is None:
             return False
         vol.SetMasterVolumeLevelScalar(float(datos.get("nivel", 0.5)), None)

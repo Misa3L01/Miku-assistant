@@ -1,4 +1,4 @@
-"""Plugins: contrato, seguridad de system_control/video y comportamiento de Qt."""
+"""Plugins: contrato, seguridad de los plugins del sistema y de video, y comportamiento de Qt."""
 from __future__ import annotations
 
 import subprocess
@@ -8,8 +8,10 @@ import time
 import pytest
 
 from miku.plugins import registro
-from miku.plugins.sistema.system_control import SystemControl, _a_entero
 from miku.plugins.productividad.video import VideoInterpolador
+from miku.plugins.sistema.archivos import Archivos
+from miku.plugins.sistema.programas import Programas
+from miku.plugins.utiles import RutasOfrecidas, a_entero
 
 
 # ---------------------------------------------------------------- contrato / registro
@@ -54,10 +56,15 @@ def test_tool_desconocida_devuelve_none(plugins_cargados):
         assert p.manejar_tool("tool_que_no_existe", {}, {}) is None
 
 
-# ---------------------------------------------------------------- system_control
+# ---------------------------------------------------------------- programas / archivos
 @pytest.fixture
 def sc():
-    return SystemControl()
+    return Programas()
+
+
+@pytest.fixture
+def archivos():
+    return Archivos()
 
 
 def test_alias_por_palabras_no_por_substring(sc):
@@ -87,25 +94,35 @@ def test_cerrar_programa_permitido_usa_taskkill(sc, monkeypatch):
     assert comandos[0][:2] == ["taskkill", "/IM"]
 
 
-def test_ruta_elegida_solo_si_fue_ofrecida(sc):
-    sc.initialize(None)
-    assert "no es una de las que te ofrecí" in sc.manejar_tool(
-        "abrir_programa", {"ruta_elegida": r"C:\Windows\System32\cmd.exe"}, {})
-    sc._registrar_ofrecidas([r"C:\Juegos\a.exe"])
-    assert sc._fue_ofrecida(r"c:\juegos\A.EXE")               # sin distinguir mayúsculas (Windows)
+@pytest.mark.parametrize("plugin_,tool", [("sc", "abrir_programa"), ("archivos", "buscar_archivo")])
+def test_ruta_elegida_solo_si_fue_ofrecida(request, plugin_, tool):
+    p = request.getfixturevalue(plugin_)
+    assert "no es una de las que te ofrecí" in p.manejar_tool(
+        tool, {"ruta_elegida": r"C:\Windows\System32\cmd.exe"}, {})
 
 
-def test_buscar_archivo_no_lanza_ejecutables(sc, monkeypatch):
+def test_rutas_ofrecidas():
+    r = RutasOfrecidas()
+    assert not r.contiene(r"C:\Juegos\a.exe")
+    r.registrar([r"C:\Juegos\a.exe"])
+    assert r.contiene(r"c:\juegos\A.EXE")                     # sin distinguir mayúsculas (Windows)
+    r.registrar([])
+    assert not r.contiene(r"C:\Juegos\a.exe"), "solo vale la ÚLTIMA desambiguación"
+
+
+def test_buscar_archivo_no_lanza_ejecutables(archivos, monkeypatch):
+    from miku.plugins.sistema import archivos as modulo
     abierto = []
-    monkeypatch.setattr(sc, "_abrir_resultado", lambda ruta, carpeta: abierto.append((ruta, carpeta)) or "ok")
-    sc._abrir_archivo_buscado(r"C:\x\instalador.exe", False)
-    sc._abrir_archivo_buscado(r"C:\x\notas.txt", False)
+    monkeypatch.setattr(modulo, "abrir_resultado",
+                        lambda ruta, carpeta: abierto.append((ruta, carpeta)) or "ok")
+    archivos._abrir_archivo_buscado(r"C:\x\instalador.exe", False)
+    archivos._abrir_archivo_buscado(r"C:\x\notas.txt", False)
     assert abierto == [(r"C:\x\instalador.exe", True), (r"C:\x\notas.txt", False)]
 
 
 @pytest.mark.parametrize("valor,defecto,esperado", [(5, 1, 5), ("7", 1, 7), ("diez", 3, 3), (None, 4, 4), (2.9, 1, 2)])
 def test_a_entero(valor, defecto, esperado):
-    assert _a_entero(valor, defecto) == esperado
+    assert a_entero(valor, defecto) == esperado
 
 
 # ---------------------------------------------------------------- video_interpolador
@@ -273,3 +290,107 @@ def test_powershell_utf8_y_sin_ventana(monkeypatch):
     assert capturado["cmd"][-1].startswith("[Console]::OutputEncoding")
     assert capturado["encoding"] == "utf-8" and capturado["creationflags"] == subprocesos.sin_ventana()
     assert capturado["shell"] is False
+
+
+# ---------------------------------------------------------------- plugins del sistema (tras dividir system_control)
+from miku.plataforma.everything import Everything  # noqa: E402
+from miku.plugins.sistema.audio import Audio  # noqa: E402
+from miku.plugins.sistema.biblioteca_juegos import BibliotecaJuegos  # noqa: E402
+from miku.plugins.sistema.energia import Energia  # noqa: E402
+
+
+def test_everything_ranking_prioriza_el_nombre_y_penaliza_accesos_directos():
+    ev = Everything()
+    bueno = ev.puntaje(r"C:\Juegos\Brave\brave.exe", ["brave"])
+    atajo = ev.puntaje(r"C:\Users\x\AppData\Roaming\Recent\brave.lnk", ["brave"])
+    otro = ev.puntaje(r"C:\Windows\Prefetch\cualquier.pf", ["brave"])
+    assert bueno > atajo and bueno > otro
+
+
+def test_everything_gana_solo_si_es_claro():
+    ev = Everything()
+    rutas = [r"C:\a\brave.exe", r"C:\b\otra_cosa.exe"]
+    assert ev.elegir_mejor(rutas, [50, 10], nombre="brave") == r"C:\a\brave.exe"
+    assert ev.elegir_mejor([r"C:\a\x.exe", r"C:\b\y.exe"], [20, 19], nombre="zzz") is None, "empate: hay que preguntar"
+
+
+def test_biblioteca_steam_busca_por_nombre_tolerante():
+    b = BibliotecaJuegos()
+    b._juegos_steam = {"counter strike 2": "730", "peak": "3527290"}
+    assert b.buscar_steam("Counter-Strike 2") == "730"
+    assert b.buscar_steam("peak") == "3527290"
+    assert b.buscar_steam("juego inexistente") is None
+
+
+def test_biblioteca_actualizar_cuenta_juegos(monkeypatch):
+    b = BibliotecaJuegos()
+    monkeypatch.setattr(b, "_escanear_biblioteca_steam", lambda: {"a": "1", "b": "2"})
+    assert b.actualizar() == 2
+
+
+@pytest.mark.parametrize("texto,valido", [("18:30", True), ("18h", True), ("7", True), ("25:99", False), ("mañana", False)])
+def test_hora_exacta_de_los_recordatorios(texto, valido):
+    segundos = Energia()._segundos_hasta_hora(texto)
+    assert (segundos is not None and 0 < segundos <= 86400) is valido
+
+
+def test_programar_accion_sin_scheduler_avisa():
+    assert "programador" in Energia().programar_accion("recordatorio", 5, "algo", {})
+
+
+def test_volumen_por_app_guarda_y_restaura(monkeypatch):
+    class Vol:
+        def __init__(self, nivel):
+            self.nivel = nivel
+
+        def GetMasterVolume(self):
+            return self.nivel
+
+        def SetMasterVolume(self, nivel, _ctx):
+            self.nivel = nivel
+
+    class Sesion:
+        def __init__(self, pid, nivel):
+            self.ProcessId, self.SimpleAudioVolume = pid, Vol(nivel)
+
+    audio = Audio()
+    sesiones = [Sesion(10, 0.8), Sesion(11, 0.4)]
+    monkeypatch.setattr(audio, "_sesiones_de_app", lambda nombre: sesiones)
+    previos = audio.volumenes_de_app("brave")
+    assert previos == {10: 0.8, 11: 0.4}
+    for s in sesiones:
+        s.SimpleAudioVolume.nivel = 0.2                      # el modo gaming los baja
+    assert audio.restaurar_volumenes_app("brave", previos) == 2
+    assert [s.SimpleAudioVolume.nivel for s in sesiones] == [0.8, 0.4]
+
+
+def test_ajustar_volumen_tolera_argumentos_basura(monkeypatch):
+    audio = Audio()
+    monkeypatch.setattr(audio, "_volumen_pycaw", lambda: None)
+    monkeypatch.setattr(audio, "_enviar_tecla_virtual", lambda clave: True)
+    assert "volumen" in audio.ajustar_volumen("subir", paso="diez").lower()
+
+
+def test_los_plugins_del_sistema_estan_registrados(plugins_cargados):
+    nombres = {p.nombre for p in plugins_cargados}
+    assert {"programas", "archivos", "audio", "energia", "ventanas"} <= nombres
+
+
+# ---------------------------------------------------------------- plataforma: audio
+from miku.plataforma import audio as audio_plataforma  # noqa: E402
+
+
+def test_sesiones_de_app_no_coincide_con_nombres_vacios(monkeypatch):
+    assert audio_plataforma.sesiones_de_app("") == []
+    assert audio_plataforma.sesiones_de_app("-") == []
+
+
+def test_modos_y_audio_comparten_el_acceso_a_pycaw():
+    from miku.servicios import modos
+    assert modos.volumen_master is audio_plataforma.volumen_master
+
+
+def test_enviar_tecla_desconocida_devuelve_false(monkeypatch):
+    import sys as _sys
+    monkeypatch.setitem(_sys.modules, "keyboard", None)          # sin la librería 'keyboard'
+    assert audio_plataforma.enviar_tecla("no_existe") is False

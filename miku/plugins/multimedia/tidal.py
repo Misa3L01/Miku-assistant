@@ -11,7 +11,7 @@ TIDAL (app de escritorio) NO expone una API pública de reproducción, así que:
       título/artista del reproductor de media ACTUAL. Es best-effort: si no se
       puede, lo decimos claro (límite real de Windows, no nuestro).
 
-Ver también: control multimedia genérico en ``miku/plugins/sistema/system_control.py``
+Ver también: control multimedia genérico en ``miku/plugins/sistema/audio.py``
 (``control_multimedia``); este plugin lo especializa para TIDAL.
 """
 from __future__ import annotations

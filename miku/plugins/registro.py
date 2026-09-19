@@ -36,7 +36,11 @@ class _Entrada(NamedTuple):
 
 
 _CATALOGO: List[_Entrada] = [
-    _Entrada("sistema.system_control", "SystemControl"),
+    _Entrada("sistema.programas", "Programas"),
+    _Entrada("sistema.archivos", "Archivos"),
+    _Entrada("sistema.audio", "Audio"),
+    _Entrada("sistema.energia", "Energia"),
+    _Entrada("sistema.ventanas", "Ventanas"),
     _Entrada("navegacion.web", "WebSearch"),
     _Entrada("productividad.macros", "Macros"),
     _Entrada("productividad.video", "VideoInterpolador"),

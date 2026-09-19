@@ -128,8 +128,8 @@ sacale el `#`. Las opciones principales:
 | `MICROFONO_INDEX` | Micrófono fijo (`None` = el del sistema) | STT |
 | `MODO_ENTRADA`, `LOG_LEVEL` | Modo por defecto de la consola; nivel de log | `main` |
 | `MEMORIA_ACTIVA`, `EMBEDDINGS_ACTIVOS`, `EMBEDDINGS_UMBRAL` | Memoria persistente y búsqueda semántica | memoria |
-| `APP_WHITELIST` | Apps que se pueden cerrar por voz (`explorer` **nunca** se cierra) | `system_control` |
-| `STEAM_RUTA`, `JUEGOS_EPIC` | Abrir juegos | `system_control` |
+| `APP_WHITELIST` | Apps que se pueden cerrar por voz (`explorer` **nunca** se cierra) | `programas` |
+| `STEAM_RUTA`, `JUEGOS_EPIC` | Abrir juegos | `programas` |
 | `CARPETA_VIDEOS`, `RUTA_BAT_INTERPOLAR` | Interpolación de video | `video_interpolador` |
 | `IDIOMA_JUEGO`, `MENSAJES_JUEGO` | Traductor de mensajes de juego | `traductor_juegos` |
 | `CARPETAS_FAVORITAS`, `CARPETA_CAPTURAS` | Carpetas rápidas y destino de capturas | `favoritos`, `captura` |
@@ -164,6 +164,7 @@ miku-assistant/
 ├── extern/VOICEVOX/              # (gitignored) motor de voz local
 ├── docs/                         # Bitácoras, plan de reestructuración, empaquetado, interpolación
 └── miku/
+    ├── plataforma/               # Helpers de Windows compartidos: texto · subprocesos · pantalla · audio · everything
     ├── app.py                    # Ensambla todo: Asistente, modos (voz/push/texto), cierre ordenado
     ├── ajustes/                  # Configuración
     │   ├── esquema.py            #   Esquema ÚNICO de opciones (tipo, default, descripción)
@@ -184,7 +185,7 @@ miku-assistant/
     └── plugins/
         ├── base.py               #   Clase base Plugin (contrato documentado en el módulo)
         ├── registro.py           #   Catálogo de plugins con carga perezosa y aislada
-        ├── sistema/              #   system_control · estado_pc
+        ├── sistema/              #   programas · archivos · audio · energia · ventanas · estado_pc (+ biblioteca_juegos)
         ├── navegacion/           #   web (búsqueda) · brave (pestañas por CDP)
         ├── multimedia/           #   tidal
         ├── pantalla/             #   captura · ocr · vision
@@ -206,7 +207,7 @@ miku-assistant/
 
 ### Confirmaciones
 
-Cada plugin declara en `peligrosas` qué tools exigen confirmación (`system_control`: `control_energia` y `programar_accion`; `discord_control`: las tres). El parser guarda `{tool, args}`, pregunta y espera:
+Cada plugin declara en `peligrosas` qué tools exigen confirmación (`energia`: `control_energia` y `programar_accion`; `discord_control`: las tres). El parser guarda `{tool, args}`, pregunta y espera:
 
 - **Confirma** solo con palabras completas ("sí", "dale", "ok", "confirmo"…). "No, dejalo así" **no** confirma.
 - **Cancelar tiene prioridad** ("no, dale" cancela).
@@ -227,7 +228,11 @@ Se cargan de forma perezosa desde `miku/plugins/registro.py`; uno roto o sin dep
 
 | Plugin | Tools | Requiere |
 |---|---|---|
-| `system_control` | `abrir_programa`, `cerrar_programa`, `controlar_brillo`, `listar_ventanas`, `mover_ventana`, `posicionar_ventana`, `organizar_ventanas`, `minimizar_ventana`, `control_multimedia`, `ajustar_volumen` (general o por `app`), `mutear_app`, `buscar_archivo`, `actualizar_biblioteca_juegos`, `control_energia` ⚠️, `programar_accion` ⚠️, `cancelar_accion_programada` | AppOpener, pywin32, pycaw, Everything (opcional) |
+| `programas` | `abrir_programa`, `cerrar_programa`, `actualizar_biblioteca_juegos` | AppOpener, Steam/Epic, Everything (opcional) |
+| `archivos` | `buscar_archivo` | Everything |
+| `audio` | `control_multimedia`, `ajustar_volumen` (general o por `app`), `mutear_app` | pycaw |
+| `energia` | `control_energia` ⚠️, `programar_accion` ⚠️, `cancelar_accion_programada`, `controlar_brillo` | — |
+| `ventanas` | `listar_ventanas`, `mover_ventana`, `posicionar_ventana`, `organizar_ventanas`, `minimizar_ventana` | pywin32 |
 | `web_search` | `buscar_en_web` (MercadoLibre, YouTube, Google, Wikipedia, GitHub o dominio) | — |
 | `browser` | `abrir_pestana`, `cerrar_pestana`, `buscar_en_pestana_actual` | Brave (`BRAVE_RUTA_EXE`), CDP |
 | `tidal` | `controlar_tidal`, `que_esta_sonando` | TIDAL / Windows SMTC |

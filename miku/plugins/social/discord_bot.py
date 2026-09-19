@@ -208,24 +208,23 @@ class DiscordControl(Plugin):
             return None
 
     def _correr_loop(self) -> None:
-        """Crea el event loop del hilo y arranca el cliente de Discord."""
+        """Crea el event loop del hilo, lanza el cliente de Discord y lo deja corriendo.
+
+        El loop solo se detiene desde ``cerrar()``: así una conexión que falla no lo termina y
+        las tools pueden seguir respondiendo con el motivo del error.
+        """
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
+        self._loop.create_task(self._arrancar_cliente())
         try:
-            self._loop.run_until_complete(self._arrancar_cliente())
-        except Exception as e:  # noqa: BLE001
-            if self._cerrando:
-                # ``cerrar()`` frenó el loop con el cliente todavía conectando.
-                logger.debug("Loop de Discord detenido al cerrar (%s).", e)
-            else:
-                self._ultimo_error = f"Error arrancando el bot: {e}"
-                logger.exception("Error arrancando el cliente de Discord.")
+            self._loop.run_forever()
+        except Exception:  # noqa: BLE001
+            logger.exception("El loop de Discord terminó con error.")
         finally:
-            if not self._cerrando:
-                try:
-                    self._loop.run_forever()
-                except Exception:  # noqa: BLE001
-                    logger.exception("El loop de Discord terminó con error.")
+            try:
+                self._loop.close()
+            except Exception:  # noqa: BLE001
+                pass
 
     async def _arrancar_cliente(self) -> None:
         """Construye y lanza el cliente de Discord (async)."""
@@ -604,17 +603,24 @@ class DiscordControl(Plugin):
         if self._loop is None:
             return
         try:
-            if self._client is not None and not self._client.is_closed():
-                cerrar = asyncio.run_coroutine_threadsafe(
-                    self._client.close(), self._loop)
-                try:
-                    cerrar.result(timeout=5.0)
-                except Exception:  # noqa: BLE001
-                    pass
+            apagado = asyncio.run_coroutine_threadsafe(self._apagar(), self._loop)
+            apagado.result(timeout=5.0)
         except Exception:  # noqa: BLE001
             logger.debug("No se pudo cerrar el cliente de Discord limpiamente.")
         try:
             self._loop.call_soon_threadsafe(self._loop.stop)
         except Exception:  # noqa: BLE001
             pass
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
         self._activo = False
+
+    async def _apagar(self) -> None:
+        """Cierra el cliente y CANCELA lo que quede pendiente en el loop (p. ej. una conexión
+        a medio hacer), para que el intérprete no termine con tareas colgadas."""
+        if self._client is not None and not self._client.is_closed():
+            await self._client.close()
+        pendientes = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        for tarea in pendientes:
+            tarea.cancel()
+        await asyncio.gather(*pendientes, return_exceptions=True)

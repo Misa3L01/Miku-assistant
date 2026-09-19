@@ -9,7 +9,7 @@ Cómo funciona:
     - Si el proceso está en la lista configurable ``JUEGOS_BOOSTER``:
         * Captura un SNAPSHOT (volumen/resolución/brillo) vía ``miku/servicios/modos``.
         * Baja el volumen de las apps de ``BOOSTER_APPS_VOLUMEN`` al nivel
-          ``BOOSTER_VOLUMEN_OBJETIVO`` (usa ``SystemControl``/pycaw).
+          ``BOOSTER_VOLUMEN_OBJETIVO`` (usa el plugin ``audio``/pycaw).
         * Avisa (toast + voz corta) si ``BOOSTER_AVISO``.
     - Al SALIR del juego (el primer plano deja de ser ese proceso durante un
       par de chequeos), revierte con ``core.modos.salir_modo`` si hay snapshot.
@@ -61,10 +61,10 @@ class GameBooster(Plugin):
         # ``_activar``/``_desactivar`` las llaman el hilo de vigilancia y
         # ``cerrar()``: el lock evita que corran a la vez.
         self._lock = threading.RLock()
-        # Referencia al plugin SystemControl YA registrado en el bus (se
+        # Referencia al plugin de audio YA registrado en el bus (se
         # resuelve en runtime; evita instanciar pycaw/win32 de nuevo).
-        self._system_control: Optional[Any] = None
-        # Para avisar UNA sola vez si no encontramos SystemControl.
+        self._audio: Optional[Any] = None
+        # Para avisar UNA sola vez si no encontramos el plugin de audio.
         self._avisado_sin_sc = False
 
     # ---------------------------------------------------------- #
@@ -187,7 +187,7 @@ class GameBooster(Plugin):
     def _bajar_volumen_apps(self) -> None:
         """Baja el volumen de las apps configuradas al nivel objetivo.
 
-        Reusa la instancia de ``SystemControl`` YA registrada en el bus: crear
+        Reusa la instancia del plugin ``audio`` YA registrada en el bus: crear
         una nueva en cada ciclo reinicializa pycaw/win32 sin necesidad. Si no
         la encuentra, avisa por log y sigue (el hilo de vigilancia nunca debe
         morir por esto).
@@ -196,7 +196,7 @@ class GameBooster(Plugin):
         objetivo = config_mod.config.booster_volumen_objetivo
         if not apps:
             return
-        sc = self._obtener_system_control()
+        sc = self._obtener_audio()
         if sc is None:
             return
         for app in apps:
@@ -216,7 +216,7 @@ class GameBooster(Plugin):
         previos, self._volumenes_previos = self._volumenes_previos, {}
         if not previos:
             return
-        sc = self._obtener_system_control()
+        sc = self._obtener_audio()
         if sc is None:
             return
         for app, niveles in previos.items():
@@ -225,29 +225,29 @@ class GameBooster(Plugin):
             except Exception as e:  # noqa: BLE001
                 logger.debug("GameBooster: no pude restaurar '%s': %s", app, e)
 
-    def _obtener_system_control(self) -> Optional[Any]:
-        """Devuelve el plugin ``SystemControl`` ya registrado en el bus.
+    def _obtener_audio(self) -> Optional[Any]:
+        """Devuelve el plugin ``audio`` ya registrado en el bus.
 
-        Se busca por ``nombre == "system_control"`` en ``event_bus.plugins`` y
+        Se busca por ``nombre == "audio"`` en ``event_bus.plugins`` y
         se cachea la referencia (no se recorre el bus en cada ciclo).
 
         Returns:
             La instancia registrada, o None si no está (se avisa una sola vez
             por log y el llamador sigue sin romper nada).
         """
-        if self._system_control is not None:
-            return self._system_control
+        if self._audio is not None:
+            return self._audio
         plugins = getattr(self._event_bus, "plugins", None) \
             if self._event_bus is not None else None
         for plugin in plugins or []:
-            if getattr(plugin, "nombre", "") == "system_control":
-                self._system_control = plugin
-                logger.debug("GameBooster: reusando el SystemControl del bus.")
+            if getattr(plugin, "nombre", "") == "audio":
+                self._audio = plugin
+                logger.debug("GameBooster: reusando el plugin de audio del bus.")
                 return plugin
         if not self._avisado_sin_sc:
             self._avisado_sin_sc = True
             logger.warning(
-                "GameBooster: no encontré el plugin 'system_control' en el "
+                "GameBooster: no encontré el plugin 'audio' en el "
                 "bus; no voy a bajar el volumen por app (sigo sin eso).")
         return None
 

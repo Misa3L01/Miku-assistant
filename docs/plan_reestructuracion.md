@@ -12,7 +12,8 @@ Decisiones del dueño del proyecto: reestructuración **completa** con estructur
 | A. Tests (pytest) | ✅ hecha: 119 tests en ~5 s |
 | B. Esquema de configuración, validación, asistente y `.example` generado | ✅ hecha (y `config_local.py` completado con 38 opciones comentadas, sin tocar valores) |
 | C. Mover a `miku/` | ✅ hecha (movimientos confirmados). Desvíos menores de nombre respecto de 4.1: `voz/salida/tts.py` (se llamará `cola.py` recién al partirlo en la fase F), `social/discord_bot.py` y `social/telegram_bot.py` (para no llamar `discord.py`/`telegram.py` a un archivo que hace `import discord`/`import telegram`), y `plugins/asistente/proactivo.py`. `run.bat`/`run.ps1` en la raíz quedan como atajos a `scripts/` |
-| D–I | pendientes (ver 4.3) |
+| D. Dividir `system_control` y capa `plataforma/` | ✅ hecha: `system_control.py` (2.558 líneas) → plugins `programas`, `archivos`, `audio`, `energia`, `ventanas` + `biblioteca_juegos`; capa `plataforma/` con `texto`, `subprocesos`, `pantalla`, `audio`, `everything`; 7 copias de normalización, 3 de `_sin_ventana`, 2 de `DEVMODE` y 2 de acceso a pycaw eliminadas. Las primitivas de ventanas (win32) siguen dentro del plugin `ventanas` porque nadie más las usa |
+| E–I | pendientes (ver 4.3) |
 
 Además, ya resuelto: limpieza de `data/preferences.json` (copia en `preferences.json.bak`; la clave `juegos: {zzz: [tidal, discord]}` parece una idea de "abrir estas apps al lanzar el juego": semilla para los perfiles de juego), prueba real de interpolación (funciona; `.bat` revisado y defecto del `.vpy` en
 `docs/interpolacion/`), y verificación de que el driver acepta 1920x1440 (`CDS_TEST`).
