@@ -39,6 +39,7 @@ from miku.ajustes import carga as config_mod
 from miku.servicios.eventos import EventBus
 from miku.cerebro.parser import BrainGroq, CommandParser
 from miku.servicios import recordatorios, tecla as tecla_mod
+from miku.voz.frases import catalogo_respuestas
 from miku.servicios.scheduler import Scheduler
 from miku.voz.frases import tono
 from miku.ui import bandeja as bandeja_mod
@@ -299,22 +300,31 @@ class Asistente:
         return True
 
     def _saludar(self) -> None:
-        """Saludo de arranque con contexto (hora + clima + pendientes), una sola vez."""
+        """Saludo corto al arrancar (sin hora ni clima), una sola vez.
+
+        La hora y el clima ya no se dicen en cada arranque: se dan "de vez en cuando", al volver de una
+        ausencia (regla ``BriefingAlVolver``). Con ``BRIEFING_AL_INICIAR = True`` se recupera el viejo
+        resumen completo. Un recordatorio que venció con Miku cerrada siempre se avisa.
+        """
         if self._saludo_dado:
             return
         self._saludo_dado = True
         perdidos = recordatorios.texto_perdidos(self._recordatorios_perdidos)
         self._recordatorios_perdidos = []
         if not self.cfg.saludo_al_iniciar:
-            # Sin saludo, un recordatorio vencido igual se avisa: es lo único que no puede perderse.
             if perdidos:
                 self.decir(perdidos)
             return
         try:
-            from miku.servicios import briefing
-            saludo = briefing.generar(self._contexto_base())
+            if self.cfg.get("briefing_al_iniciar", False):
+                from miku.servicios import briefing
+                saludo = briefing.generar(self._contexto_base())
+            else:
+                from miku.voz.frases.banco import frases
+                catalogo_respuestas.registrar()
+                saludo = frases.elegir("app.arranque")
         except Exception:  # noqa: BLE001
-            logger.exception("No pude armar el briefing; uso el saludo simple.")
+            logger.exception("No pude armar el saludo; uso el simple.")
             saludo = "Ya estoy lista"
         self.decir(f"{saludo} {perdidos}".strip())
 

@@ -282,8 +282,8 @@ class Config:
 
     @property
     def gemini_modelo(self) -> str:
-        return str(self.valores.get("gemini_modelo", "gemini-2.0-flash") or
-                   "gemini-2.0-flash").strip()
+        return str(self.valores.get("gemini_modelo", "gemini-flash-latest") or
+                   "gemini-flash-latest").strip()
 
     # ---------- Todoist ----------
     @property

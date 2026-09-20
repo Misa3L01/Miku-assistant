@@ -90,8 +90,14 @@ _OPCIONES: List[Opcion] = [
        "Clave de Google AI Studio (https://aistudio.google.com) para que Miku pueda MIRAR la "
        "pantalla (`ver_pantalla`). OJO: la captura se envía a Google. No hace falta para leer "
        "texto de la pantalla (eso es OCR local).", "secreto", usado_por="vision"),
-    _o("gemini_modelo", "gemini-2.0-flash", "claves",
-       "Modelo de visión de Gemini.", usado_por="vision"),
+    _o("gemini_modelo", "gemini-flash-latest", "claves",
+       "Modelo de visión de Gemini. 'gemini-flash-latest' siempre apunta al Flash vigente (Google "
+       "retira los modelos con número, p. ej. gemini-2.0-flash ya no existe).", usado_por="vision"),
+    _o("vision_proveedor", "auto", "pantalla",
+       "Quién mira la pantalla: 'auto' (Gemini y, si falla por clave/créditos, Groq), 'gemini' o 'groq'.",
+       usado_por="vision", permitidos=("auto", "gemini", "groq")),
+    _o("vision_modelo_groq", "qwen/qwen3.8-27b", "pantalla",
+       "Modelo de Groq que ve imágenes (respaldo de la visión).", usado_por="vision"),
     _o("todoist_api_token", "", "claves",
        "Token personal de Todoist (Ajustes > Integraciones > Desarrollador). El plan gratis "
        "alcanza.", "secreto", usado_por="todoist"),
@@ -309,6 +315,18 @@ _OPCIONES: List[Opcion] = [
        usado_por="asistente_proactivo"),
     _o("proactivo_cooldown_min", 30, "avisos",
        "Minutos mínimos entre dos avisos iguales.", "entero", usado_por="asistente_proactivo"),
+    _o("briefing_al_volver", True, "avisos",
+       "Cuando volvés tras un rato sin tocar la PC (AFK), Miku te da la hora, el clima y tus "
+       "pendientes. Necesita PROACTIVO_ACTIVO.", "booleano", usado_por="asistente_proactivo"),
+    _o("briefing_afk_min", 30, "avisos",
+       "Minutos sin teclado ni mouse para considerar que estuviste ausente.", "entero",
+       usado_por="asistente_proactivo"),
+    _o("briefing_cooldown_h", 4, "avisos",
+       "Horas mínimas entre dos resúmenes al volver (para que sea 'de vez en cuando').", "decimal",
+       usado_por="asistente_proactivo"),
+    _o("briefing_al_iniciar", False, "voz",
+       "Al arrancar, Miku dice el resumen completo (hora, clima y pendientes) en vez de un saludo "
+       "corto.", "booleano", usado_por="app"),
     _o("proactivo_max_por_hora", 4, "avisos",
        "Máximo de avisos por hora (para que no moleste). 0 = sin límite.", "entero",
        usado_por="asistente_proactivo"),

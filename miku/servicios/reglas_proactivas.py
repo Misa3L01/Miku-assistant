@@ -11,7 +11,7 @@ import logging
 import re
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
-from miku.plataforma import hardware, openmeteo
+from miku.plataforma import hardware, inactividad, openmeteo
 from miku.servicios.proactivo import Aviso, Contexto, Regla
 
 logger = logging.getLogger("miku.servicios.reglas_proactivas")
@@ -240,10 +240,52 @@ class GpuCaliente(Regla):
         return ()
 
 
-def reglas_por_defecto(cfg: Any) -> List[Regla]:
-    """Conjunto de reglas del asistente según la configuración."""
+class BriefingAlVolver(Regla):
+    """Cuando volvés tras un rato ausente (AFK), te da la hora, el clima y tus pendientes.
+
+    Se considera "ausente" tras ``briefing_afk_min`` minutos sin tocar teclado ni mouse; al volver
+    a usar la PC se arma el resumen. El cooldown (``briefing_cooldown_h``) evita que lo repita cada
+    vez que te levantás un rato: es "de vez en cuando", no en cada regreso.
+    """
+
+    nombre = "briefing_afk"
+    intervalo = 15.0
+
+    def __init__(self, contexto: Callable[[], Optional[dict]] = lambda: None,
+                 inactivo: Callable[[], float] = inactividad.segundos_inactivo) -> None:
+        self._contexto = contexto
+        self._inactivo = inactivo
+        self._estuvo_ausente = False
+
+    def evaluar(self, ctx: Contexto) -> Iterable[Aviso]:
+        if not ctx.cfg.get("briefing_al_volver", True):
+            return ()
+        idle = self._inactivo()
+        if idle >= _num(ctx.cfg, "briefing_afk_min", 30) * 60:
+            self._estuvo_ausente = True
+            return ()
+        if not (self._estuvo_ausente and idle < 30):
+            return ()
+        self._estuvo_ausente = False
+        from miku.servicios import briefing
+        from miku.voz.frases.banco import frases
+        try:
+            texto = briefing.generar(self._contexto(), encabezado=frases.elegir("briefing.vuelta"))
+        except Exception as e:  # noqa: BLE001
+            logger.debug("No pude armar el resumen al volver: %s", e)
+            return ()
+        return [Aviso("briefing.afk", "briefing.texto", {"texto": texto},
+                      cooldown_min=_num(ctx.cfg, "briefing_cooldown_h", 4) * 60)]
+
+
+def reglas_por_defecto(cfg: Any, contexto: Callable[[], Optional[dict]] = lambda: None) -> List[Regla]:
+    """Conjunto de reglas del asistente según la configuración.
+
+    Args:
+        contexto: ``f() -> dict`` con el contexto de runtime (scheduler...) para el resumen al volver.
+    """
     reglas: List[Regla] = [BateriaBaja(cfg), DiscoLleno(cfg), EstadoAlJugar(), CargaSostenida(),
-                           GpuCaliente()]
+                           GpuCaliente(), BriefingAlVolver(contexto)]
     if cfg.get("proactivo_clima", True):
         reglas.append(ClimaAvisos(cfg))
     return reglas

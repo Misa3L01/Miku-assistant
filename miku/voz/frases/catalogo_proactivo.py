@@ -64,6 +64,13 @@ CATALOGO: Dict[str, List[str]] = {
         "Batería baja: {porcentaje}%. Enchufá el cargador.",
         "Ojo que la batería está en {porcentaje}%. Cargala pronto.",
     ],
+    "briefing.texto": ["{texto}"],
+    "briefing.vuelta": [
+        "Bienvenido de vuelta",
+        "Ya volviste",
+        "Qué bueno verte de nuevo",
+        "Volviste",
+    ],
     "pc.disco": [
         "Te quedan {libre} GB libres en el disco. Conviene liberar espacio.",
         "Poco espacio en disco: {libre} GB libres. Hacé un poco de limpieza.",
@@ -83,6 +90,8 @@ TITULOS: Dict[str, str] = {
     "pc.gpu_caliente": "GPU muy caliente",
     "pc.bateria": "Batería baja",
     "pc.disco": "Poco espacio en disco",
+    "briefing.texto": "Miku",
+    "briefing.vuelta": "Miku",
 }
 
 

@@ -263,6 +263,14 @@ CATALOGO: Dict[str, List[str]] = {
         "Busqué {consulta} en una pestaña nueva.",
     ],
 
+    "app.arranque": [
+        "Ya estoy lista.",
+        "Acá estoy.",
+        "Lista para lo que necesites.",
+        "Ya arranqué.",
+        "Presente.",
+    ],
+
     # ---------------------------------------------------------------------- macros
     "macros.lista": [
         "Tengo {cantidad} macros: {nombres}.",

@@ -20,12 +20,13 @@ from miku.voz.frases.respuesta import hubo_falla
 logger = logging.getLogger("miku.briefing")
 
 
-def generar(contexto: Optional[dict] = None) -> str:
-    """Arma el saludo de arranque con contexto.
+def generar(contexto: Optional[dict] = None, encabezado: Optional[str] = None) -> str:
+    """Arma un resumen con contexto (hora, clima y pendientes).
 
     Args:
         contexto: dict de runtime (puede traer "scheduler" para los
             recordatorios pendientes). Opcional.
+        encabezado: Cómo empieza ("Bienvenido de vuelta"). Por defecto, el saludo según la hora.
 
     Returns:
         Una frase natural y corta (siempre no vacía).
@@ -33,7 +34,7 @@ def generar(contexto: Optional[dict] = None) -> str:
     partes: List[str] = []
 
     # 1) Saludo según la hora del día.
-    partes.append(_saludo_hora())
+    partes.append(encabezado or _saludo_hora())
 
     # 2) Hora actual (breve).
     hora = datetime.now().strftime("%H:%M")

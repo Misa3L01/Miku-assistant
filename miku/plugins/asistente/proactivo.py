@@ -46,10 +46,15 @@ class AsistenteProactivo(Plugin):
         except Exception as e:  # noqa: BLE001
             logger.warning("psutil no disponible (%s): proactivo inactivo.", e)
             return
-        self._motor = MotorProactivo(cfg, reglas_por_defecto(cfg), self._emitir,
+        self._motor = MotorProactivo(cfg, reglas_por_defecto(cfg, self._contexto), self._emitir,
                                      ruta_estado=BASE_DIR / "data" / "proactivo_estado.json")
         self._motor.iniciar()
         logger.info("Asistente proactivo activo (%d reglas).", len(self._motor.reglas))
+
+    def _contexto(self) -> Optional[dict]:
+        """Contexto de runtime de la app (scheduler...), si ya está armado."""
+        fabrica = getattr(self._event_bus, "contexto_base", None)
+        return fabrica() if callable(fabrica) else None
 
     def cerrar(self) -> None:
         """Detiene el motor (lo llama la app al cerrar)."""

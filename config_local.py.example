@@ -44,9 +44,10 @@ GROQ_API_KEY_STT = ""
 # (usado por: vision)
 GEMINI_API_KEY = ""
 
-# Modelo de visión de Gemini.
+# Modelo de visión de Gemini. 'gemini-flash-latest' siempre apunta al Flash vigente
+# (Google retira los modelos con número, p. ej. gemini-2.0-flash ya no existe).
 # (usado por: vision)
-# GEMINI_MODELO = "gemini-2.0-flash"
+# GEMINI_MODELO = "gemini-flash-latest"
 
 # Token personal de Todoist (Ajustes > Integraciones > Desarrollador). El plan gratis
 # alcanza.
@@ -174,6 +175,11 @@ LLM_API_KEY = ""
 # (usado por: app)
 # LOG_LEVEL = "INFO"
 
+# Al arrancar, Miku dice el resumen completo (hora, clima y pendientes) en vez de un
+# saludo corto.
+# (usado por: app)
+# BRIEFING_AL_INICIAR = False
+
 
 # ======================================================================================
 # Memoria
@@ -253,6 +259,16 @@ LLM_API_KEY = ""
 # ======================================================================================
 # Capturas, OCR y visión
 # ======================================================================================
+
+# Quién mira la pantalla: 'auto' (Gemini y, si falla por clave/créditos, Groq), 'gemini'
+# o 'groq'.
+# Valores válidos: auto, gemini, groq
+# (usado por: vision)
+# VISION_PROVEEDOR = "auto"
+
+# Modelo de Groq que ve imágenes (respaldo de la visión).
+# (usado por: vision)
+# VISION_MODELO_GROQ = "qwen/qwen3.8-27b"
 
 # Ruta a tesseract.exe para leer texto de la pantalla con mejor precisión. Vacío = se
 # busca en el PATH y, si no está, se usa el OCR incluido en Windows.
@@ -386,6 +402,19 @@ LLM_API_KEY = ""
 # Minutos mínimos entre dos avisos iguales.
 # (usado por: asistente_proactivo)
 # PROACTIVO_COOLDOWN_MIN = 30
+
+# Cuando volvés tras un rato sin tocar la PC (AFK), Miku te da la hora, el clima y tus
+# pendientes. Necesita PROACTIVO_ACTIVO.
+# (usado por: asistente_proactivo)
+# BRIEFING_AL_VOLVER = True
+
+# Minutos sin teclado ni mouse para considerar que estuviste ausente.
+# (usado por: asistente_proactivo)
+# BRIEFING_AFK_MIN = 30
+
+# Horas mínimas entre dos resúmenes al volver (para que sea 'de vez en cuando').
+# (usado por: asistente_proactivo)
+# BRIEFING_COOLDOWN_H = 4
 
 # Máximo de avisos por hora (para que no moleste). 0 = sin límite.
 # (usado por: asistente_proactivo)

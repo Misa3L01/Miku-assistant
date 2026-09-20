@@ -56,10 +56,10 @@ def test_catalogo_proactivo_es_coherente():
     catalogo_proactivo.registrar(b)
     assert set(catalogo_proactivo.CATALOGO) == set(catalogo_proactivo.TITULOS)
     for clave, variantes in catalogo_proactivo.CATALOGO.items():
-        assert len(variantes) >= 3, clave
+        assert len(variantes) >= 3 or clave == "briefing.texto", clave
         # Rellenar con datos genéricos no debe dejar llaves sueltas.
         datos = {k: "1" for k in ("cuando", "prob", "sensacion", "juego", "detalle", "recurso",
-                                  "valor", "temp", "porcentaje", "libre")}
+                                  "valor", "temp", "porcentaje", "libre", "texto")}
         for _ in range(len(variantes) * 2):
             texto = b.elegir(clave, **datos)
             assert "{" not in texto and texto.strip()
@@ -516,3 +516,90 @@ def test_opciones_proactivas_tienen_default_valido(cfg):
         assert clave in esquema.OPCIONES, clave
         assert cfg.get(clave) == esquema.OPCIONES[clave].default
     assert proactivo.parsear_hora(cfg.get("proactivo_silencio_desde")) is not None
+
+
+# --------------------------------------------------------------------------- #
+# Resumen al volver de una ausencia (AFK) y saludo corto de arranque
+# --------------------------------------------------------------------------- #
+def _regla_afk(monkeypatch, cfg, inactivo):
+    from miku.servicios import briefing
+    monkeypatch.setattr(briefing, "generar", lambda ctx, encabezado=None: f"{encabezado}, son las 15:00.")
+    return rp.BriefingAlVolver(lambda: {"scheduler": None}, inactivo=lambda: inactivo["s"])
+
+
+def test_no_avisa_mientras_estas_o_apenas_te_fuiste(cfg, monkeypatch):
+    inactivo = {"s": 5}
+    regla = _regla_afk(monkeypatch, cfg, inactivo)
+    assert list(regla.evaluar(_ctx(cfg))) == []
+    inactivo["s"] = 10 * 60                        # 10 min: todavía no cuenta como ausencia
+    assert list(regla.evaluar(_ctx(cfg))) == []
+    inactivo["s"] = 5                              # volvió pero nunca estuvo "ausente"
+    assert list(regla.evaluar(_ctx(cfg))) == []
+
+
+def test_al_volver_de_una_ausencia_da_el_resumen_una_vez(cfg, monkeypatch):
+    inactivo = {"s": 45 * 60}
+    regla = _regla_afk(monkeypatch, cfg, inactivo)
+    assert list(regla.evaluar(_ctx(cfg))) == []    # sigue ausente
+    inactivo["s"] = 3                              # volvió
+    (aviso,) = regla.evaluar(_ctx(cfg))
+    assert aviso.intencion == "briefing.texto" and "son las 15:00" in aviso.datos["texto"]
+    assert aviso.cooldown_min == 4 * 60
+    assert list(regla.evaluar(_ctx(cfg))) == []    # no se repite hasta la próxima ausencia
+
+
+def test_un_movimiento_suelto_no_cuenta_como_volver(cfg, monkeypatch):
+    inactivo = {"s": 60 * 60}
+    regla = _regla_afk(monkeypatch, cfg, inactivo)
+    list(regla.evaluar(_ctx(cfg)))
+    inactivo["s"] = 40                             # un toque al mouse hace 40 s: todavía no
+    assert list(regla.evaluar(_ctx(cfg))) == []
+    inactivo["s"] = 2                              # ahora sí está usando la PC
+    assert len(list(regla.evaluar(_ctx(cfg)))) == 1
+
+
+def test_el_resumen_al_volver_se_puede_apagar_y_respeta_el_cooldown(cfg, monkeypatch):
+    inactivo = {"s": 60 * 60}
+    regla = _regla_afk(monkeypatch, cfg, inactivo)
+    cfg.valores["briefing_al_volver"] = False
+    list(regla.evaluar(_ctx(cfg)))
+    inactivo["s"] = 1
+    assert list(regla.evaluar(_ctx(cfg))) == []
+    cfg.valores["briefing_al_volver"] = True
+    # Con el motor: dos regresos seguidos dentro del cooldown solo dan un resumen.
+    reloj = Reloj()
+    motor, salida = _motor(cfg, [regla], reloj, proactivo_max_por_hora=0)
+    for _ in range(2):
+        inactivo["s"] = 60 * 60
+        motor.tick()
+        reloj.avanzar(20)
+        inactivo["s"] = 1
+        motor.tick()
+        reloj.avanzar(20)
+    assert len(salida) == 1
+
+
+def test_el_motor_incluye_la_regla_de_volver(cfg):
+    assert "briefing_afk" in {r.nombre for r in rp.reglas_por_defecto(cfg)}
+
+
+def test_inactividad_real_es_un_numero_razonable():
+    from miku.plataforma import inactividad
+    s = inactividad.segundos_inactivo()
+    assert 0 <= s < 10 ** 7
+
+
+def test_el_saludo_de_arranque_es_corto_y_sin_clima(cfg, monkeypatch):
+    from miku import app
+    from miku.servicios import briefing
+    a = app.Asistente(cfg)
+    dichos = []
+    monkeypatch.setattr(a, "decir", dichos.append)
+    monkeypatch.setattr(briefing, "generar", lambda *x, **k: pytest.fail("no debe armar el resumen completo"))
+    a._saludar()
+    assert len(dichos) == 1 and "clima" not in dichos[0].lower() and ":" not in dichos[0]
+    a._saludo_dado = False
+    cfg.valores["briefing_al_iniciar"] = True
+    monkeypatch.setattr(briefing, "generar", lambda *x, **k: "Resumen completo.")
+    a._saludar()
+    assert dichos[-1].startswith("Resumen completo.")
