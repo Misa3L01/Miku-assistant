@@ -13,6 +13,7 @@ suena) sigue funcionando y Miku explica qué falta en vez de fallar.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,6 +60,31 @@ class Resultado:
     def enlace(self) -> str:
         """Enlace que abre el elemento en TIDAL de escritorio."""
         return f"tidal://{TIPOS[self.tipo][2]}/{self.id}"
+
+
+_RUIDO = frozenset("mi mis tu la el las los una un de del en por con al mix lista listas playlist playlists "
+                   "aleatorio aleatoria shuffle reproduci reproducir pone poner ponme quiero".split())
+
+
+def _raices(texto: str) -> set:
+    from miku.plataforma.texto import normalizar
+    palabras = re.findall(r"[a-z0-9ñ]+", normalizar(texto))
+    return {p[:4] for p in palabras if p not in _RUIDO and len(p) >= 3}
+
+
+def elegir_playlist(consulta: str, playlists: List[tuple]) -> Optional[Resultado]:
+    """De ``[(id, nombre)]`` elige la que mejor coincide con ``consulta`` (None si ninguna).
+
+    Una playlist coincide si TODAS las palabras de su nombre aparecen (por raíz de 4 letras) en lo
+    pedido; entre varias gana la de nombre más largo (más específica).
+    """
+    pedidas = _raices(consulta)
+    mejor: Optional[tuple] = None
+    for id_, nombre in playlists:
+        propias = _raices(nombre)
+        if propias and propias <= pedidas and (mejor is None or len(propias) > mejor[0]):
+            mejor = (len(propias), id_, nombre)
+    return Resultado("playlist", mejor[1], mejor[2]) if mejor else None
 
 
 def libreria_disponible() -> bool:
@@ -167,13 +193,41 @@ class BuscadorTidal:
         import tidalapi
         return [getattr(tidalapi, modelo)]
 
+    def playlist_propia(self, consulta: str) -> Optional[Resultado]:
+        """Una playlist TUYA (creadas o guardadas) cuyo nombre aparezca en ``consulta``.
+
+        "mi playlist de animes" encuentra la playlist "Anime": se compara por raíces de palabra y
+        gana la de nombre más específico (más palabras que coinciden).
+        """
+        s = self.sesion()
+        if s is None:
+            return None
+        try:
+            propias = list(s.user.playlists())
+            try:
+                propias += [p for p in s.user.favorites.playlists()
+                            if str(p.id) not in {str(q.id) for q in propias}]
+            except Exception:  # noqa: BLE001
+                pass
+        except Exception as e:  # noqa: BLE001
+            logger.warning("No pude leer tus playlists de TIDAL: %s", e)
+            return None
+        return elegir_playlist(consulta, [(str(p.id), str(p.name)) for p in propias])
+
     def buscar(self, consulta: str, tipo: str = "cancion") -> Optional[Resultado]:
-        """Mejor coincidencia para ``consulta`` (None si no hay sesión, no hay resultados o falla)."""
+        """Mejor coincidencia para ``consulta`` (None si no hay sesión, no hay resultados o falla).
+
+        Para ``playlist`` se miran primero TUS playlists y después las públicas de TIDAL.
+        """
         s = self.sesion()
         consulta = (consulta or "").strip()
         if s is None or not consulta:
             return None
         tipo = normalizar_tipo(tipo)
+        if tipo == "playlist":
+            propia = self.playlist_propia(consulta)
+            if propia is not None:
+                return propia
         modelo, clave, _ = TIPOS[tipo]
         try:
             respuesta = s.search(consulta, models=self._modelos(modelo), limit=5)

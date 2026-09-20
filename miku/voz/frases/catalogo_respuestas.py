@@ -321,9 +321,21 @@ CATALOGO: Dict[str, List[str]] = {
 
     # ------------------------------------------------------------------------ TIDAL
     "tidal.reproduciendo": [
-        "Dale, pongo {titulo}{de}.",
-        "Ahí va {titulo}{de}.",
-        "Poniendo {titulo}{de}.",
+        "Dale, pongo {titulo}{de}{modo}.",
+        "Ahí va {titulo}{de}{modo}.",
+        "Poniendo {titulo}{de}{modo}.",
+    ],
+    "tidal.aleatorio_on": [
+        "Listo, activé el aleatorio.",
+        "Dale, ahora suena en aleatorio.",
+    ],
+    "tidal.aleatorio_off": [
+        "Listo, saqué el aleatorio.",
+        "Dale, ahora suena en orden.",
+    ],
+    "tidal.aleatorio_error": [
+        "No pude cambiar el aleatorio de TIDAL. ¿Está abierto con el control activo?",
+        "No logré tocar el aleatorio; probá poniendo primero algo en TIDAL.",
     ],
     "tidal.sin_consulta": [
         "¿Qué querés que ponga en TIDAL?",

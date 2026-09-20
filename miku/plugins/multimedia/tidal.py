@@ -47,9 +47,10 @@ class Tidal(Plugin):
             "type": "function",
             "function": {
                 "name": "reproducir_en_tidal",
-                "description": "Busca una canción, álbum, artista o playlist en TIDAL y la reproduce. "
-                               "Ej: 'poné Bohemian Rhapsody de Queen', 'reproducí el álbum Thriller "
-                               "en TIDAL', 'poné algo de Soda Stereo'.",
+                "description": "Busca una canción, álbum, artista o playlist (incluidas las del "
+                               "usuario) en TIDAL y la reproduce. Ej: 'poné Bohemian Rhapsody de Queen', "
+                               "'reproducí mi playlist de anime en aleatorio', 'poné canciones de Soda "
+                               "Stereo', 'poné Show de Ado y que siga aleatorio'.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -57,7 +58,13 @@ class Tidal(Plugin):
                                      "description": "Qué buscar: título y, si se dijo, el artista."},
                         "tipo": {"type": "string",
                                  "enum": ["cancion", "album", "artista", "playlist"],
-                                 "description": "Qué tipo de cosa es (por defecto, canción)."},
+                                 "description": "Qué tipo de cosa es (por defecto, canción). Una playlist "
+                                                "del usuario ('mi playlist de anime') es 'playlist'; "
+                                                "'canciones de <banda>' es 'artista'."},
+                        "aleatorio": {"type": "boolean",
+                                      "description": "true si pidió aleatorio/shuffle/mezclado (también "
+                                                     "'ponelo y que siga en aleatorio'); false si pidió "
+                                                     "que NO sea aleatorio. Omitir si no dijo nada."},
                     },
                     "required": ["consulta"],
                 },
@@ -87,7 +94,7 @@ class Tidal(Plugin):
                         "accion": {
                             "type": "string",
                             "enum": ["play_pausa", "siguiente", "anterior",
-                                     "play", "pausa"],
+                                     "play", "pausa", "aleatorio_on", "aleatorio_off"],
                             "description": "Acción de reproducción.",
                         },
                     },
@@ -130,7 +137,9 @@ class Tidal(Plugin):
         if nombre_tool == "que_esta_sonando":
             return self.que_esta_sonando()
         if nombre_tool == "reproducir_en_tidal":
-            return self.reproducir_en_tidal(str(args.get("consulta", "")), str(args.get("tipo", "")))
+            aleatorio = args.get("aleatorio")
+            return self.reproducir_en_tidal(str(args.get("consulta", "")), str(args.get("tipo", "")),
+                                            aleatorio if isinstance(aleatorio, bool) else None)
         if nombre_tool == "conectar_tidal":
             return self.conectar_tidal()
         return None
@@ -153,8 +162,12 @@ class Tidal(Plugin):
             self._control = ControlTidal(str(cfg.get("tidal_ruta_exe", "") or ""), puerto)
         return self._control
 
-    def reproducir_en_tidal(self, consulta: str, tipo: str = "") -> str:
-        """Busca ``consulta`` en TIDAL y la abre en la app de escritorio."""
+    def reproducir_en_tidal(self, consulta: str, tipo: str = "", aleatorio: Optional[bool] = None) -> str:
+        """Busca ``consulta`` en TIDAL y la reproduce.
+
+        Con un artista, si no se dijo nada, queda en aleatorio (una mezcla de sus temas, no el primer
+        álbum). ``aleatorio`` explícito manda siempre.
+        """
         consulta = (consulta or "").strip()
         if not consulta:
             return falla("tidal.sin_consulta")
@@ -165,10 +178,14 @@ class Tidal(Plugin):
         if r is None:
             return falla("tidal.sin_resultados", consulta=consulta)
         de = f", de {r.artista}" if r.artista else ""
+        if aleatorio is None and r.tipo == "artista":
+            aleatorio = True
+        modo = " en aleatorio" if aleatorio else ""
+        cual = {"playlist": "tu playlist ", "artista": "temas de ", "album": "el álbum "}.get(r.tipo, "")
         control = self.control()
         estado = control.asegurar()
-        if estado == LISTO and control.reproducir(r.tipo_web, r.id, r.titulo, r.artista):
-            return exito("tidal.reproduciendo", titulo=r.titulo, de=de)
+        if estado == LISTO and control.reproducir(r.tipo_web, r.id, r.titulo, r.artista, aleatorio):
+            return exito("tidal.reproduciendo", titulo=f"{cual}{r.titulo}", de=de, modo=modo)
         # Sin control de TIDAL: solo se puede abrir la ficha, que NO reproduce. Se dice tal cual.
         if estado == LISTO or estado == SIN_EXE:
             self._abrir_enlace(r.enlace)
@@ -222,6 +239,12 @@ class Tidal(Plugin):
             "siguiente": "siguiente", "adelante": "siguiente",
             "anterior": "anterior", "atras": "anterior",
         }
+        if accion in ("aleatorio_on", "aleatorio_off", "aleatorio", "shuffle"):
+            activar = accion != "aleatorio_off"
+            control = self.control()
+            if control.vivo() and control.aleatorio(activar):
+                return exito("tidal.aleatorio_on" if activar else "tidal.aleatorio_off")
+            return falla("tidal.aleatorio_error")
         clave = mapa.get(accion)
         if clave is None:
             return ("No entendí. Puedo pausar/reproducir, pasar a la siguiente "

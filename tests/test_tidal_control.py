@@ -222,3 +222,56 @@ def test_avisa_si_falta_una_libreria_de_lo_configurado(monkeypatch):
     faltan = validacion.dependencias_faltantes({"telegram_bot_token": "x", "tidal_ruta_exe": "C:/t.exe"})
     assert {"python-telegram-bot", "tidalapi", "websocket-client"} <= {p for _, p in faltan}
     assert validacion.dependencias_faltantes({}) == []
+
+
+def test_aleatorio_lee_el_estado_y_solo_cambia_si_hace_falta(control):
+    estado = {"on": False, "clics": 0}
+
+    def responder(m):
+        js = _expr(m)
+        if "click()" in js and "shuffle" in js:
+            estado["clics"] += 1
+            estado["on"] = not estado["on"]
+            return True
+        if "aria-checked" in js:
+            return (not estado["on"]) if js.startswith("!(") else estado["on"]
+        return None
+
+    control.responder = responder
+    assert control.aleatorio(True) is True and estado["clics"] == 1
+    assert control.aleatorio(True) is True and estado["clics"] == 1      # ya estaba: no toca
+    assert control.aleatorio(False) is True and estado["on"] is False
+
+
+def test_aleatorio_sin_reproductor_devuelve_false(control):
+    control.responder = lambda m: None
+    assert control.aleatorio(True) is False
+
+
+def test_playlist_aleatoria_usa_el_boton_aleatorio_de_la_ficha(control):
+    estado = {"clic": None, "shuffle": False}
+
+    def responder(m):
+        js = _expr(m)
+        if m["method"] == "Page.navigate":
+            return None
+        if "!!document.querySelector('[data-test=play-all]')" == js:
+            return True
+        if "shuffle-all" in js and "click()" in js:
+            estado["clic"] = "shuffle-all"
+            estado["shuffle"] = True
+            return True
+        if "play-all" in js and "click()" in js:
+            estado["clic"] = "play-all"
+            return True
+        if "data-test=pause" in js:
+            return estado["clic"] is not None
+        if "aria-checked" in js:
+            return estado["shuffle"]
+        return None
+
+    control.responder = responder
+    assert control.reproducir("playlist", "uuid", aleatorio=True) is True
+    assert estado["clic"] == "shuffle-all"
+    estado.update(clic=None, shuffle=False)
+    assert control.reproducir("playlist", "uuid") is True and estado["clic"] == "play-all"

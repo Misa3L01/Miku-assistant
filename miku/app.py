@@ -26,11 +26,19 @@ import sys
 import threading
 from typing import Any, Callable, Dict, List, Optional
 
+# onnxruntime (lo usa la memoria semántica, fastembed) TIENE que importarse antes que PyQt5: si Qt
+# ya cargó sus DLL, onnxruntime falla con "DLL load failed ... rutina de inicialización". Al
+# precargarlo acá (cuesta ~0,3 s) la memoria por significado anda aunque la bandeja use Qt.
+try:
+    import onnxruntime  # noqa: F401
+except Exception:  # noqa: BLE001  (opcional: sin él la memoria busca por palabras)
+    pass
+
 # Import de configuración (siempre seguro, sin deps pesadas).
 from miku.ajustes import carga as config_mod
 from miku.servicios.eventos import EventBus
 from miku.cerebro.parser import BrainGroq, CommandParser
-from miku.servicios import recordatorios
+from miku.servicios import recordatorios, tecla as tecla_mod
 from miku.servicios.scheduler import Scheduler
 from miku.voz.frases import tono
 from miku.ui import bandeja as bandeja_mod
@@ -128,6 +136,8 @@ class Asistente:
         self._recordatorios_perdidos: List[Dict[str, Any]] = []
         self._invocacion_pendiente = False
         self._hotkey_f22: Any = None
+        #: Valor de ``tecla_invocar`` con el que se registró el hotkey actual.
+        self._tecla_registrada: str = ""
         self.instancia: Any = None
         # ``cerrar()`` puede invocarse más de una vez: la segunda llamada no hace nada.
         self._cerrado = False
@@ -417,31 +427,58 @@ class Asistente:
             "modo_texto": lambda _m=True: self.cambiar_modo("texto"),
             "inicio_windows": inicio_windows,
             "atajo_f22": atajo_f22,
+            "elegir_tecla": self.elegir_tecla,
         }
 
-    def actualizar_hotkey_f22(self) -> None:
-        """Registra F22 dentro de Miku SOLO si no lo maneja el atajo de Windows.
+    def tecla_invocacion(self) -> str:
+        """Tecla que invoca a Miku (``TECLA_INVOCAR``; F22 por defecto)."""
+        return str(self.cfg.get("tecla_invocar", tecla_mod.POR_DEFECTO) or tecla_mod.POR_DEFECTO).strip().lower()
 
-        Con el atajo activo, Windows lanza una segunda ejecución que invoca a esta; registrar
-        además el hotkey acá haría que F22 disparara la invocación dos veces.
+    def actualizar_hotkey_f22(self) -> None:
+        """Registra la tecla de invocación dentro de Miku (por defecto F22).
+
+        Con F22 y el atajo de Windows activo, Windows lanza una segunda ejecución que invoca a esta;
+        registrar además el hotkey acá haría que F22 disparara la invocación dos veces. Cualquier otra
+        tecla (``TECLA_INVOCAR``) se maneja siempre acá, y solo funciona con Miku abierta.
         """
         from miku.servicios import arranque
         try:
             import keyboard  # type: ignore
         except Exception as e:  # noqa: BLE001
-            logger.info("Sin 'keyboard' no registro F22 dentro de Miku: %s", e)
+            logger.info("Sin 'keyboard' no registro la tecla de invocación dentro de Miku: %s", e)
             return
-        if arranque.atajo_f22_activo():
-            if self._hotkey_f22 is not None:
-                try:
-                    keyboard.remove_hotkey(self._hotkey_f22)
-                except Exception:  # noqa: BLE001
-                    pass
-                self._hotkey_f22 = None
+        tecla = self.tecla_invocacion()
+        lo_maneja_windows = tecla == tecla_mod.POR_DEFECTO and arranque.atajo_f22_activo()
+        if self._hotkey_f22 is not None and (lo_maneja_windows or self._tecla_registrada != tecla):
+            try:
+                keyboard.remove_hotkey(self._hotkey_f22)
+            except Exception:  # noqa: BLE001
+                pass
+            self._hotkey_f22 = None
+        if lo_maneja_windows:
             logger.info("F22 lo maneja el atajo de Windows.")
         elif self._hotkey_f22 is None:
-            self._hotkey_f22 = keyboard.add_hotkey("f22", self.invocar)
-            logger.info("Hotkey F22 registrado dentro de Miku.")
+            try:
+                self._hotkey_f22 = keyboard.add_hotkey(tecla_mod.a_hotkey(tecla), self.invocar)
+                self._tecla_registrada = tecla
+                logger.info("Tecla de invocación registrada dentro de Miku: %s.", tecla)
+            except Exception as e:  # noqa: BLE001
+                logger.error("No pude registrar la tecla '%s': %s", tecla, e)
+
+    def elegir_tecla(self, segundos: float = 10.0) -> Optional[str]:
+        """Detecta la próxima tecla que se apriete, la guarda como tecla de invocación y la activa.
+
+        Se llama desde el menú de la bandeja (en un hilo aparte). Avisa por voz/consola.
+        """
+        self.decir("Apretá ahora la tecla que querés usar para invocarme. Te escucho diez segundos.")
+        elegida = tecla_mod.detectar(segundos)
+        if not elegida:
+            self.decir("No detecté ninguna tecla. Puede que esa tecla la maneje un programa del fabricante.")
+            return None
+        self.cfg.guardar_preferencias({"tecla_invocar": elegida})
+        self.actualizar_hotkey_f22()
+        self.decir(f"Listo, ahora me invocás con {tecla_mod.nombre_legible(elegida)}.")
+        return elegida
 
     # ---------------- Salida y cierre ----------------
     def pedir_salir(self) -> None:

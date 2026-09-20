@@ -51,6 +51,15 @@ _JS_CLIC_TODO = """(() => {
   if (!b) return false; b.click(); return true; })()"""
 _JS_LISTO_TEMA = "document.querySelectorAll('[data-test=tracklist-row] [data-test=play-button]').length > 0"
 _JS_LISTO_TODO = "!!document.querySelector('[data-test=play-all]')"
+_JS_CLIC_ALEATORIO_TODO = """(() => {
+  const b = document.querySelector('[data-test=shuffle-all]');
+  if (!b) return false; b.click(); return true; })()"""
+_JS_ALEATORIO_ESTADO = """(() => {
+  const b = document.querySelector('[data-test=play-controls] [data-test=shuffle]');
+  return b ? b.getAttribute('aria-checked') === 'true' : null; })()"""
+_JS_CLIC_ALEATORIO = """(() => {
+  const b = document.querySelector('[data-test=play-controls] [data-test=shuffle]');
+  if (!b) return false; b.click(); return true; })()"""
 _JS_SONANDO = "!!document.querySelector('[data-test=play-controls] [data-test=pause]')"
 _JS_AHORA = """(() => {
   const t = document.querySelector('[data-test=footer-track-title]');
@@ -229,21 +238,37 @@ class ControlTidal:
             time.sleep(0.4)
         return False
 
-    def reproducir(self, tipo: str, id_: str, titulo: str = "", artista: str = "") -> bool:
+    def aleatorio(self, activar: bool) -> bool:
+        """Deja el modo aleatorio del reproductor en ``activar``. True si quedó como se pidió."""
+        estado = self.evaluar(_JS_ALEATORIO_ESTADO)
+        if estado is None:
+            return False
+        if bool(estado) == activar:
+            return True
+        if not self.evaluar(_JS_CLIC_ALEATORIO):
+            return False
+        return self._esperar(_JS_ALEATORIO_ESTADO if activar else "!(%s)" % _JS_ALEATORIO_ESTADO, 4)
+
+    def reproducir(self, tipo: str, id_: str, titulo: str = "", artista: str = "",
+                   aleatorio: Optional[bool] = None) -> bool:
         """Abre la ficha de ``tipo``/``id_`` en TIDAL y aprieta su play. True si empezó a sonar.
 
         ``tipo``: ``track``, ``album``, ``artist`` o ``playlist``. ``titulo``/``artista`` (de un tema)
         sirven para reconocer que ya está sonando o en pausa: en ese caso su ficha no muestra el botón
         de play (muestra pausa), así que no se navega: se deja sonando y listo.
+
+        ``aleatorio``: True = queda en modo aleatorio (en álbum/playlist/artista se usa su botón
+        "Aleatorio"; en un tema se activa el aleatorio del reproductor, así lo que sigue es al azar);
+        False = se apaga; None = no se toca.
         """
         if tipo not in ("track", "album", "artist", "playlist"):
             return False
         if tipo == "track" and titulo:
             ya = self.ahora()
             if ya and _mismo_tema(ya, titulo, artista):
-                if ya.get("reproduciendo"):
-                    return True
-                return self.boton("play_pausa") and self._esperar(_JS_SONANDO, 8)
+                if not ya.get("reproduciendo") and not (self.boton("play_pausa") and self._esperar(_JS_SONANDO, 8)):
+                    return False
+                return aleatorio is None or self.aleatorio(aleatorio)
         ruta = f"{_URL_WEB}/{tipo}/{id_}"
         self._llamar("Page.navigate", {"url": ruta})
         es_tema = tipo == "track"
@@ -251,10 +276,15 @@ class ControlTidal:
             logger.warning("La ficha de TIDAL (%s) no mostró el botón de play.", ruta)
             return False
         time.sleep(0.5)      # que termine de renderizar antes de apretar
-        apretado = self.evaluar((_JS_CLIC_TEMA % {"id": id_}) if es_tema else _JS_CLIC_TODO)
-        if not apretado:
+        if es_tema:
+            js = _JS_CLIC_TEMA % {"id": id_}
+        else:
+            js = _JS_CLIC_ALEATORIO_TODO if aleatorio else _JS_CLIC_TODO
+        if not self.evaluar(js):
             return False
-        return self._esperar(_JS_SONANDO, 8)
+        if not self._esperar(_JS_SONANDO, 8):
+            return False
+        return aleatorio is None or self.aleatorio(aleatorio)
 
     def boton(self, nombre: str) -> bool:
         """Aprieta un botón del reproductor: ``play_pausa``, ``siguiente`` o ``anterior``."""

@@ -98,6 +98,7 @@ class _PanelBandeja:
         menu.addSeparator()
         _accion("Iniciar con Windows", "inicio_windows", True)
         _accion("Atajo F22 para abrir Miku", "atajo_f22", True)
+        _accion("Elegir tecla de invocación…", "elegir_tecla")
         menu.addSeparator()
 
     def _ejecutar(self, clave: str, marcado: bool, marcable: bool) -> None:

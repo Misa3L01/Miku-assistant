@@ -215,7 +215,7 @@ def test_acciones_del_menu(asistente, monkeypatch):
     monkeypatch.setattr(arranque, "desactivar_atajo_f22", lambda *a: llamadas.append("atajo_off"))
     monkeypatch.setattr(asistente, "actualizar_hotkey_f22", lambda: llamadas.append("hotkey"))
     acciones = asistente.acciones_menu()
-    assert set(acciones) == {"invocar", "modo_voz", "modo_texto", "inicio_windows", "atajo_f22"}
+    assert set(acciones) == {"invocar", "modo_voz", "modo_texto", "inicio_windows", "atajo_f22", "elegir_tecla"}
     acciones["inicio_windows"](True)
     acciones["inicio_windows"](False)
     acciones["atajo_f22"](True)

@@ -1,6 +1,8 @@
 """Tests de las respuestas estructuradas (``Respuesta``) y del catálogo de frases de las tools."""
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from miku.plugins.sistema.ventanas import Ventanas
@@ -237,15 +239,21 @@ class _ControlFalso:
     def __init__(self):
         from miku.plugins.multimedia.tidal_control import LISTO
         self.estado, self.suena, self.pedidos, self.botones = LISTO, True, [], []
+        self.aleatorios = []
         self.en_vivo = True
         self.ahora_datos = {"titulo": "Show", "artista": "Ado", "reproduciendo": True}
 
     def asegurar(self, espera=30.0):
         return self.estado
 
-    def reproducir(self, tipo, id_, titulo="", artista=""):
+    def reproducir(self, tipo, id_, titulo="", artista="", aleatorio=None):
         self.pedidos.append((tipo, id_, titulo, artista))
+        self.aleatorios.append(aleatorio)
         return self.suena
+
+    def aleatorio(self, activar):
+        self.aleatorios.append(("cambio", activar))
+        return True
 
     def vivo(self):
         return self.en_vivo
@@ -287,7 +295,7 @@ def test_pone_una_cancion_abriendo_el_enlace_de_tidal(tidal):
 
 def test_pone_un_artista(tidal):
     r = tidal.reproducir_en_tidal("Soda Stereo", "banda")
-    assert tidal._control.pedidos == [("artist", "5", "Soda Stereo", "")] and "de " not in r
+    assert tidal._control.pedidos == [("artist", "5", "Soda Stereo", "")] and "Soda Stereo" in r
 
 
 def test_sin_resultados_es_honesto(tidal):
@@ -461,3 +469,52 @@ def test_controles_y_que_suena_usan_tidal_si_esta_disponible(tidal):
     assert "Show" in r and "Ado" in r and "sonando" in r
     tidal._control.ahora_datos = {"titulo": "Show", "artista": "Ado", "reproduciendo": False}
     assert "pausa" in tidal.que_esta_sonando()
+
+
+def test_un_artista_queda_en_aleatorio_por_defecto(tidal):
+    r = tidal.reproducir_en_tidal("Soda Stereo", "artista")
+    assert tidal._control.aleatorios == [True] and "aleatorio" in r
+    tidal._control.aleatorios.clear()
+    tidal.reproducir_en_tidal("Soda Stereo", "artista", aleatorio=False)
+    assert tidal._control.aleatorios == [False]
+
+
+def test_un_tema_solo_es_aleatorio_si_se_pide(tidal):
+    tidal.manejar_tool("reproducir_en_tidal", {"consulta": "bohemian"}, {})
+    tidal.manejar_tool("reproducir_en_tidal", {"consulta": "bohemian", "aleatorio": True}, {})
+    tidal.manejar_tool("reproducir_en_tidal", {"consulta": "bohemian", "aleatorio": "si"}, {})   # no es bool: se ignora
+    assert tidal._control.aleatorios == [None, True, None]
+
+
+def test_controlar_aleatorio(tidal):
+    assert tidal.controlar_tidal("aleatorio_on").intencion == "tidal.aleatorio_on"
+    assert tidal.controlar_tidal("aleatorio_off").intencion == "tidal.aleatorio_off"
+    assert tidal._control.aleatorios == [("cambio", True), ("cambio", False)]
+    tidal._control.en_vivo = False
+    assert tidal.controlar_tidal("aleatorio_on").intencion == "tidal.aleatorio_error"
+
+
+def test_elegir_playlist_propia_por_nombre():
+    from miku.plugins.multimedia.tidal_busqueda import elegir_playlist
+    listas = [("1", "Anime"), ("2", "Rock Nacional"), ("3", "Gym")]
+    assert elegir_playlist("mi playlist de animes", listas).id == "1"
+    assert elegir_playlist("reproducí mi lista de rock nacional en aleatorio", listas).titulo == "Rock Nacional"
+    assert elegir_playlist("rock", listas) is None              # falta 'nacional': no es esa
+    assert elegir_playlist("música para dormir", listas) is None
+    especifica = listas + [("4", "Anime Opening")]
+    assert elegir_playlist("mi playlist de anime opening", especifica).id == "4"
+    assert elegir_playlist("mi playlist de anime", especifica).id == "1"
+
+
+def test_buscar_playlist_mira_primero_las_propias():
+    from miku.plugins.multimedia.tidal_busqueda import BuscadorTidal
+    sesion = _SesionFalsa({"playlists": [_Elemento("pub", "Anime Hits")]})
+    sesion.user = SimpleNamespace(playlists=lambda: [_Elemento("mia", "Anime")],
+                                  favorites=SimpleNamespace(playlists=lambda: []))
+    import tempfile, pathlib
+    ruta = pathlib.Path(tempfile.mkdtemp()) / "s.json"
+    ruta.write_text("{}", encoding="utf-8")
+    b = BuscadorTidal(ruta, fabrica_sesion=lambda: sesion)
+    assert b.buscar("mi playlist de animes", "playlist").id == "mia"
+    assert not sesion.consultas                                    # ni siquiera buscó en el catálogo
+    assert b.buscar("hits de moda", "playlist").id == "pub"        # no es suya: cae a la búsqueda pública
