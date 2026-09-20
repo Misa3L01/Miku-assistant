@@ -45,6 +45,8 @@ USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHT
               "Chrome/153.0.0.0 Safari/537.36")
 #: WhatsApp acepta hasta 16 MB para fotos/videos y 100 MB para documentos; se limita a algo prudente.
 MAX_BYTES = 16 * 1024 * 1024
+#: Segundos que el chat tiene que llevar sin cambiar de cantidad de mensajes antes de contarlos (se carga de a poco).
+_QUIETO = 1.5
 _TROZO = 700_000                       # caracteres base64 por mensaje al navegador
 
 # Estados de la página de WhatsApp Web.
@@ -59,9 +61,24 @@ _JS_ESTADO = r"""(() => {
   if (/(escanea|escane[aá]|scan|vincular con el n[uú]mero|link with phone number)/.test(texto)) return 'qr';
   return 'cargando';
 })()"""
-_JS_ENVIADOS = "document.querySelectorAll('#main [data-id^=\"true_\"]').length"
+# Si WhatsApp Web quedó abierto en otra ventana, muestra "WhatsApp está abierto en otra ventana" con un botón
+# "Usar aquí": se aprieta para que trabaje esta.
+_JS_USAR_AQUI = r"""(() => {
+  const texto = (document.body ? document.body.innerText : '').toLowerCase();
+  if (!/(abierto en otra ventana|open in another window|abierto en otro)/.test(texto)) return false;
+  const boton = [...document.querySelectorAll('button, [role="button"]')]
+    .find(b => /^(usar aqu[ií]|use here)$/i.test((b.innerText || '').trim()));
+  if (!boton) return false; boton.click(); return true; })()"""
+# Cantidad de mensajes del chat abierto: al enviar, sube en uno. (Antes se contaban los ids "true_...",
+# pero WhatsApp ya no los usa: los mensajes nuevos llevan un id sin ese prefijo.)
+_JS_ENVIADOS = "document.querySelectorAll('#main [data-id]').length"
 _JS_FOCO_CAJA = ("(() => { const c = document.querySelector('footer [contenteditable=\"true\"]') || "
                  "document.querySelector('#main [contenteditable=\"true\"]'); if (!c) return false; c.focus(); return true; })()")
+# WhatsApp guarda como borrador lo que quedó escrito sin enviar: se vacía la caja antes de escribir.
+_JS_LIMPIAR_CAJA = ("(() => { const c = document.querySelector('footer [contenteditable=\"true\"]') || "
+                    "document.querySelector('#main [contenteditable=\"true\"]'); if (!c) return false; c.focus(); "
+                    "document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); "
+                    "return true; })()")
 _JS_CAJA_VACIA = ("(() => { const c = document.querySelector('footer [contenteditable=\"true\"]') || "
                   "document.querySelector('#main [contenteditable=\"true\"]'); return !!c && c.innerText.trim().length === 0; })()")
 _JS_PEGAR = r"""(async () => {
@@ -72,10 +89,18 @@ _JS_PEGAR = r"""(async () => {
   if (!caja) return false; caja.focus();
   caja.dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true}));
   window.__mk = []; return true; })()"""
-_JS_HAY_VISTA_PREVIA = ("!!document.querySelector('[data-icon=\"send\"], [data-icon=\"wds-ic-send-filled\"], "
-                        "[aria-label=\"Enviar\"], [aria-label=\"Send\"]') && "
-                        "!!document.querySelector('div[role=\"dialog\"], [data-animate-media-viewer], [data-testid=\"media-caption\"]')")
-_JS_ENVIAR_VISTA_PREVIA = r"""(() => {
+# La vista previa de un archivo pegado: hay un botón de enviar cuyo rótulo lleva la cantidad de archivos
+# ("Enviar 1 seleccionado"), a diferencia del botón de un texto escrito, que se llama solo "Enviar".
+_JS_HAY_VISTA_PREVIA = r"""(() => {
+  const icono = document.querySelector('[data-icon="send"], [data-icon="wds-ic-send-filled"]');
+  const boton = icono ? icono.closest('button, [role="button"]')
+                      : document.querySelector('[aria-label^="Enviar "], [aria-label^="Send "]');
+  if (!boton) return false;
+  if (/\d/.test(boton.getAttribute('aria-label') || '')) return true;
+  return !!document.querySelector('div[role="dialog"], [data-animate-media-viewer], [data-testid="media-caption"]');
+})()"""
+# El botón verde de enviar (sirve para un texto escrito y para la vista previa de un archivo).
+_JS_APRETAR_ENVIAR = r"""(() => {
   const icono = document.querySelector('[data-icon="send"], [data-icon="wds-ic-send-filled"]');
   const boton = (icono && icono.closest('button, [role="button"]')) ||
                 document.querySelector('[aria-label="Enviar"], [aria-label="Send"]');
@@ -215,6 +240,8 @@ class WhatsApp(Plugin):
             estado = self.estado(pagina)
             if estado in aceptables:
                 return estado
+            if estado == CARGANDO and pagina.evaluar(_JS_USAR_AQUI):
+                logger.info("WhatsApp estaba abierto en otra ventana: se aprieta 'Usar aquí'.")
             time.sleep(0.7)
         return estado
 
@@ -271,6 +298,8 @@ class WhatsApp(Plugin):
                 return "numero_invalido", formato_legible(numero)
             if estado != CHAT:
                 return "no_cargo", ""
+            self._esperar_chat_quieto(pagina)
+            pagina.evaluar(_JS_LIMPIAR_CAJA)
             if mensaje and not self._mandar_texto(pagina, mensaje):
                 return "no_envio", "el texto"
             if ruta is not None and not self._mandar_archivo(pagina, ruta):
@@ -287,6 +316,21 @@ class WhatsApp(Plugin):
             finally:
                 self._lock.release()
 
+    def _esperar_chat_quieto(self, pagina: Pagina, maximo: float = 10.0) -> int:
+        """Espera a que termine de cargar el historial del chat y devuelve cuántos mensajes tiene.
+
+        Al abrir un chat WhatsApp va agregando mensajes de a poco: si se contara enseguida, esa carga se
+        confundiría con un mensaje nuestro recién enviado.
+        """
+        limite = time.monotonic() + maximo
+        cantidad, desde = self._enviados(pagina), time.monotonic()
+        while time.monotonic() < limite and time.monotonic() - desde < _QUIETO:
+            time.sleep(0.3)
+            actual = self._enviados(pagina)
+            if actual != cantidad:
+                cantidad, desde = actual, time.monotonic()
+        return cantidad
+
     @staticmethod
     def _enviados(pagina: Pagina) -> int:
         return int(pagina.evaluar(_JS_ENVIADOS) or 0)
@@ -301,7 +345,8 @@ class WhatsApp(Plugin):
             return False
         pagina.llamar("Input.insertText", {"text": texto})
         time.sleep(0.4)
-        self._apretar_enter(pagina)
+        if not pagina.evaluar(_JS_APRETAR_ENVIAR):        # el Enter por CDP no siempre lo toma la página
+            self._apretar_enter(pagina)
         return self._esperar_un_enviado_mas(pagina, antes)
 
     @staticmethod
@@ -327,7 +372,7 @@ class WhatsApp(Plugin):
         if not pagina.esperar(_JS_HAY_VISTA_PREVIA, 20):
             return False
         time.sleep(0.8)                                   # que cargue la miniatura
-        if not pagina.evaluar(_JS_ENVIAR_VISTA_PREVIA):
+        if not pagina.evaluar(_JS_APRETAR_ENVIAR):
             self._apretar_enter(pagina)                   # último recurso: Enter con el foco en la descripción
         return self._esperar_un_enviado_mas(pagina, antes, 40.0)
 

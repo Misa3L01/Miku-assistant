@@ -34,8 +34,9 @@ def test_formato_legible():
 class PaginaWsp:
     """Simula lo justo de WhatsApp Web: estado, caja de texto, contador de enviados y vista previa."""
 
-    def __init__(self, estado=mod.CHAT, enter_envia=True, vista_previa=True):
+    def __init__(self, estado=mod.CHAT, enter_envia=True, vista_previa=True, boton_texto=True):
         self.estado_actual, self.enter_envia, self.hay_vista_previa = estado, enter_envia, vista_previa
+        self.otra_ventana, self.boton_texto, self.limpiezas = False, boton_texto, 0
         self.enviados, self.texto, self.vista, self.urls, self.trozos, self.pegado = 0, "", False, [], 0, None
 
     def ir(self, url, espera=20):
@@ -62,11 +63,22 @@ class PaginaWsp:
             self.pegado = js
             self.vista = self.hay_vista_previa
             return True
-        if js == mod._JS_ENVIAR_VISTA_PREVIA:
-            if not self.vista:
-                return False
-            self.vista, self.enviados = False, self.enviados + 1
+        if js == mod._JS_USAR_AQUI:
+            if self.estado_actual == mod.CARGANDO and self.otra_ventana:
+                self.estado_actual, self.otra_ventana = mod.CHAT, False       # "Usar aquí" y carga
+                return True
+            return False
+        if js == mod._JS_LIMPIAR_CAJA:
+            self.limpiezas, self.texto = self.limpiezas + 1, ""
             return True
+        if js == mod._JS_APRETAR_ENVIAR:
+            if self.vista:
+                self.vista, self.enviados = False, self.enviados + 1
+                return True
+            if self.texto and self.boton_texto:                       # el botón verde manda el texto escrito
+                self.enviados, self.texto = self.enviados + 1, ""
+                return True
+            return False
         return None
 
     def esperar(self, js, segundos=15):
@@ -109,6 +121,7 @@ def wsp(cfg, tmp_path, monkeypatch):
     cfg.valores["carpeta_capturas"] = str(tmp_path / "capturas")
     (tmp_path / "capturas").mkdir()
     monkeypatch.setattr(config_mod, "config", cfg)
+    monkeypatch.setattr(mod, "_QUIETO", 0.0)                    # sin esperas en los tests
     monkeypatch.setattr(config_mod, "BASE_DIR", tmp_path)
     monkeypatch.setattr(mod.time, "sleep", lambda s: None)
     p = WhatsApp()
@@ -172,7 +185,7 @@ def test_si_la_pagina_no_termina_de_cargar(wsp, monkeypatch):
 def test_si_el_mensaje_no_aparece_como_enviado_no_se_da_por_hecho(wsp, monkeypatch):
     reloj = iter(range(0, 100000, 10))
     monkeypatch.setattr(mod.time, "monotonic", lambda: next(reloj))
-    pag = PaginaWsp(enter_envia=False)
+    pag = PaginaWsp(enter_envia=False, boton_texto=False)
     pag.esperar = lambda js, segundos=15: False               # el contador nunca sube
     assert wsp.enviar(None, "hola", navegador=NavegadorWsp(pag)) == ("no_envio", "el texto")
 
@@ -294,3 +307,67 @@ def test_los_selectores_de_estado_no_confunden_login_con_chat():
     """El JS de estado revisa primero número inválido, luego chat, lista de chats y por último el QR."""
     js = mod._JS_ESTADO
     assert js.index("invalido") < js.index("'chat'") < js.index("'lista'") < js.index("'qr'")
+
+
+def test_si_whatsapp_estaba_abierto_en_otra_ventana_aprieta_usar_aqui(wsp):
+    pag = PaginaWsp(estado=mod.CARGANDO)
+    pag.otra_ventana = True
+    assert wsp.enviar(None, "hola", navegador=NavegadorWsp(pag))[0] == "enviado"
+    assert pag.otra_ventana is False and pag.enviados == 1
+
+
+def test_el_texto_se_manda_con_el_boton_verde_aunque_el_enter_no_funcione(wsp):
+    pag = PaginaWsp(enter_envia=False)
+    assert wsp.enviar(None, "hola", navegador=NavegadorWsp(pag))[0] == "enviado" and pag.enviados == 1
+
+
+def test_si_no_hay_boton_verde_se_prueba_con_enter(wsp):
+    pag = PaginaWsp(boton_texto=False)
+    assert wsp.enviar(None, "hola", navegador=NavegadorWsp(pag))[0] == "enviado" and pag.enviados == 1
+
+
+def test_antes_de_escribir_se_vacia_el_borrador_que_haya_quedado(wsp):
+    pag = PaginaWsp()
+    pag.texto = "borrador viejo sin enviar"
+    assert wsp.enviar(None, "hola", navegador=NavegadorWsp(pag))[0] == "enviado"
+    assert pag.limpiezas == 1
+
+
+def test_el_contador_de_enviados_cuenta_los_mensajes_del_chat_sin_depender_del_prefijo_del_id():
+    assert "[data-id^" not in mod._JS_ENVIADOS and "#main [data-id]" in mod._JS_ENVIADOS
+
+
+class HistorialLento(PaginaWsp):
+    """Un chat que va cargando mensajes de a poco (1, 2, 3) y donde ningún envío funciona."""
+
+    def __init__(self):
+        super().__init__(enter_envia=False, boton_texto=False)
+        self.secuencia, self.pedidos = [1, 2, 3], 0
+
+    def evaluar(self, js):
+        if js == mod._JS_ENVIADOS:
+            i = min(self.pedidos, len(self.secuencia) - 1)
+            self.pedidos += 1
+            return self.secuencia[i]
+        return super().evaluar(js)
+
+    def esperar(self, js, segundos=15):
+        if js.startswith(mod._JS_ENVIADOS + " > "):
+            return self.secuencia[-1] > int(js.rsplit(">", 1)[1])
+        return super().esperar(js, segundos)
+
+
+def test_la_carga_del_historial_no_se_confunde_con_un_mensaje_enviado(wsp, monkeypatch):
+    """Al abrir el chat los mensajes aparecen de a poco: contarlos enseguida daba un falso 'enviado'."""
+    reloj = {"t": 0.0}
+
+    def tic():
+        reloj["t"] += 0.2
+        return reloj["t"]
+
+    monkeypatch.setattr(mod, "_QUIETO", 1.0)
+    monkeypatch.setattr(mod.time, "monotonic", tic)
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+    pag = HistorialLento()
+    assert wsp.enviar(None, "hola", navegador=NavegadorWsp(pag)) == ("no_envio", "el texto")
+    assert pag.pedidos >= 3                                       # esperó a que terminara de cargar

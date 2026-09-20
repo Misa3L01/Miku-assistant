@@ -14,6 +14,10 @@ pedís, oculta (``headless``).
     pagina.evaluar("document.title")
     nav.cerrar()
 
+Este navegador **no restaura pestañas**: antes de abrirlo se borran las sesiones guardadas del perfil y,
+al pedir la pestaña de trabajo, se cierran todas las demás. Si no, Brave reabre las de la vez anterior
+y sitios como WhatsApp Web (que solo admite una ventana) dejan de cargar.
+
 Todo lo que puede fallar (navegador que no arranca, página que no carga, JavaScript con error)
 devuelve ``None``/``False`` en vez de lanzar: quien usa esto decide qué decirle al usuario.
 """
@@ -23,6 +27,7 @@ import base64
 import json
 import logging
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -140,6 +145,38 @@ class Pagina:
         self._ws = None
 
 
+#: Dónde guarda Chromium/Brave las pestañas para restaurarlas (dentro del perfil).
+_SESIONES = ("Sessions", "Current Session", "Current Tabs", "Last Session", "Last Tabs")
+
+
+def limpiar_sesiones(perfil: Path) -> None:
+    """Borra las pestañas guardadas del perfil (nada más: cookies, sesiones de sitios y demás no se tocan).
+
+    Solo se llama con el navegador cerrado. También marca el cierre anterior como normal, para que
+    Brave no ofrezca "restaurar páginas".
+    """
+    base = Path(perfil) / "Default"
+    for nombre in _SESIONES:
+        destino = base / nombre
+        try:
+            if destino.is_dir():
+                shutil.rmtree(destino, ignore_errors=True)
+            elif destino.exists():
+                destino.unlink()
+        except OSError as e:
+            logger.debug("No pude borrar %s: %s", destino, e)
+    preferencias = base / "Preferences"
+    try:
+        datos = json.loads(preferencias.read_text(encoding="utf-8"))
+        perfil_pref = datos.setdefault("profile", {})
+        if perfil_pref.get("exit_type") != "Normal" or perfil_pref.get("exited_cleanly") is False:
+            perfil_pref["exit_type"] = "Normal"
+            perfil_pref["exited_cleanly"] = True
+            preferencias.write_text(json.dumps(datos, separators=(",", ":")), encoding="utf-8")
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
 class Navegador:
     """Una instancia aparte de Brave/Chrome con puerto de depuración.
 
@@ -185,6 +222,7 @@ class Navegador:
             return False
         self.perfil = self.perfil.resolve()
         self.perfil.mkdir(parents=True, exist_ok=True)
+        limpiar_sesiones(self.perfil)                    # que no reabra las pestañas de la vez anterior
         args = [self.ruta_exe, f"--remote-debugging-port={self.puerto}", f"--user-data-dir={self.perfil}",
                 "--no-first-run", "--no-default-browser-check", "--disable-sync", "about:blank"]
         if self.user_agent:
@@ -229,16 +267,57 @@ class Navegador:
             if pagina in self._paginas:
                 self._paginas.remove(pagina)
 
-    def pagina(self) -> Optional[Pagina]:
-        """La primera pestaña (o una nueva) lista para usar."""
-        try:
-            objetivos = [t for t in requests.get(f"{self._base}/json", timeout=4).json() if t.get("type") == "page"]
+    def _objetivos(self) -> list:
+        """Las pestañas abiertas (sin extensiones ni herramientas de desarrollo)."""
+        return [t for t in requests.get(f"{self._base}/json", timeout=4).json() if t.get("type") == "page"]
+
+    def dejar_una_pestana(self, estable: float = 1.2) -> Optional[Dict[str, Any]]:
+        """Cierra todas las pestañas menos una y devuelve esa (None si no se pudo).
+
+        Se queda con una en blanco si la hay. Se repite hasta que el número de pestañas deja de cambiar
+        ``estable`` segundos, porque el navegador puede seguir abriendo pestañas un instante después de
+        que el puerto responde.
+        """
+        limite = time.monotonic() + 12.0
+        quieto_desde = time.monotonic()
+        ultimo = -1
+        elegido: Optional[Dict[str, Any]] = None
+        while time.monotonic() < limite:
+            objetivos = self._objetivos()
             if not objetivos:
                 objetivos = [requests.put(f"{self._base}/json/new?about:blank", timeout=4).json()]
+            en_blanco = [t for t in objetivos if str(t.get("url", "")) in ("about:blank", "chrome://newtab/",
+                                                                          "brave://newtab/")]
+            elegido = (en_blanco or objetivos)[0]
+            sobran = [t for t in objetivos if t.get("id") != elegido.get("id")]
+            for t in sobran:
+                try:
+                    requests.get(f"{self._base}/json/close/{t.get('id')}", timeout=4)
+                except Exception as e:  # noqa: BLE001
+                    logger.debug("No pude cerrar la pestaña %s: %s", t.get("id"), e)
+            if len(objetivos) != ultimo or sobran:
+                ultimo = len(objetivos)
+                quieto_desde = time.monotonic()
+            elif time.monotonic() - quieto_desde >= estable:
+                break
+            time.sleep(0.3)
+        return elegido
+
+    def pagina(self, unica: bool = True) -> Optional[Pagina]:
+        """La pestaña de trabajo, lista para usar. Con ``unica`` (por defecto) se cierran las demás."""
+        try:
+            if unica:
+                elegido = self.dejar_una_pestana()
+            else:
+                objetivos = self._objetivos()
+                elegido = objetivos[0] if objetivos else requests.put(
+                    f"{self._base}/json/new?about:blank", timeout=4).json()
         except Exception as e:  # noqa: BLE001
             logger.error("No pude obtener una pestaña: %s", e)
             return None
-        p = Pagina(self._base, objetivos[0], self._abrir_ws)
+        if not elegido:
+            return None
+        p = Pagina(self._base, elegido, self._abrir_ws)
         self._paginas.append(p)
         return p
 
