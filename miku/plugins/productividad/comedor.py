@@ -55,7 +55,7 @@ _SEL_INGRESAR = "#form_103000002_datos_ingresar"
 # Estados de un intento.
 INSCRIPTO, YA_INSCRIPTO, SIN_COMIDAS, NO_HABILITADO = "inscripto", "ya_inscripto", "sin_comidas", "no_habilitado"
 DESCONOCIDO, LOGIN_FALLO, SIN_USUARIO, SIN_CLAVE = "desconocido", "login_fallo", "sin_usuario", "sin_clave"
-SIN_NAVEGADOR, ERROR = "sin_navegador", "error"
+SIN_NAVEGADOR, ERROR, USUARIO_INVALIDO = "sin_navegador", "error", "usuario_invalido"
 
 _MESES = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre",
           "octubre", "noviembre", "diciembre")
@@ -258,6 +258,23 @@ def _decidir_por_texto(inst: Dict[str, Any], objetivo: date) -> Decision:
 # --------------------------------------------------------------------------- #
 # Credenciales
 # --------------------------------------------------------------------------- #
+#: Lo que la página del comedor acepta como usuario (lo dice su propio formulario).
+_RE_USUARIO = re.compile(r"^[A-Za-z0-9_]+$")
+
+
+def limpiar_usuario(usuario: Any) -> str:
+    """El usuario sin espacios ni comillas sueltas alrededor (``'12345678`` -> ``12345678``).
+
+    Un apóstrofe pegado adelante es un error típico al copiar un número desde una planilla.
+    """
+    return str(usuario or "").strip().strip("'\"`´ \t")
+
+
+def usuario_valido(usuario: str) -> bool:
+    """True si ``usuario`` tiene solo letras, números y guion bajo (como exige el formulario del comedor)."""
+    return bool(_RE_USUARIO.match(usuario or ""))
+
+
 def leer_clave(usuario: str) -> Optional[str]:
     """Contraseña guardada en el Administrador de credenciales de Windows (None si no hay)."""
     try:
@@ -325,6 +342,8 @@ class Comedor(Plugin):
         self._bus: Any = None
         self._lock = threading.Lock()
         self._hilo: Optional[threading.Thread] = None
+        #: Lo que dijo la página cuando el inicio de sesión falló ("Usuario no es válido"...).
+        self.motivo_login = ""
 
     def initialize(self, event_bus: Any = None) -> None:
         super().initialize(event_bus)
@@ -366,8 +385,10 @@ class Comedor(Plugin):
     def inscribir_en_segundo_plano(self, automatico: bool = False) -> str:
         """Empieza el trámite en un hilo y contesta al toque; el resultado se avisa cuando termina."""
         cfg = config_mod.config
-        if not str(cfg.get("comedor_usuario", "") or "").strip():
+        if not limpiar_usuario(cfg.get("comedor_usuario", "")):
             return falla("comedor.sin_usuario")
+        if not usuario_valido(limpiar_usuario(cfg.get("comedor_usuario", ""))):
+            return falla("comedor.usuario_invalido")
         if self._hilo is not None and self._hilo.is_alive():
             return falla("comedor.en_curso")
         self._hilo = threading.Thread(target=self._tramite, args=(automatico,), daemon=True, name="miku_comedor")
@@ -386,9 +407,11 @@ class Comedor(Plugin):
                  navegador: Optional[Navegador] = None) -> Resultado:
         """Hace todo el trámite (bloquea ~30 s). Con ``simulacro`` no aprieta "inscribirse"."""
         cfg = config_mod.config
-        usuario = str(cfg.get("comedor_usuario", "") or "").strip()
+        usuario = limpiar_usuario(cfg.get("comedor_usuario", ""))
         if not usuario:
             return Resultado(SIN_USUARIO)
+        if not usuario_valido(usuario):
+            return Resultado(USUARIO_INVALIDO)
         clave = leer_clave(usuario)
         if not clave:
             return Resultado(SIN_CLAVE)
@@ -435,12 +458,18 @@ class Comedor(Plugin):
         pagina.clic(_SEL_INGRESAR)
         time.sleep(1.0)
         pagina.esperar("document.readyState === 'complete'", 15)
-        # Si el formulario de acceso sigue ahí, las credenciales no sirvieron.
-        return not pagina.evaluar(f"!!document.querySelector('{_SEL_CLAVE}')")
+        # Si el formulario de acceso sigue ahí, las credenciales no sirvieron: se guarda el motivo.
+        sigue = bool(pagina.evaluar(f"!!document.querySelector('{_SEL_CLAVE}')"))
+        self.motivo_login = ""
+        if sigue:
+            texto = " ".join(str(pagina.texto(600)).split())
+            m = re.search(r"problemas:(.{0,80})", texto)
+            self.motivo_login = m.group(1).strip() if m else ""
+        return not sigue
 
     def _con_pagina(self, pagina: Pagina, usuario: str, clave: str, dia: date, simulacro: bool) -> Resultado:
         if not self.iniciar_sesion(pagina, usuario, clave):
-            return Resultado(LOGIN_FALLO, dia=dia)
+            return Resultado(LOGIN_FALLO, self.motivo_login, dia)
         url = str(config_mod.config.get("comedor_url_inscripciones", "") or URL_INSCRIPCIONES)
         if not pagina.ir(url):
             return Resultado(ERROR, "no cargó la página de inscripciones", dia)
@@ -518,19 +547,30 @@ def _dia_hablado(d: Optional[date]) -> str:
 # --------------------------------------------------------------------------- #
 def _cli_guardar_clave() -> int:
     cfg = config_mod.cargar() or config_mod.config
-    usuario = str(cfg.get("comedor_usuario", "") or "").strip() or input("Usuario del comedor: ").strip()
-    clave = getpass.getpass(f"Contraseña de {usuario} (no se muestra): ")
+    usuario = limpiar_usuario(cfg.get("comedor_usuario", "")) or limpiar_usuario(input("Usuario del comedor: "))
+    if not usuario_valido(usuario):
+        print("El usuario tiene caracteres que la página no acepta (solo letras, números y _). "
+              "Revisá COMEDOR_USUARIO en config_local.py.")
+        return 1
+    print(f"Usuario: {usuario}")
+    print("Al escribir la contraseña NO se ve nada en pantalla (ni asteriscos): es normal.")
+    clave = getpass.getpass("Contraseña (se pide dos veces): ")
     if not clave:
         print("No escribiste ninguna contraseña.")
         return 1
-    ok = guardar_clave(usuario, clave)
-    print("Guardada en el Administrador de credenciales de Windows." if ok else "No pude guardarla.")
-    return 0 if ok else 1
+    if getpass.getpass("Repetí la contraseña: ") != clave:
+        print("Las dos contraseñas no coinciden: no guardé nada. Probá de nuevo.")
+        return 1
+    if not guardar_clave(usuario, clave) or leer_clave(usuario) != clave:
+        print("No pude guardarla.")
+        return 1
+    print(f"Guardada en el Administrador de credenciales de Windows ({len(clave)} caracteres).")
+    return 0
 
 
 def _cli_probar() -> int:
     config_mod.cargar()
-    if not str(config_mod.config.get("comedor_usuario", "") or "").strip():
+    if not limpiar_usuario(config_mod.config.get("comedor_usuario", "")):
         print("Falta COMEDOR_USUARIO en config_local.py.")
         return 1
     r = Comedor().ejecutar(simulacro=True)
@@ -542,7 +582,7 @@ def _cli_explorar() -> int:
     """Vuelca la estructura de la página de inscripciones para poder ajustar su lectura."""
     config_mod.cargar()
     cfg = config_mod.config
-    usuario = str(cfg.get("comedor_usuario", "") or "").strip()
+    usuario = limpiar_usuario(cfg.get("comedor_usuario", ""))
     c = Comedor()
     nav = c._navegador()
     if nav is None:

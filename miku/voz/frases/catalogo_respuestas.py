@@ -447,8 +447,12 @@ CATALOGO: Dict[str, List[str]] = {
         "Simulacro: para {dia} se puede inscribir ({detalle}).",
     ],
     "comedor.login_fallo": [
-        "No pude iniciar sesión en el comedor. Puede que la contraseña guardada esté mal: guardala de nuevo con guardar-clave.",
-        "El comedor no me dejó entrar. Revisá usuario y contraseña.",
+        "No pude iniciar sesión en el comedor: {detalle}. Revisá el usuario en config_local.py y guardá la contraseña de nuevo con guardar-clave.",
+        "El comedor no me dejó entrar ({detalle}). Revisá usuario y contraseña.",
+    ],
+    "comedor.usuario_invalido": [
+        "Tu COMEDOR_USUARIO tiene caracteres que la página no acepta: solo letras, números y guion bajo. Revisalo en config_local.py.",
+        "El usuario del comedor no es válido (solo letras, números y _). Fijate que no tenga comillas o símbolos de más.",
     ],
     "comedor.sin_usuario": [
         "Falta tu usuario del comedor. Agregá COMEDOR_USUARIO en config_local.py.",

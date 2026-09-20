@@ -130,6 +130,9 @@ class PaginaFalsa:
             return True
         return None
 
+    def texto(self, limite=6000):
+        return ""
+
     def cerrar(self):
         pass
 
@@ -473,3 +476,73 @@ def test_tipos_de_comida_desde_la_config(comedor, cfg):
     r = comedor.ejecutar(dia=DIA_REAL, navegador=NavegadorFalso(PaginaFalsa(sitio)))
     assert r.estado == mod.SIN_COMIDAS
     assert mod._lista("almuerzo") == ["almuerzo"] and mod._lista(None) == [] and mod._lista(["a", ""]) == ["a"]
+
+
+# --------------------------------------------------------------------------- #
+# Usuario con comillas sueltas (bug real) y guardado de la contraseña
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("crudo,limpio", [("'12345678", "12345678"), ('"12345678"', "12345678"), ("  ab_cd ", "ab_cd"),
+                                          ("`1234", "1234"), ("", ""), (None, "")])
+def test_limpiar_usuario(crudo, limpio):
+    assert mod.limpiar_usuario(crudo) == limpio
+
+
+@pytest.mark.parametrize("usuario,valido", [("12345678", True), ("juan_perez1", True), ("'12345678", False),
+                                            ("juan perez", False), ("juan@mail.com", False), ("", False)])
+def test_usuario_valido_como_lo_exige_la_pagina(usuario, valido):
+    assert mod.usuario_valido(usuario) is valido
+
+
+def test_un_apostrofe_de_mas_en_la_config_se_corrige_solo(comedor, cfg):
+    cfg.valores["comedor_usuario"] = "'12345678"
+    sitio = _sitio()
+    nav = NavegadorFalso(PaginaFalsa(sitio))
+    r = comedor.ejecutar(dia=MANANA, navegador=nav)
+    assert r.estado == mod.INSCRIPTO
+    assert sitio["escrito"]["#ef_form_103000002_datosusuario"] == "12345678"      # sin el apóstrofe
+
+
+def test_un_usuario_con_simbolos_no_se_intenta_y_se_explica(comedor, cfg):
+    cfg.valores["comedor_usuario"] = "juan@mail.com"
+    nav = NavegadorFalso(PaginaFalsa(_sitio()))
+    assert comedor.ejecutar(dia=MANANA, navegador=nav).estado == mod.USUARIO_INVALIDO
+    assert not nav._pagina.eventos                                                   # ni abrió la página
+    assert comedor.inscribir_en_segundo_plano().intencion == "comedor.usuario_invalido"
+
+
+def test_si_el_login_falla_se_cuenta_lo_que_dijo_la_pagina(comedor):
+    sitio = _sitio()
+    sitio["login_falla"] = True
+    pag = PaginaFalsa(sitio)
+    pag.texto = lambda limite=6000: "Se han encontrado los siguientes problemas:\n Usuario no es válido\nversión 3.0.0"
+    r = comedor.ejecutar(dia=MANANA, navegador=NavegadorFalso(pag))
+    assert r.estado == mod.LOGIN_FALLO and "Usuario no es válido" in r.detalle
+
+
+def test_guardar_clave_pide_dos_veces_y_confirma(cfg, monkeypatch, capsys):
+    import getpass
+    cfg.valores["comedor_usuario"] = "12345678"
+    monkeypatch.setattr(config_mod, "cargar", lambda: cfg)
+    guardado = {}
+    monkeypatch.setattr(mod, "guardar_clave", lambda u, c: guardado.update({u: c}) or True)
+    monkeypatch.setattr(mod, "leer_clave", lambda u: guardado.get(u))
+    respuestas = iter(["secreta1", "secreta1"])
+    monkeypatch.setattr(getpass, "getpass", lambda prompt="": next(respuestas))
+    assert mod._cli_guardar_clave() == 0
+    salida = capsys.readouterr().out
+    assert guardado == {"12345678": "secreta1"} and "8 caracteres" in salida and "secreta1" not in salida
+
+
+def test_guardar_clave_no_guarda_si_no_coinciden_o_esta_vacia(cfg, monkeypatch, capsys):
+    import getpass
+    cfg.valores["comedor_usuario"] = "12345678"
+    monkeypatch.setattr(config_mod, "cargar", lambda: cfg)
+    guardado = {}
+    monkeypatch.setattr(mod, "guardar_clave", lambda u, c: guardado.update({u: c}) or True)
+    respuestas = iter(["una", "otra"])
+    monkeypatch.setattr(getpass, "getpass", lambda prompt="": next(respuestas))
+    assert mod._cli_guardar_clave() == 1 and guardado == {} and "no coinciden" in capsys.readouterr().out
+    monkeypatch.setattr(getpass, "getpass", lambda prompt="": "")
+    assert mod._cli_guardar_clave() == 1 and guardado == {}
+    cfg.valores["comedor_usuario"] = "12 34"
+    assert mod._cli_guardar_clave() == 1 and "no acepta" in capsys.readouterr().out
