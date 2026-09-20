@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from miku.plataforma import hardware, inactividad, openmeteo
@@ -285,12 +285,15 @@ class ComedorDiario(Regla):
 
     nombre = "comedor"
     intervalo = 60.0
+    #: Intentos automáticos por día y minutos mínimos entre uno y otro (la comida puede cargarse tarde).
+    MAX_INTENTOS = 3
+    ESPERA_ENTRE_INTENTOS_MIN = 30
 
     def __init__(self, obtener_plugin: Callable[[], Any] = lambda: None,
                  inactivo: Callable[[], float] = inactividad.segundos_inactivo) -> None:
         self._plugin = obtener_plugin
         self._inactivo = inactivo
-        self._ultimo_intento = ""
+        self._intentos: Dict[str, List[datetime]] = {}
 
     def evaluar(self, ctx: Contexto) -> Iterable[Aviso]:
         cfg = ctx.cfg
@@ -311,10 +314,15 @@ class ComedorDiario(Regla):
         if plugin is None or plugin.ya_resuelto(manana):
             return ()
         if cfg.get("comedor_auto", False):
-            # Solo si estás usando la PC (no ausente) y no jugando; un intento por día.
-            if ctx.juego or self._inactivo() > 300 or self._ultimo_intento == manana.isoformat():
+            # Solo si estás usando la PC (no ausente) y no jugando. Hasta MAX_INTENTOS por día, separados,
+            # y ninguno si el último falló por algo que reintentar no arregla (usuario o contraseña).
+            hechos = self._intentos.setdefault(manana.isoformat(), [])
+            if ctx.juego or self._inactivo() > 300 or not plugin.puede_reintentar(manana):
                 return ()
-            self._ultimo_intento = manana.isoformat()
+            if len(hechos) >= self.MAX_INTENTOS or (
+                    hechos and ctx.ahora - hechos[-1] < timedelta(minutes=self.ESPERA_ENTRE_INTENTOS_MIN)):
+                return ()
+            hechos.append(ctx.ahora)
             plugin.inscribir_en_segundo_plano(automatico=True)
             return [Aviso("comedor.auto", "comedor.auto", {"hora": hora}, una_vez_por_dia=True, cooldown_min=0)]
         return [Aviso("comedor.aviso", "comedor.es_hora", {"hora": hora}, una_vez_por_dia=True, cooldown_min=0)]

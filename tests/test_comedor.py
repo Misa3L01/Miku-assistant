@@ -320,6 +320,11 @@ class PluginFalso:
     def ya_resuelto(self, dia):
         return self.resuelto
 
+    reintentable = True
+
+    def puede_reintentar(self, dia):
+        return self.reintentable
+
     def inscribir_en_segundo_plano(self, automatico=False):
         self.inscripciones += 1
 
@@ -360,15 +365,54 @@ def test_viernes_y_sabado_no_hay_comedor_al_dia_siguiente(cfg):
     assert len(list(regla.evaluar(_ctx(cfg, 20, dia=(2026, 9, 27))))) == 1  # domingo: mañana es lunes
 
 
-def test_modo_automatico_inscribe_una_vez_y_solo_si_estas_usando_la_pc(cfg):
+def _ctx_min(cfg, hora, minuto, dia=(2026, 9, 21)):
+    from miku.servicios.proactivo import Contexto
+    return Contexto(cfg, datetime(*dia, hora, minuto), 0.0, None)
+
+
+def test_modo_automatico_solo_si_estas_usando_la_pc_y_no_jugando(cfg):
     cfg.valores.update(comedor_usuario="alumno", comedor_hora="19:00", comedor_auto=True)
     plugin = PluginFalso()
     assert list(_regla(plugin, inactivo=900).evaluar(_ctx(cfg, 20))) == [] and plugin.inscripciones == 0   # ausente
     assert list(_regla(plugin).evaluar(_ctx(cfg, 20, juego="cs2"))) == [] and plugin.inscripciones == 0   # jugando
-    regla = _regla(plugin)
-    (aviso,) = regla.evaluar(_ctx(cfg, 20))
+    (aviso,) = _regla(plugin).evaluar(_ctx(cfg, 20))
     assert aviso.intencion == "comedor.auto" and plugin.inscripciones == 1
-    assert list(regla.evaluar(_ctx(cfg, 20))) == [] and plugin.inscripciones == 1                          # un intento por día
+
+
+def test_modo_automatico_reintenta_hasta_tres_veces_separadas_por_media_hora(cfg):
+    cfg.valores.update(comedor_usuario="alumno", comedor_hora="19:00", comedor_auto=True)
+    plugin, regla = PluginFalso(), _regla(PluginFalso())
+    regla = _regla(plugin)
+    regla.evaluar(_ctx_min(cfg, 19, 0))
+    assert plugin.inscripciones == 1
+    list(regla.evaluar(_ctx_min(cfg, 19, 10)))            # muy pronto: no
+    assert plugin.inscripciones == 1
+    list(regla.evaluar(_ctx_min(cfg, 19, 31)))            # ya pasó media hora: reintenta
+    list(regla.evaluar(_ctx_min(cfg, 20, 2)))
+    list(regla.evaluar(_ctx_min(cfg, 21, 0)))             # cuarto intento: no (el máximo es 3)
+    assert plugin.inscripciones == 3
+
+
+def test_no_reintenta_si_el_problema_es_de_configuracion_ni_si_ya_esta_inscripto(cfg):
+    cfg.valores.update(comedor_usuario="alumno", comedor_hora="19:00", comedor_auto=True)
+    fallido = PluginFalso()
+    fallido.reintentable = False                          # p. ej. contraseña mal: reintentar no arregla nada
+    list(_regla(fallido).evaluar(_ctx(cfg, 20)))
+    assert fallido.inscripciones == 0
+    listo = PluginFalso(resuelto=True)
+    list(_regla(listo).evaluar(_ctx(cfg, 20)))
+    assert listo.inscripciones == 0
+
+
+def test_un_dia_nuevo_empieza_de_cero(cfg):
+    cfg.valores.update(comedor_usuario="alumno", comedor_hora="19:00", comedor_auto=True)
+    plugin = PluginFalso()
+    regla = _regla(plugin)
+    for hora, minuto in ((19, 0), (19, 31), (20, 2)):
+        list(regla.evaluar(_ctx_min(cfg, hora, minuto)))
+    assert plugin.inscripciones == 3
+    list(regla.evaluar(_ctx_min(cfg, 19, 5, dia=(2026, 9, 22))))
+    assert plugin.inscripciones == 4
 
 
 def test_la_regla_esta_en_el_motor(cfg):
@@ -620,3 +664,56 @@ def test_la_ventana_del_comedor_normal_minimizada_u_oculta(comedor, cfg):
     assert comedor._navegador().visible is False
     cfg.valores.update(comedor_ventana="normal", comedor_ver=False)             # compatibilidad con la opción vieja
     assert comedor._navegador().visible is False
+
+
+# --------------------------------------------------------------------------- #
+# La página real YA inscripta y el manejo de resultados
+# --------------------------------------------------------------------------- #
+INSCRIPTO_REAL = json.loads((__import__("pathlib").Path(__file__).parent / "fixtures" / "comedor_inscripto_real.json")
+                            .read_text(encoding="utf-8"))
+
+
+def test_real_ya_inscripto_se_lee_de_la_columna_inscripto():
+    filas = mod.filas_de_comidas(INSCRIPTO_REAL)
+    assert filas[0]["inscripto"] == "SI" and filas[0]["ya asistio"] == "NO"
+    d = decidir(INSCRIPTO_REAL, DIA_REAL, datetime(2026, 9, 20, 19, 0), ["almuerzo"])
+    assert d.accion == "ya_inscripto"
+    assert not [e for e in INSCRIPTO_REAL["elementos"] if e["texto"] == "Inscribirse"]        # el botón desaparece
+
+
+def test_ya_inscripto_no_vuelve_a_apretar_nada(comedor):
+    sitio = {"inscripto": True, "instantanea": lambda: INSCRIPTO_REAL}
+    nav = NavegadorFalso(PaginaFalsa(sitio))
+    r = comedor.ejecutar(dia=DIA_REAL, navegador=nav)
+    assert r.estado == mod.YA_INSCRIPTO and not [e for e in nav._pagina.eventos if e[0] == "clic_indice"]
+
+
+def test_se_recuerda_cada_resultado_y_los_de_configuracion_no_se_reintentan(comedor, monkeypatch):
+    from types import SimpleNamespace
+    comedor.initialize(SimpleNamespace(voice=None))
+    monkeypatch.setattr(mod, "dia_a_inscribirse", lambda hoy=None: MANANA)
+    monkeypatch.setattr(comedor, "_avisar", lambda r: None)
+    monkeypatch.setattr(comedor, "ejecutar", lambda **k: mod.Resultado(mod.LOGIN_FALLO, "Usuario no es válido", MANANA))
+    comedor._tramite(True)
+    assert comedor._estado_guardado(MANANA) == "login_fallo" and not comedor.puede_reintentar(MANANA)
+    assert comedor.puede_reintentar(MANANA + timedelta(days=1)) and not comedor.ya_resuelto(MANANA)
+    monkeypatch.setattr(comedor, "ejecutar", lambda **k: mod.Resultado(mod.SIN_COMIDAS, "", MANANA))
+    comedor._tramite(True)
+    assert comedor.puede_reintentar(MANANA)                   # "todavía no hay comida" sí se reintenta
+
+
+def test_el_mismo_todavia_no_hay_comida_no_se_repite_en_los_reintentos(comedor, monkeypatch):
+    from types import SimpleNamespace
+    comedor.initialize(SimpleNamespace(voice=None))
+    monkeypatch.setattr(mod, "dia_a_inscribirse", lambda hoy=None: MANANA)
+    avisos = []
+    monkeypatch.setattr(comedor, "_avisar", lambda r: avisos.append(r.estado))
+    monkeypatch.setattr(comedor, "ejecutar", lambda **k: mod.Resultado(mod.SIN_COMIDAS, "", MANANA))
+    comedor._tramite(True)
+    comedor._tramite(True)
+    assert avisos == [mod.SIN_COMIDAS]                        # el segundo intento automático no lo repite
+    comedor._tramite(False)                                   # pedido a mano: siempre responde
+    assert avisos == [mod.SIN_COMIDAS, mod.SIN_COMIDAS]
+    monkeypatch.setattr(comedor, "ejecutar", lambda **k: mod.Resultado(mod.INSCRIPTO, "", MANANA))
+    comedor._tramite(True)
+    assert avisos[-1] == mod.INSCRIPTO and comedor.ya_resuelto(MANANA)

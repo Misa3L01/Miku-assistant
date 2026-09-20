@@ -382,13 +382,24 @@ class Comedor(Plugin):
     def _ruta_estado() -> Path:
         return config_mod.BASE_DIR / "data" / "comedor_estado.json"
 
-    def ya_resuelto(self, dia: date) -> bool:
-        """True si para ``dia`` ya quedó inscripto o ya estaba inscripto."""
+    #: Resultados que no se arreglan reintentando (falta configurar algo): no se vuelve a probar ese día.
+    _NO_REINTENTABLES = ("login_fallo", "usuario_invalido", "sin_clave", "sin_usuario", "sin_navegador")
+
+    def _estado_guardado(self, dia: date) -> Optional[str]:
+        """Último resultado guardado para ``dia`` (None si no hay o es de otro día)."""
         try:
             datos = json.loads(self._ruta_estado().read_text(encoding="utf-8"))
-            return datos.get("dia") == dia.isoformat() and datos.get("estado") in (INSCRIPTO, YA_INSCRIPTO)
+            return str(datos.get("estado")) if datos.get("dia") == dia.isoformat() else None
         except (OSError, ValueError, AttributeError):
-            return False
+            return None
+
+    def ya_resuelto(self, dia: date) -> bool:
+        """True si para ``dia`` ya quedó inscripto o ya estaba inscripto."""
+        return self._estado_guardado(dia) in (INSCRIPTO, YA_INSCRIPTO)
+
+    def puede_reintentar(self, dia: date) -> bool:
+        """False si el último intento falló por algo que reintentar no arregla (usuario, contraseña...)."""
+        return self._estado_guardado(dia) not in self._NO_REINTENTABLES
 
     def _recordar(self, r: Resultado) -> None:
         if r.dia is None:
@@ -416,10 +427,14 @@ class Comedor(Plugin):
         return exito("comedor.iniciando")
 
     def _tramite(self, automatico: bool) -> None:
+        previo = self._estado_guardado(dia_a_inscribirse())
         r = self.ejecutar()
-        self._avisar(r)
+        # En los reintentos automáticos no se repite el mismo "todavía no hay comida / no está habilitado".
+        repetido = automatico and previo == r.estado and r.estado in (SIN_COMIDAS, NO_HABILITADO)
+        if not repetido:
+            self._avisar(r)
+        self._recordar(r)
         if r.estado in (INSCRIPTO, YA_INSCRIPTO):
-            self._recordar(r)
             if r.captura and config_mod.config.get("comedor_enviar_captura", True):
                 self._enviar_captura(r.captura)
 

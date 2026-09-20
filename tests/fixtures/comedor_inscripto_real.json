@@ -1,0 +1,469 @@
+{
+ "url": "https://comedorobera.unam.edu.ar/comedorfi/1.0/aplicacion.php?tm=1&tcm=central&ai=comedorfi||103000019",
+ "titulo": "Comedorfi - Inscripciones",
+ "texto": "APELLIDO, NOMBRE\n00000000\nInicio\nAutogestion\n Inscripciones\n Credito Disponible\n Modifcar Perfil\n Historico de Asistencia\n Cambiar Contraseña\nVersión 3.0.1\nInscripciones\nColumna\tCondición\tValor\nFecha Comida\t\nes igual a\nes distinto de\ndesde\nhasta\nentre\n\t\n\t\nDescripción\t\ncontiene\nno contiene\ncomienza con\ntermina con\nes igual a\nes distinto de\n\t\t\n Filtrar\nInscribase al día que va asistir al comedor. Si, por ejemplo, son dos días debe inscribirse a ambos días.\n\n\nTipo de Comida\n\tFecha comida\n\tDescripcion\n\tFecha alta\n\tFecha inicio Inscripción\n\tHabilitado desde\n\tHabilitado hasta\n\tCupo\n\tInscripto?\n\tYa Asistió\n\t \t \nAlmuerzo\t21/09/2026\tMENU: TALLARINES CON TUCO DE POLLO, ENSALADA MIXTA, FLAN.\t20/09/2026\t20/09/2026\t20/09/2026 14:00\t07:30\t900\tSI\tNO\t\t\n\n",
+ "elementos": [
+  {
+   "i": 0,
+   "tag": "img",
+   "id": "",
+   "texto": "",
+   "valor": "",
+   "titulo": "Cerrar ventana",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": ""
+  },
+  {
+   "i": 1,
+   "tag": "a",
+   "id": "",
+   "texto": "",
+   "valor": "",
+   "titulo": "Cerrar la sesión",
+   "href": "#",
+   "deshabilitado": false,
+   "contexto": "APELLIDO, NOMBRE 00000000 Inicio Autogestion Inscripciones Credito Disponible Modifcar Perfil Historico de Asistencia Cambiar Contraseña Versión 3.0.1 Inscripciones Columna Condición Valor Fecha Comida es igual a es distinto de desde "
+  },
+  {
+   "i": 2,
+   "tag": "a",
+   "id": "",
+   "texto": "Inicio",
+   "valor": "",
+   "titulo": "Inicio",
+   "href": "#",
+   "deshabilitado": false,
+   "contexto": "Inicio"
+  },
+  {
+   "i": 3,
+   "tag": "a",
+   "id": "",
+   "texto": "Autogestion",
+   "valor": "",
+   "titulo": "",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Autogestion Inscripciones Credito Disponible Modifcar Perfil Historico de Asistencia Cambiar Contraseña"
+  },
+  {
+   "i": 4,
+   "tag": "a",
+   "id": "",
+   "texto": "Inscripciones",
+   "valor": "",
+   "titulo": "Inscripciones",
+   "href": "#",
+   "deshabilitado": false,
+   "contexto": "Inscripciones"
+  },
+  {
+   "i": 5,
+   "tag": "a",
+   "id": "",
+   "texto": "Credito Disponible",
+   "valor": "",
+   "titulo": "Credito Disponible",
+   "href": "#",
+   "deshabilitado": false,
+   "contexto": "Credito Disponible"
+  },
+  {
+   "i": 6,
+   "tag": "a",
+   "id": "",
+   "texto": "Modifcar Perfil",
+   "valor": "",
+   "titulo": "Modifcar Perfil",
+   "href": "#",
+   "deshabilitado": false,
+   "contexto": "Modifcar Perfil"
+  },
+  {
+   "i": 7,
+   "tag": "a",
+   "id": "",
+   "texto": "Historico de Asistencia",
+   "valor": "",
+   "titulo": "Historico de Asistencia",
+   "href": "#",
+   "deshabilitado": false,
+   "contexto": "Historico de Asistencia"
+  },
+  {
+   "i": 8,
+   "tag": "a",
+   "id": "",
+   "texto": "Cambiar Contraseña",
+   "valor": "",
+   "titulo": "Cambiar Contraseña",
+   "href": "#",
+   "deshabilitado": false,
+   "contexto": "Cambiar Contraseña"
+  },
+  {
+   "i": 9,
+   "tag": "tr",
+   "id": "js_ei_103000075_filtro_filafecha_comida",
+   "texto": "Fecha Comida es igual a es distinto de desde hasta entre",
+   "valor": "",
+   "titulo": "",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Fecha Comida es igual a es distinto de desde hasta entre"
+  },
+  {
+   "i": 10,
+   "tag": "button",
+   "id": "js_ei_103000075_filtro_eliminarfecha_comida",
+   "texto": "",
+   "valor": "",
+   "titulo": "",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Fecha Comida es igual a es distinto de desde hasta entre"
+  },
+  {
+   "i": 11,
+   "tag": "tr",
+   "id": "js_ei_103000075_filtro_filadescripcion",
+   "texto": "Descripción contiene no contiene comienza con termina con es igual a es distinto",
+   "valor": "",
+   "titulo": "",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Descripción contiene no contiene comienza con termina con es igual a es distinto de"
+  },
+  {
+   "i": 12,
+   "tag": "button",
+   "id": "js_ei_103000075_filtro_eliminardescripcion",
+   "texto": "",
+   "valor": "",
+   "titulo": "",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Descripción contiene no contiene comienza con termina con es igual a es distinto de"
+  },
+  {
+   "i": 13,
+   "tag": "button",
+   "id": "ei_103000075_filtro_filtrar",
+   "texto": "Filtrar",
+   "valor": "",
+   "titulo": "[alt + shift + F]",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Columna Condición Valor Fecha Comida es igual a es distinto de desde hasta entre Descripción contiene no contiene comienza con termina con es igual a es distinto de Filtrar"
+  },
+  {
+   "i": 14,
+   "tag": "a",
+   "id": "",
+   "texto": "",
+   "valor": "",
+   "titulo": "Permite ordenar por múltiples columnas",
+   "href": "javascript: js_cuadro_103000076_cuadro.mostrar_selector([ 'tipo_comida','fecha_comida','descripcion','fecha_alta','fecha_inicio_inscripcion','fecha_hora_inicio_",
+   "deshabilitado": false,
+   "contexto": ""
+  },
+  {
+   "i": 15,
+   "tag": "img",
+   "id": "",
+   "texto": "",
+   "valor": "",
+   "titulo": "",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Tipo de Comida Fecha comida Descripcion Fecha alta Fecha inicio Inscripción Habilitado desde Habilitado hasta Cupo Inscripto? Ya Asistió"
+  },
+  {
+   "i": 16,
+   "tag": "img",
+   "id": "",
+   "texto": "",
+   "valor": "",
+   "titulo": "",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Tipo de Comida Fecha comida Descripcion Fecha alta Fecha inicio Inscripción Habilitado desde Habilitado hasta Cupo Inscripto? Ya Asistió"
+  },
+  {
+   "i": 17,
+   "tag": "img",
+   "id": "",
+   "texto": "",
+   "valor": "",
+   "titulo": "",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Tipo de Comida Fecha comida Descripcion Fecha alta Fecha inicio Inscripción Habilitado desde Habilitado hasta Cupo Inscripto? Ya Asistió"
+  },
+  {
+   "i": 18,
+   "tag": "img",
+   "id": "",
+   "texto": "",
+   "valor": "",
+   "titulo": "",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Tipo de Comida Fecha comida Descripcion Fecha alta Fecha inicio Inscripción Habilitado desde Habilitado hasta Cupo Inscripto? Ya Asistió"
+  },
+  {
+   "i": 19,
+   "tag": "img",
+   "id": "",
+   "texto": "",
+   "valor": "",
+   "titulo": "",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Tipo de Comida Fecha comida Descripcion Fecha alta Fecha inicio Inscripción Habilitado desde Habilitado hasta Cupo Inscripto? Ya Asistió"
+  },
+  {
+   "i": 20,
+   "tag": "img",
+   "id": "",
+   "texto": "",
+   "valor": "",
+   "titulo": "",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Tipo de Comida Fecha comida Descripcion Fecha alta Fecha inicio Inscripción Habilitado desde Habilitado hasta Cupo Inscripto? Ya Asistió"
+  },
+  {
+   "i": 21,
+   "tag": "img",
+   "id": "",
+   "texto": "",
+   "valor": "",
+   "titulo": "",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Tipo de Comida Fecha comida Descripcion Fecha alta Fecha inicio Inscripción Habilitado desde Habilitado hasta Cupo Inscripto? Ya Asistió"
+  },
+  {
+   "i": 22,
+   "tag": "img",
+   "id": "",
+   "texto": "",
+   "valor": "",
+   "titulo": "",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Tipo de Comida Fecha comida Descripcion Fecha alta Fecha inicio Inscripción Habilitado desde Habilitado hasta Cupo Inscripto? Ya Asistió"
+  },
+  {
+   "i": 23,
+   "tag": "img",
+   "id": "",
+   "texto": "",
+   "valor": "",
+   "titulo": "",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Tipo de Comida Fecha comida Descripcion Fecha alta Fecha inicio Inscripción Habilitado desde Habilitado hasta Cupo Inscripto? Ya Asistió"
+  },
+  {
+   "i": 24,
+   "tag": "img",
+   "id": "",
+   "texto": "",
+   "valor": "",
+   "titulo": "",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Tipo de Comida Fecha comida Descripcion Fecha alta Fecha inicio Inscripción Habilitado desde Habilitado hasta Cupo Inscripto? Ya Asistió"
+  },
+  {
+   "i": 25,
+   "tag": "img",
+   "id": "",
+   "texto": "",
+   "valor": "",
+   "titulo": "",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Tipo de Comida Fecha comida Descripcion Fecha alta Fecha inicio Inscripción Habilitado desde Habilitado hasta Cupo Inscripto? Ya Asistió"
+  },
+  {
+   "i": 26,
+   "tag": "img",
+   "id": "",
+   "texto": "",
+   "valor": "",
+   "titulo": "",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Tipo de Comida Fecha comida Descripcion Fecha alta Fecha inicio Inscripción Habilitado desde Habilitado hasta Cupo Inscripto? Ya Asistió"
+  },
+  {
+   "i": 27,
+   "tag": "img",
+   "id": "",
+   "texto": "",
+   "valor": "",
+   "titulo": "",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Tipo de Comida Fecha comida Descripcion Fecha alta Fecha inicio Inscripción Habilitado desde Habilitado hasta Cupo Inscripto? Ya Asistió"
+  },
+  {
+   "i": 28,
+   "tag": "img",
+   "id": "",
+   "texto": "",
+   "valor": "",
+   "titulo": "",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Tipo de Comida Fecha comida Descripcion Fecha alta Fecha inicio Inscripción Habilitado desde Habilitado hasta Cupo Inscripto? Ya Asistió"
+  },
+  {
+   "i": 29,
+   "tag": "img",
+   "id": "",
+   "texto": "",
+   "valor": "",
+   "titulo": "",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Tipo de Comida Fecha comida Descripcion Fecha alta Fecha inicio Inscripción Habilitado desde Habilitado hasta Cupo Inscripto? Ya Asistió"
+  },
+  {
+   "i": 30,
+   "tag": "img",
+   "id": "",
+   "texto": "",
+   "valor": "",
+   "titulo": "",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Tipo de Comida Fecha comida Descripcion Fecha alta Fecha inicio Inscripción Habilitado desde Habilitado hasta Cupo Inscripto? Ya Asistió"
+  },
+  {
+   "i": 31,
+   "tag": "img",
+   "id": "",
+   "texto": "",
+   "valor": "",
+   "titulo": "",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Tipo de Comida Fecha comida Descripcion Fecha alta Fecha inicio Inscripción Habilitado desde Habilitado hasta Cupo Inscripto? Ya Asistió"
+  },
+  {
+   "i": 32,
+   "tag": "img",
+   "id": "",
+   "texto": "",
+   "valor": "",
+   "titulo": "",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Tipo de Comida Fecha comida Descripcion Fecha alta Fecha inicio Inscripción Habilitado desde Habilitado hasta Cupo Inscripto? Ya Asistió"
+  },
+  {
+   "i": 33,
+   "tag": "img",
+   "id": "",
+   "texto": "",
+   "valor": "",
+   "titulo": "",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Tipo de Comida Fecha comida Descripcion Fecha alta Fecha inicio Inscripción Habilitado desde Habilitado hasta Cupo Inscripto? Ya Asistió"
+  },
+  {
+   "i": 34,
+   "tag": "img",
+   "id": "",
+   "texto": "",
+   "valor": "",
+   "titulo": "",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Tipo de Comida Fecha comida Descripcion Fecha alta Fecha inicio Inscripción Habilitado desde Habilitado hasta Cupo Inscripto? Ya Asistió"
+  }
+ ],
+ "tablas": [
+  [
+   [
+    "Columna Condición Valor Fecha Comida es igual a es distinto de desde hasta entre"
+   ]
+  ],
+  [
+   [
+    "Columna Condición Valor Fecha Comida es igual a es distinto de desde hasta entre"
+   ]
+  ],
+  [
+   [
+    "Columna",
+    "Condición",
+    "Valor"
+   ],
+   [
+    "Fecha Comida",
+    "es igual a es distinto de desde hasta entre",
+    "...,...",
+    "borrar.gif"
+   ],
+   [
+    "Descripción",
+    "contiene no contiene comienza con termina con es igual a es distinto de",
+    "",
+    "borrar.gif"
+   ]
+  ],
+  [
+   [
+    "Inscribase al día que va asistir al comedor. Si, por ejemplo, son dos días debe "
+   ]
+  ],
+  [
+   [
+    "ordenar.gif"
+   ],
+   [
+    "Tipo de Comida Fecha comida Descripcion Fecha alta Fecha inicio Inscripción Habi"
+   ],
+   [
+    ""
+   ]
+  ],
+  [
+   [
+    "Tipo de Comida",
+    "Fecha comida",
+    "Descripcion",
+    "Fecha alta",
+    "Fecha inicio Inscripción",
+    "Habilitado desde",
+    "Habilitado hasta",
+    "Cupo",
+    "Inscripto?",
+    "Ya Asistió",
+    "",
+    ""
+   ],
+   [
+    "Almuerzo",
+    "21/09/2026",
+    "MENU: TALLARINES CON TUCO DE POLLO, ENSALADA MIXTA, FLAN.",
+    "20/09/2026",
+    "20/09/2026",
+    "20/09/2026 14:00",
+    "07:30",
+    "900",
+    "SI",
+    "NO",
+    "",
+    ""
+   ]
+  ]
+ ]
+}
