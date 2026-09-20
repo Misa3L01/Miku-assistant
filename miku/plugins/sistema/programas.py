@@ -14,7 +14,10 @@ import time
 from typing import Any, Dict, List, Optional
 
 from miku.plataforma.texto import normalizar
+from miku.ajustes import carga as config_mod
 from miku.plugins.base import Plugin
+from miku.plugins.sistema import lanzadores
+from miku.plugins.utiles import aperturas
 from miku.plataforma.everything import Everything
 from miku.plugins.sistema.biblioteca_juegos import BibliotecaJuegos
 from miku.plugins.utiles import RutasOfrecidas, abrir_resultado
@@ -143,7 +146,24 @@ class Programas(Plugin):
     def initialize(self, event_bus: Any = None) -> None:
         """Deja el plugin listo."""
         super().initialize(event_bus)
+        self._event_bus = event_bus
         logger.info("Plugin programas listo.")
+
+    def _avisar_juego(self, nombre: str, estado: str, ok: bool) -> None:
+        """Cuenta (por voz y toast) cómo terminó el arranque de un juego con lanzador."""
+        from miku.voz.frases.respuesta import responder
+        texto = str(responder(f"juego.{estado}", ok, nombre=nombre))
+        try:
+            from miku.servicios import notificaciones
+            notificaciones.notificar("Miku", texto)
+        except Exception:  # noqa: BLE001
+            logger.debug("Sin toast del juego.", exc_info=True)
+        voz = getattr(getattr(self, "_event_bus", None), "voice", None)
+        if voz is not None:
+            try:
+                voz.decir(texto)
+            except Exception:  # noqa: BLE001
+                pass
 
     def manejar_tool(self, nombre_tool: str, args: Dict[str, Any],
                      contexto: Dict[str, Any]) -> Any:
@@ -186,6 +206,14 @@ class Programas(Plugin):
         Si no lo encuentra en ninguno, lo dice con una pista útil.
         """
         nombre = nombre.lower().strip()
+
+        # 0) Juegos con lanzador (JUEGOS_LANZADOR): abre el lanzador y, cuando aparece, el juego.
+        juego = lanzadores.buscar_juego(nombre, config_mod.config.get("juegos_lanzador", {}))
+        if juego is not None:
+            aperturas.marcar(nombre)
+            lanzadores.iniciar_en_hilo(juego, lambda estado, ok, n=nombre: self._avisar_juego(n, estado, ok))
+            return exito("juego.lanzador_iniciado", nombre=nombre, con_lanzador=bool(juego.lanzador))
+
         app = _APPS.get(nombre) or self._buscar_alias(nombre)
 
         if app is not None:
@@ -196,6 +224,7 @@ class Programas(Plugin):
                 return "No tengo el módulo AppOpener para abrir programas."
             try:
                 app_open(app, match_closest=True)
+                aperturas.marcar(nombre)
                 return exito("programa.abriendo", nombre=nombre)
             except Exception as e:  # noqa: BLE001
                 logger.error("Error abriendo %s: %s", app, e)
@@ -205,6 +234,7 @@ class Programas(Plugin):
         appid = self._biblioteca.buscar_steam(nombre)
         if appid:
             try:
+                aperturas.marcar(nombre)
                 os.startfile(f"steam://rungameid/{appid}")  # type: ignore[attr-defined]
                 logger.info("Lanzando juego de Steam '%s' (appid=%s).",
                             nombre, appid)

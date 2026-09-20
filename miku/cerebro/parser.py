@@ -145,6 +145,13 @@ class BrainGroq:
             "(por ejemplo 'modo fortnite', 'comedor' u otro atajo conocido), "
             "usá ejecutar_macro con ese nombre. Si no sabés qué macros hay, "
             "podés usar listar_macros.\n"
+            "- Si el usuario pide VARIAS acciones seguidas ('llevá Brave al monitor 1 y abrí "
+            "Discord y llevalo al monitor 2'), pedí TODAS las herramientas necesarias en el MISMO "
+            "turno, en el orden dicho.\n"
+            "- Para el volumen de la MÚSICA (TIDAL) usá volumen_tidal; ajustar_volumen es el volumen "
+            "general de la PC o de una app.\n"
+            "- Para 'qué pestañas tengo abiertas' usá listar_pestanas (pestañas de Brave); "
+            "listar_ventanas es solo para ventanas de programas.\n"
             "- Si es una pregunta de conocimiento, charla, chiste o curiosidad: "
             "respondé directo SIN herramientas.\n"
             "- Nunca inventes parámetros de las tools.\n"
@@ -571,6 +578,12 @@ class CommandParser:
         if tool in ("silenciar_usuario_discord", "expulsar_usuario_discord",
                     "volumen_usuario_discord"):
             return self._describir_discord(tool, args)
+
+        if tool == "enviar_a_contacto_telegram":
+            contacto = str((args or {}).get("contacto", "") or "").strip() or "esa persona"
+            archivo = str((args or {}).get("archivo", "") or "").strip() or "la última captura"
+            return (f"¿Confirmás que le mande {archivo} a {contacto} por Telegram? "
+                    f"Decime 'sí' para confirmar o 'no' para cancelar.")
 
         # Genérico para futuras tools peligrosas.
         return ("Esto es una acción importante, ¿la confirmás? "

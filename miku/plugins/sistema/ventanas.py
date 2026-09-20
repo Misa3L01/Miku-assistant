@@ -4,11 +4,12 @@ ventanas.py - Ventanas de Windows: listar, minimizar, mover entre monitores y ac
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 from miku.plataforma.texto import normalizar
 from miku.plugins.base import Plugin
-from miku.plugins.utiles import a_entero
+from miku.plugins.utiles import a_entero, aperturas
 from miku.voz.frases.respuesta import exito, falla, hubo_falla
 
 logger = logging.getLogger("miku.plugins.ventanas")
@@ -36,6 +37,29 @@ _ALIAS_TITULO: Dict[str, tuple] = {
     "bloc de notas": ("bloc de notas", "notepad"),
     "calculadora": ("calculadora", "calculator"),
 }
+
+
+def _cloaked(hwnd: Any) -> bool:
+    """True si Windows tiene la ventana "cloaked" (oculta al usuario: escritorio virtual ajeno, UWP en segundo plano)."""
+    try:
+        import ctypes
+        valor = ctypes.c_int(0)
+        ctypes.windll.dwmapi.DwmGetWindowAttribute(int(hwnd), 14, ctypes.byref(valor), ctypes.sizeof(valor))
+        return valor.value != 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _nombre_corto(titulo: str) -> str:
+    """Título de ventana -> nombre hablable: "archivo - Visual Studio Code" -> "Visual Studio Code (archivo)".
+
+    Se recorta a 60 caracteres y se dejan las apps conocidas por su nombre (lo que va tras el último " - ").
+    """
+    partes = [p.strip() for p in titulo.replace(" \u2014 ", " - ").split(" - ") if p.strip()]
+    if len(partes) >= 2:
+        app, resto = partes[-1], partes[0]
+        return f"{app} ({resto[:40]})" if resto.lower() != app.lower() else app
+    return titulo[:60]
 
 
 class Ventanas(Plugin):
@@ -210,19 +234,58 @@ class Ventanas(Plugin):
         ventanas: List[Any] = []
 
         def _cb(hwnd: Any, _extra: Any) -> None:
-            if gui.IsWindowVisible(hwnd) and gui.GetWindowText(hwnd):
+            if gui.IsWindowVisible(hwnd) and gui.GetWindowText(hwnd) and self._es_ventana_de_usuario(hwnd):
                 ventanas.append((hwnd, gui.GetWindowText(hwnd)))
 
         gui.EnumWindows(_cb, None)
         return ventanas
 
+    #: Segundos que se espera la ventana de una app que Miku acaba de abrir.
+    ESPERA_APERTURA_S = 12.0
+
+    #: Títulos de ventanas del sistema que no son "una app abierta".
+    _TITULOS_DEL_SISTEMA = frozenset({"program manager", "microsoft text input application",
+                                      "windows input experience"})
+
+    def _es_ventana_de_usuario(self, hwnd: Any) -> bool:
+        """True si ``hwnd`` es una ventana que el usuario reconocería como una app abierta.
+
+        ``EnumWindows`` devuelve también cosas invisibles para el usuario aunque tengan la marca de
+        "visible": ventanas UWP ocultas ("cloaked", p. ej. la Experiencia de entrada de Windows), overlays
+        transparentes (NVIDIA GeForce Overlay), ventanas de herramientas y ventanas hijas de otras.
+        Sin este filtro Miku las nombraba como si estuvieran abiertas.
+        """
+        gui = self._w["gui"]
+        try:
+            if gui.GetWindowText(hwnd).strip().lower() in self._TITULOS_DEL_SISTEMA:
+                return False
+            estilo = gui.GetWindowLong(hwnd, -20)                    # GWL_EXSTYLE
+            es_app = bool(estilo & 0x00040000)                       # WS_EX_APPWINDOW
+            if estilo & 0x00000080 and not es_app:                   # WS_EX_TOOLWINDOW
+                return False
+            if estilo & 0x08000000 or estilo & 0x00000020:           # NOACTIVATE / TRANSPARENT (overlays)
+                return False
+            if gui.GetWindow(hwnd, 4) and not es_app:                # GW_OWNER: pertenece a otra ventana
+                return False
+            if _cloaked(hwnd):
+                return False
+            izq, arr, der, aba = gui.GetWindowRect(hwnd)
+            minimizada = bool(gui.IsIconic(hwnd))
+            if not minimizada and (der - izq < 40 or aba - arr < 40):
+                return False
+        except Exception:  # noqa: BLE001
+            return True          # ante la duda, no ocultar una ventana real
+        return True
+
     def listar_ventanas_abiertas(self) -> str:
-        """Devuelve un texto con las ventanas abiertas actualmente."""
+        """Dice qué apps tiene abiertas el usuario (una por ventana real, sin las de fondo del sistema)."""
         ventanas = self._enumerar_ventanas()
         if not ventanas:
-            return "No hay ventanas visibles."
-        nombres = [titulo for _, titulo in ventanas[:15]]
-        return "Ventanas abiertas:\n- " + "\n- ".join(nombres)
+            return falla("ventana.ninguna_abierta")
+        nombres = [_nombre_corto(titulo) for _, titulo in ventanas[:8]]
+        extra = len(ventanas) - len(nombres)
+        return exito("ventana.lista", cantidad=len(ventanas), nombres="; ".join(nombres),
+                     mas=f" y {extra} más" if extra > 0 else "")
 
     def _hwnd_de(self, nombre_app: str) -> Optional[Any]:
         """Busca el hwnd de la primera ventana cuyo título coincide.
@@ -242,11 +305,17 @@ class Ventanas(Plugin):
             if objetivo == normalizar(clave) or clave in objetivo:
                 fragmentos.extend(normalizar(t) for t in titulos)
 
-        for hwnd, titulo in self._enumerar_ventanas():
-            titulo_n = normalizar(titulo)
-            if any(f and f in titulo_n for f in fragmentos):
-                return hwnd
-        return None
+        # Si Miku acaba de abrir esa app (orden en cadena), su ventana puede tardar unos segundos en
+        # aparecer: se la espera en vez de decir "no la veo".
+        limite = time.monotonic() + (self.ESPERA_APERTURA_S if aperturas.reciente(nombre_app) else 0.0)
+        while True:
+            for hwnd, titulo in self._enumerar_ventanas():
+                titulo_n = normalizar(titulo)
+                if any(f and f in titulo_n for f in fragmentos):
+                    return hwnd
+            if time.monotonic() >= limite:
+                return None
+            time.sleep(0.5)
 
     def minimizar_ventana(self, nombre_app: str) -> str:
         """Minimiza la ventana del programa indicado."""

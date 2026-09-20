@@ -69,6 +69,16 @@ class Browser(Plugin):
         {
             "type": "function",
             "function": {
+                "name": "listar_pestanas",
+                "description": "Dice qué PESTAÑAS tiene abiertas el navegador Brave (títulos). Ej: "
+                               "'qué pestañas tengo abiertas', 'cuántas pestañas hay'. No es para "
+                               "ventanas de otros programas.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "cerrar_pestana",
                 "description": "Cierra una pestaña de Brave: la ACTUAL, o la que se llame "
                                "como se diga. Ej: 'cerrá esta pestaña', 'cerrá la pestaña de "
@@ -219,6 +229,8 @@ class Browser(Plugin):
                      contexto: Dict[str, Any]) -> Any:
         if nombre_tool == "abrir_pestana":
             return self.abrir_pestana(str(args.get("destino", "")))
+        if nombre_tool == "listar_pestanas":
+            return self.listar_pestanas()
         if nombre_tool == "cerrar_pestana":
             return self.cerrar_pestana(str(args.get("titulo", "") or ""))
         if nombre_tool == "buscar_en_pestana_actual":
@@ -242,6 +254,19 @@ class Browser(Plugin):
             logger.info("Pestaña abierta: %s", url)
             return f"Listo, abrí una pestaña con {destino}."
         return "No pude abrir la pestaña en Brave."
+
+    def listar_pestanas(self) -> str:
+        """Dice cuántas pestañas hay en Brave y los títulos de las primeras."""
+        if not self._asegurar_cdp():
+            return falla("brave.sin_cdp")
+        pestanas = [p for p in self._pestanas() if p.get("type", "page") == "page"
+                    and not str(p.get("url", "")).startswith(("devtools://", "chrome-extension://"))]
+        if not pestanas:
+            return falla("brave.sin_pestanas")
+        titulos = [str(p.get("title") or p.get("url") or "sin título").strip()[:50] for p in pestanas]
+        mostrados = titulos[:8]
+        return exito("brave.pestanas", cantidad=len(pestanas), titulos="; ".join(mostrados),
+                     mas=f" y {len(pestanas) - len(mostrados)} más" if len(pestanas) > len(mostrados) else "")
 
     @staticmethod
     def _coincide(pestana: Dict[str, Any], palabras: List[str]) -> bool:

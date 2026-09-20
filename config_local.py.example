@@ -339,6 +339,12 @@ LLM_API_KEY = ""
 # (usado por: traductor_juegos)
 # MENSAJES_JUEGO = {"gg": "buena partida"}
 
+# Juegos que se abren en dos pasos (lanzador y después el juego): Miku abre el lanzador,
+# espera a que esté abierto (tenés tiempo de aceptar el aviso de administrador) y abre
+# el juego. Clave = parte del nombre que decís.
+# (usado por: programas)
+# JUEGOS_LANZADOR = {"genshin": {"juego": r"D:\HoYoPlay\games\Genshin Impact game\GenshinImpact.exe", "lanzador": r"D:\HoYoPlay\launcher.exe", "proceso": "HYP"}}
+
 # Procesos de juegos (sin .exe) que activan el modo gaming automático.
 # (usado por: game_booster)
 # JUEGOS_BOOSTER = ["cs2", "fortniteclient-win64-shipping", "genshinimpact"]
@@ -381,6 +387,12 @@ LLM_API_KEY = ""
 # ======================================================================================
 # Tareas, control remoto y avisos automáticos
 # ======================================================================================
+
+# Personas a las que Miku puede mandarles archivos por Telegram: nombre -> ID numérico
+# de chat (deben haber iniciado tu bot con /start). Enviar a otra persona pide
+# confirmación.
+# (usado por: telegram_envio)
+# TELEGRAM_CONTACTOS = {"juan": "123456789"}
 
 # Avisos automáticos de Miku (clima, estado de la PC, batería, disco). Es el interruptor
 # general.

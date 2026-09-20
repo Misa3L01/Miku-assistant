@@ -107,6 +107,10 @@ _OPCIONES: List[Opcion] = [
     _o("telegram_chat_id", "", "claves",
        "Tu ID NUMÉRICO de usuario de Telegram (p. ej. con @userinfobot). Miku solo obedece a "
        "ese usuario.", "texto", usado_por="telegram_control"),
+    _o("telegram_contactos", {}, "avisos",
+       "Personas a las que Miku puede mandarles archivos por Telegram: nombre -> ID numérico de chat "
+       "(deben haber iniciado tu bot con /start). Enviar a otra persona pide confirmación.", "mapa",
+       'TELEGRAM_CONTACTOS = {"juan": "123456789"}', "telegram_envio"),
     _o("discord_bot_token", "", "claves",
        "Token del bot de Discord (https://discord.com/developers/applications). Necesita el "
        "intent privilegiado 'Server Members' activado.", "secreto", usado_por="discord_control"),
@@ -275,6 +279,12 @@ _OPCIONES: List[Opcion] = [
     _o("mensajes_juego", {}, "juegos",
        "Atajos del traductor: clave -> frase en español ('gg': 'buena partida'). Opcional.",
        "mapa", 'MENSAJES_JUEGO = {"gg": "buena partida"}', "traductor_juegos"),
+    _o("juegos_lanzador", {}, "juegos",
+       "Juegos que se abren en dos pasos (lanzador y después el juego): Miku abre el lanzador, espera a "
+       "que esté abierto (tenés tiempo de aceptar el aviso de administrador) y abre el juego. Clave = "
+       "parte del nombre que decís.", "mapa",
+       'JUEGOS_LANZADOR = {"genshin": {"juego": r"D:\\HoYoPlay\\games\\Genshin Impact game\\GenshinImpact.exe", '
+       '"lanzador": r"D:\\HoYoPlay\\launcher.exe", "proceso": "HYP"}}', "programas"),
     _o("juegos_booster", [], "juegos",
        "Procesos de juegos (sin .exe) que activan el modo gaming automático.", "lista",
        'JUEGOS_BOOSTER = ["cs2", "fortniteclient-win64-shipping", "genshinimpact"]',

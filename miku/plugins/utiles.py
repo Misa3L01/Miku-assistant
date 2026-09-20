@@ -3,6 +3,7 @@ utiles.py - Piezas chicas que comparten varios plugins.
 
     a_entero            Convierte argumentos que vienen del LLM sin lanzar excepciones.
     RutasOfrecidas      Recuerda las opciones ofrecidas en una desambiguación.
+    aperturas           Recuerda qué apps abrió Miku hace poco (para esperar su ventana en órdenes en cadena).
     abrir_resultado     Abre un archivo (o su carpeta) y arma el mensaje de confirmación.
 """
 from __future__ import annotations
@@ -10,7 +11,9 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
-from typing import Any, List
+import threading
+import time
+from typing import Any, Dict, List
 
 logger = logging.getLogger("miku.plugins.utiles")
 
@@ -26,6 +29,40 @@ def a_entero(valor: Any, defecto: int) -> int:
         return int(float(valor))
     except (TypeError, ValueError):
         return defecto
+
+
+class _AperturasRecientes:
+    """Apps que Miku acaba de abrir.
+
+    En una orden en cadena ("abrí Discord y llevalo al monitor 2") la ventana todavía no existe cuando
+    llega el segundo paso. Los plugins de ventanas consultan esto para **esperar** la ventana de algo
+    recién abierto en vez de contestar "no la veo".
+    """
+
+    def __init__(self) -> None:
+        self._marcas: Dict[str, float] = {}
+        self._lock = threading.Lock()
+
+    def marcar(self, nombre: str) -> None:
+        """Anota que se abrió ``nombre`` ahora."""
+        from miku.plataforma.texto import normalizar
+        with self._lock:
+            self._marcas[normalizar(nombre).strip()] = time.monotonic()
+
+    def reciente(self, nombre: str, segundos: float = 45.0) -> bool:
+        """True si se abrió ``nombre`` (o algo parecido) hace menos de ``segundos``."""
+        from miku.plataforma.texto import normalizar
+        buscado = normalizar(nombre).strip()
+        if not buscado:
+            return False
+        ahora = time.monotonic()
+        with self._lock:
+            return any(ahora - t <= segundos and (buscado in n or n in buscado)
+                       for n, t in self._marcas.items() if n)
+
+
+#: Registro compartido por los plugins.
+aperturas = _AperturasRecientes()
 
 
 class RutasOfrecidas:

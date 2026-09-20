@@ -63,6 +63,8 @@ _CATALOGO: List[_Entrada] = [
     _Entrada("productividad.todoist", "Todoist"),
     _Entrada("social.telegram_bot", "TelegramControl",
              lambda cfg: bool(cfg.telegram_bot_token)),
+    _Entrada("social.telegram_envio", "TelegramEnvio",
+             lambda cfg: bool(cfg.telegram_bot_token)),
     _Entrada("asistente.proactivo", "AsistenteProactivo",
              lambda cfg: bool(cfg.proactivo_activo)),
 ]

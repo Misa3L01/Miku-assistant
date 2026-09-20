@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -60,6 +61,7 @@ _JS_ALEATORIO_ESTADO = """(() => {
 _JS_CLIC_ALEATORIO = """(() => {
   const b = document.querySelector('[data-test=play-controls] [data-test=shuffle]');
   if (!b) return false; b.click(); return true; })()"""
+_RE_VOLUMEN = re.compile(r'"command"\s*:\s*"media\.volume"\s*,\s*"volume"\s*:\s*(\d+)')
 _JS_SONANDO = "!!document.querySelector('[data-test=play-controls] [data-test=pause]')"
 _JS_AHORA = """(() => {
   const t = document.querySelector('[data-test=footer-track-title]');
@@ -108,10 +110,13 @@ class ControlTidal:
     """
 
     def __init__(self, ruta_exe: str = "", puerto: int = 9223,
-                 abrir_ws: Optional[Callable[[str], Any]] = None) -> None:
+                 abrir_ws: Optional[Callable[[str], Any]] = None,
+                 ruta_log_player: Optional[Path] = None) -> None:
         self.ruta_exe = ruta_exe
         self.puerto = int(puerto)
         self._abrir_ws = abrir_ws or self._ws_por_defecto
+        self.ruta_log_player = ruta_log_player or (
+            Path(os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming"))) / "TIDAL" / "logs" / "player.log")
 
     # ------------------------------------------------------------------ conexión
     @staticmethod
@@ -295,6 +300,52 @@ class ControlTidal:
             return False
         return bool(self.evaluar(f"(() => {{ const b = document.querySelector({json.dumps(selector)}); "
                                  f"if (!b) return false; b.click(); return true; }})()"))
+
+    # ------------------------------------------------------------------ volumen interno
+    def volumen_actual(self) -> Optional[int]:
+        """Volumen interno de TIDAL (0-100), leído del último ``media.volume`` de su log del reproductor.
+
+        La interfaz de TIDAL solo dibuja su deslizador al pasar el mouse, así que el log es la fuente
+        fiable del valor actual. None si no se puede leer.
+        """
+        try:
+            with open(self.ruta_log_player, "rb") as f:
+                f.seek(0, os.SEEK_END)
+                f.seek(max(0, f.tell() - 200_000))            # el final del log alcanza
+                texto = f.read().decode("utf-8", errors="ignore")
+        except OSError:
+            return None
+        encontrados = _RE_VOLUMEN.findall(texto)
+        return int(encontrados[-1]) if encontrados else None
+
+    def _tecla_volumen(self, subir: bool) -> None:
+        """Ctrl+Flecha arriba/abajo: el atajo de TIDAL para el volumen (10 puntos por pulsación)."""
+        vk, nombre = (38, "ArrowUp") if subir else (40, "ArrowDown")
+        for tipo in ("rawKeyDown", "keyUp"):
+            self._llamar("Input.dispatchKeyEvent", {"type": tipo, "modifiers": 2, "key": nombre, "code": nombre,
+                                                    "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk})
+
+    def cambiar_volumen(self, pasos: int) -> Optional[int]:
+        """Sube (``pasos`` > 0) o baja el volumen de TIDAL (cada paso = 10 puntos) y devuelve el nivel resultante."""
+        antes = self.volumen_actual()
+        for _ in range(min(abs(int(pasos)), 10)):
+            self._tecla_volumen(pasos > 0)
+            time.sleep(0.15)
+        limite = time.monotonic() + 2.0
+        despues = self.volumen_actual()
+        while despues == antes and time.monotonic() < limite and antes not in (0, 100):
+            time.sleep(0.2)
+            despues = self.volumen_actual()
+        return despues
+
+    def fijar_volumen(self, objetivo: int) -> Optional[int]:
+        """Deja el volumen de TIDAL lo más cerca posible de ``objetivo`` (0-100; múltiplos de 10)."""
+        actual = self.volumen_actual()
+        if actual is None:
+            return None
+        objetivo = max(0, min(100, int(objetivo)))
+        pasos = round((objetivo - actual) / 10)
+        return self.cambiar_volumen(pasos) if pasos else actual
 
     def ahora(self) -> Optional[Dict[str, Any]]:
         """``{titulo, artista, reproduciendo}`` de lo que muestra el reproductor (None si no se pudo leer)."""

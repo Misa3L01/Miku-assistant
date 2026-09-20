@@ -37,6 +37,30 @@ CATALOGO: Dict[str, List[str]] = {
         "Listo, {nombre} cerrado.",
         "Ya cerré {nombre}.",
     ],
+    "juego.lanzador_iniciado": [
+        "Dale, abro {nombre}. Primero el lanzador; cuando esté listo abro el juego.",
+        "Voy con {nombre}: abro el lanzador y después el juego.",
+    ],
+    "juego.abriendo_juego": [
+        "Listo, abriendo {nombre}.",
+        "Ya pedí abrir {nombre}. Aceptá el aviso de administrador si aparece.",
+    ],
+    "juego.ya_abierto": [
+        "{nombre} ya está abierto.",
+        "Ya tenés {nombre} corriendo.",
+    ],
+    "juego.lanzador_no_abre": [
+        "No pude abrir el lanzador de {nombre}. Revisá la ruta en JUEGOS_LANZADOR.",
+        "El lanzador de {nombre} no se abrió; revisá JUEGOS_LANZADOR en config_local.py.",
+    ],
+    "juego.lanzador_no_aparece": [
+        "El lanzador de {nombre} no llegó a abrirse. ¿Aceptaste el aviso de administrador? Probá de nuevo.",
+        "Esperé y el lanzador de {nombre} no apareció. Decime de nuevo cuando quieras.",
+    ],
+    "juego.juego_no_abre": [
+        "No pude abrir {nombre}. Revisá la ruta del juego en JUEGOS_LANZADOR.",
+        "El juego {nombre} no se abrió; puede que la ruta esté mal o no aceptaste el aviso de administrador.",
+    ],
     "programa.juegos_steam_vacio": [
         "No encuentro juegos en tu biblioteca de Steam. ¿Está instalado y con la sesión iniciada?",
         "No veo juegos en la biblioteca de Steam. Fijate que Steam esté instalado y con tu cuenta.",
@@ -88,6 +112,14 @@ CATALOGO: Dict[str, List[str]] = {
     "ventana.error": [
         "No pude {accion} {app}.",
         "Intenté {accion} {app} pero no me dejó.",
+    ],
+    "ventana.lista": [
+        "Tenés {cantidad} ventanas abiertas: {nombres}{mas}.",
+        "Ahora mismo hay abiertas: {nombres}{mas}.",
+    ],
+    "ventana.ninguna_abierta": [
+        "No veo ninguna ventana abierta.",
+        "No hay ninguna ventana abierta que yo pueda ver.",
     ],
     "ventana.minimizada": [
         "Minimicé {app}.",
@@ -245,6 +277,10 @@ CATALOGO: Dict[str, List[str]] = {
         "No pude cerrar la pestaña.",
         "Intenté cerrar la pestaña pero no respondió.",
     ],
+    "brave.pestanas": [
+        "Tenés {cantidad} pestañas abiertas en Brave: {titulos}{mas}.",
+        "En Brave hay {cantidad} pestañas: {titulos}{mas}.",
+    ],
     "brave.pestana_cerrada": [
         "Listo, cerré la pestaña.",
         "Ya cerré la pestaña.",
@@ -327,11 +363,63 @@ CATALOGO: Dict[str, List[str]] = {
         "No logro leer las resoluciones que soporta el monitor.",
     ],
 
+    # -------------------------------------------------------------------- telegram
+    "telegram.enviado": [
+        "Listo, te mandé {nombre}{a} por Telegram.",
+        "Enviado: {nombre}{a}, por Telegram.",
+        "Ya está, {nombre} salió por Telegram{a}.",
+    ],
+    "telegram.sin_token": [
+        "No tengo el bot de Telegram configurado. Falta TELEGRAM_BOT_TOKEN en config_local.py.",
+        "Sin TELEGRAM_BOT_TOKEN no puedo mandar nada por Telegram.",
+    ],
+    "telegram.sin_chat": [
+        "No sé a qué chat mandarlo: falta TELEGRAM_CHAT_ID en config_local.py.",
+        "Me falta tu TELEGRAM_CHAT_ID para saber a quién enviárselo.",
+    ],
+    "telegram.sin_contacto": [
+        "No tengo a '{contacto}' entre los contactos de Telegram. Agregalo en TELEGRAM_CONTACTOS.",
+        "No conozco a '{contacto}' en Telegram; sumalo a TELEGRAM_CONTACTOS con su ID.",
+    ],
+    "telegram.archivo_no_encontrado": [
+        "No encuentro el archivo '{archivo}' para mandarlo.",
+        "No di con '{archivo}'. Decime la ruta o el nombre exacto.",
+    ],
+    "telegram.archivo_grande": [
+        "{nombre} pesa {mb} MB y Telegram solo deja mandar hasta 50 MB con un bot.",
+        "Es demasiado grande ({mb} MB): el límite de Telegram para bots es de 50 MB.",
+    ],
+    "telegram.error_red": [
+        "No pude enviarlo por Telegram ahora mismo. Revisá la conexión.",
+        "Falló el envío por Telegram; probá de nuevo en un rato.",
+    ],
+    "telegram.rechazado": [
+        "Telegram rechazó el envío: {motivo}.",
+        "No se pudo enviar por Telegram ({motivo}).",
+    ],
+
     # ------------------------------------------------------------------------ TIDAL
     "tidal.reproduciendo": [
         "Dale, pongo {titulo}{de}{modo}.",
         "Ahí va {titulo}{de}{modo}.",
         "Poniendo {titulo}{de}{modo}.",
+    ],
+    "tidal.volumen": [
+        "Listo, la música quedó al {nivel}%.",
+        "Volumen de TIDAL en {nivel}%.",
+        "Dale, TIDAL al {nivel}%.",
+    ],
+    "tidal.volumen_sin_control": [
+        "Para tocar el volumen de TIDAL necesito tenerlo abierto con el control activo. Poné algo con Miku primero.",
+        "No puedo manejar el volumen de TIDAL ahora: falta el control. Pedime que ponga algo y lo activo.",
+    ],
+    "tidal.volumen_sin_valor": [
+        "¿A qué nivel querés la música? Decime un número de 0 a 100.",
+        "No entendí qué hacer con el volumen. Decime subir, bajar o un nivel.",
+    ],
+    "tidal.volumen_error": [
+        "No pude cambiar el volumen de TIDAL.",
+        "Toqué el volumen de TIDAL pero no logré confirmar el cambio.",
     ],
     "tidal.aleatorio_on": [
         "Listo, activé el aleatorio.",

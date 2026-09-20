@@ -73,6 +73,26 @@ class Tidal(Plugin):
         {
             "type": "function",
             "function": {
+                "name": "volumen_tidal",
+                "description": "Sube, baja o fija el volumen de la MÚSICA (el volumen interno de TIDAL), "
+                               "sin tocar el volumen general de la PC. Ej: 'subí el volumen de la música', "
+                               "'bajale a TIDAL', 'poné la música al 40'.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "accion": {"type": "string", "enum": ["subir", "bajar", "fijar"],
+                                   "description": "Qué hacer."},
+                        "valor": {"type": "integer",
+                                  "description": "Con 'fijar': el nivel 0-100. Con subir/bajar: cuántos "
+                                                 "puntos (por defecto 10)."},
+                    },
+                    "required": ["accion"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "conectar_tidal",
                 "description": "Inicia sesión con la cuenta de TIDAL (una sola vez) para poder buscar "
                                "y reproducir música por nombre. Abre el navegador para aprobar. "
@@ -142,6 +162,12 @@ class Tidal(Plugin):
                                             aleatorio if isinstance(aleatorio, bool) else None)
         if nombre_tool == "conectar_tidal":
             return self.conectar_tidal()
+        if nombre_tool == "volumen_tidal":
+            try:
+                valor = int(args.get("valor")) if args.get("valor") not in (None, "") else None
+            except (TypeError, ValueError):
+                valor = None
+            return self.volumen_tidal(str(args.get("accion", "")), valor)
         return None
 
     # ---------------- Poné X (búsqueda + enlace tidal://) ---------------- #
@@ -191,6 +217,26 @@ class Tidal(Plugin):
             self._abrir_enlace(r.enlace)
         return falla("tidal.sin_control" if estado == SIN_EXE else "tidal.no_reprodujo",
                      titulo=r.titulo, de=de)
+
+    def volumen_tidal(self, accion: str, valor: Optional[int] = None) -> str:
+        """Cambia el volumen interno de TIDAL (necesita el control por puerto activo)."""
+        accion = (accion or "").lower().strip()
+        control = self.control()
+        if not control.vivo():
+            return falla("tidal.volumen_sin_control")
+        if accion == "fijar":
+            if valor is None:
+                return falla("tidal.volumen_sin_valor")
+            nivel = control.fijar_volumen(valor)
+        elif accion in ("subir", "bajar", "sube", "baja"):
+            puntos = max(10, abs(valor)) if valor else 10
+            pasos = round(puntos / 10) * (1 if accion.startswith("sub") else -1)
+            nivel = control.cambiar_volumen(pasos)
+        else:
+            return falla("tidal.volumen_sin_valor")
+        if nivel is None:
+            return falla("tidal.volumen_error")
+        return exito("tidal.volumen", nivel=nivel)
 
     def conectar_tidal(self) -> str:
         """Inicia el inicio de sesión (una vez): abre el navegador y espera la aprobación."""
