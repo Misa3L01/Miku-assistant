@@ -4,7 +4,7 @@ bandeja.py - Icono en la bandeja del sistema (QSystemTrayIcon).
 
 El icono de la bandeja es la "cara" de Miku mientras corre en segundo plano: muestra el estado en
 el tooltip y su menú permite invocarla, cambiar de modo (voz / texto de depuración), activar el
-inicio con Windows y el atajo F22, y salir. También hospeda la ventanita de selección de modo.
+inicio con Windows y el atajo de teclado, y salir. También hospeda la ventanita de selección de modo.
 
 Diseño de hilos:
     Todo lo que toca Qt corre en el hilo compartido de ``core.qt_hilo`` (el
@@ -91,13 +91,13 @@ class _PanelBandeja:
             acc.triggered.connect(lambda marcado=False, c=clave, m=marcable: self._ejecutar(c, marcado, m))
 
         menu.addSeparator()
-        _accion("Invocar ahora (F22)", "invocar")
+        _accion("Invocar ahora", "invocar")
         menu.addSeparator()
         _accion("Modo voz", "modo_voz", True)
         _accion("Modo texto (depuración)", "modo_texto", True)
         menu.addSeparator()
         _accion("Iniciar con Windows", "inicio_windows", True)
-        _accion("Atajo F22 para abrir Miku", "atajo_f22", True)
+        _accion("Atajo de teclado para abrir Miku", "atajo_tecla", True)
         _accion("Elegir tecla de invocación…", "elegir_tecla")
         menu.addSeparator()
 
@@ -129,7 +129,7 @@ class _PanelBandeja:
             "modo_voz": estado.get("modo") == "voz",
             "modo_texto": estado.get("modo") == "texto",
             "inicio_windows": bool(estado.get("inicio_windows")),
-            "atajo_f22": bool(estado.get("atajo_f22")),
+            "atajo_tecla": bool(estado.get("atajo_tecla")),
         }
         for clave, accion in self._checks.items():
             accion.setChecked(marcas.get(clave, False))
@@ -206,7 +206,7 @@ class Bandeja:
     def __init__(self) -> None:
         self._hilo: Optional["qt_hilo.HiloQt"] = None
         self._panel: Optional[_PanelBandeja] = None
-        # Una sola ventanita a la vez (un segundo F22 con el diálogo abierto se ignora).
+        # Una sola ventanita a la vez (una segunda invocación con el diálogo abierto se ignora).
         self._lock_modo = threading.Lock()
 
     def iniciar(self, on_salir: Optional[Callable[[], None]] = None,
@@ -217,9 +217,9 @@ class Bandeja:
         Args:
             on_salir: Se llama al elegir "Salir".
             acciones: Acciones del menú por clave: ``invocar()``, ``modo_voz(marcado)``,
-                ``modo_texto(marcado)``, ``inicio_windows(marcado)``, ``atajo_f22(marcado)``.
+                ``modo_texto(marcado)``, ``inicio_windows(marcado)``, ``atajo_tecla(marcado)``.
                 Solo aparecen en el menú las que se registren.
-            estado: Devuelve ``{"modo", "inicio_windows", "atajo_f22"}`` para marcar las casillas.
+            estado: Devuelve ``{"modo", "inicio_windows", "atajo_tecla"}`` para marcar las casillas.
 
         Returns:
             True si el icono quedó creado; False si no hay PyQt5 o falló.

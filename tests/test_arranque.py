@@ -96,19 +96,32 @@ def test_el_comando_de_inicio_es_silencioso_y_usa_rutas_entrecomilladas():
     assert "main.py" in linea
 
 
-# ---------------------------------------------------------------- atajo F22
-def test_atajo_f22_se_crea_con_la_tecla_f22(tmp_path):
+# ---------------------------------------------------------------- atajo de teclado
+@pytest.mark.parametrize("tecla,esperada", [(None, "F13"), ("f22", "F22"), ("ctrl+alt+f5", "Alt+Ctrl+F5")])
+def test_atajo_se_crea_con_la_tecla_pedida(tmp_path, tecla, esperada):
     ruta = tmp_path / "Miku de prueba.lnk"
-    assert arranque.atajo_f22_activo(ruta) is False
-    assert arranque.activar_atajo_f22(ruta) is True
-    assert arranque.atajo_f22_activo(ruta) is True
+    assert arranque.atajo_activo(ruta) is False
+    assert arranque.activar_atajo(ruta, tecla) is True
+    assert arranque.atajo_activo(ruta) is True
     leido = subprocess.run(
         ["powershell", "-NoProfile", "-Command",
          f"(New-Object -ComObject WScript.Shell).CreateShortcut('{ruta}') | "
          "ForEach-Object { $_.Hotkey + '|' + $_.Arguments }"],
         capture_output=True, text=True, timeout=30).stdout.strip()
-    tecla, argumentos = leido.split("|", 1)
-    assert tecla == "F22"
+    leida, argumentos = leido.split("|", 1)
+    assert leida == esperada
     assert "--silencioso" in argumentos and "--invocar" in argumentos
-    assert arranque.desactivar_atajo_f22(ruta) is True
-    assert arranque.atajo_f22_activo(ruta) is False
+    assert arranque.desactivar_atajo(ruta) is True
+    assert arranque.atajo_activo(ruta) is False
+
+
+@pytest.mark.parametrize("tecla,esperado", [("f13", "F13"), ("F24", "F24"), (" ctrl + alt + f5 ", "CTRL+ALT+F5"),
+                                            ("f25", None), ("f0", None), ("m", None), ("sc:57", None),
+                                            ("insert", None), ("", None)])
+def test_atajo_valido(tecla, esperado):
+    assert arranque.atajo_valido(tecla) == esperado
+
+
+def test_una_tecla_que_un_acceso_directo_no_admite_no_crea_nada(tmp_path):
+    ruta = tmp_path / "x.lnk"
+    assert arranque.activar_atajo(ruta, "sc:57") is False and not ruta.exists()

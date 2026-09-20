@@ -9,12 +9,12 @@ Punto de entrada de la aplicación (``python main.py``). Responsabilidades:
     5. Esperar hasta que se pida salir, y cerrar todo de forma ordenada.
 
 Miku vive en segundo plano, en la bandeja. Tiene dos modos, que se pueden cambiar en caliente:
-    - **voz** (el normal): escucha continua; se la llama diciendo "Miku" o apretando F22.
+    - **voz** (el normal): escucha continua; se la llama diciendo "Miku" o apretando la tecla de invocación (F13).
     - **texto** (depuración): una ventana para escribirle; habla igual.
 
 Argumentos de línea de comandos:
     --silencioso   No muestra la ventanita de modo: usa el modo guardado (así arranca con Windows).
-    --invocar      Al terminar de arrancar, saluda y escucha un comando (así abre el atajo F22).
+    --invocar      Al terminar de arrancar, saluda y escucha un comando (así abre el atajo de teclado).
 """
 from __future__ import annotations
 
@@ -77,7 +77,7 @@ def validar_configuracion(cfg: "config_mod.Config") -> None:
 def configurar_logging(nivel: str) -> None:
     """Configura el logging: consola (si hay) y archivo rotativo ``data/miku.log``.
 
-    El archivo importa cuando Miku arranca con ``pythonw`` (con Windows o con F22): ahí no hay
+    El archivo importa cuando Miku arranca con ``pythonw`` (con Windows o con la tecla de invocación): ahí no hay
     consola y, sin archivo, los errores se perderían.
     """
     nivel_obj = getattr(logging, nivel, None)
@@ -135,7 +135,7 @@ class Asistente:
         #: Recordatorios que vencieron con Miku cerrada (se avisan al saludar).
         self._recordatorios_perdidos: List[Dict[str, Any]] = []
         self._invocacion_pendiente = False
-        self._hotkey_f22: Any = None
+        self._hotkey: Any = None
         #: Valor de ``tecla_invocar`` con el que se registró el hotkey actual.
         self._tecla_registrada: str = ""
         self.instancia: Any = None
@@ -264,7 +264,7 @@ class Asistente:
         return self.voice
 
     def _al_comando_voz(self, comando: str) -> None:
-        """Lo que se oyó tras "Miku" (o tras F22): se ejecuta y se muestra si hay ventana."""
+        """Lo que se oyó tras "Miku" (o tras la tecla de invocación): se ejecuta y se muestra si hay ventana."""
         print(f"\nVos: {comando}")
         respuesta = self.responder(comando)
         if self.consola is not None:
@@ -276,7 +276,7 @@ class Asistente:
         from miku.voz.entrada.escucha import SpeechToText  # import tardío
 
         voz = self._preparar_voz()
-        # Precalienta VOICEVOX en segundo plano: si no está corriendo (p. ej. al abrir Miku con F22
+        # Precalienta VOICEVOX en segundo plano: si no está corriendo (p. ej. al abrir Miku con la tecla
         # o con Windows), arrancarlo tarda ~12 s y la primera frase no debería pagar esa espera.
         threading.Thread(target=getattr(voz, "asegurar_voicevox_inicial", lambda: None),
                          name="miku_precalentar_voz", daemon=True).start()
@@ -294,7 +294,7 @@ class Asistente:
             logger.exception("No se pudo empezar la escucha continua.")
             return False
         self.bandeja.actualizar("Miku - Modo Voz (escuchando)")
-        print("\n=== Miku escuchando (decí 'Miku' o apretá F22) ===\n")
+        print(f"\n=== Miku escuchando (decí 'Miku' o apretá {tecla_mod.nombre_legible(self.tecla_invocacion())}) ===\n")
         mostrar_microfonos(self.stt)
         return True
 
@@ -388,7 +388,7 @@ class Asistente:
         return True
 
     def invocar(self) -> None:
-        """Invocación directa (F22 / atajo): Miku saluda y escucha un comando sin la palabra "Miku".
+        """Invocación directa (tecla / atajo): Miku saluda y escucha un comando sin la palabra "Miku".
 
         En modo texto trae la ventana al frente. Si todavía está arrancando, queda pendiente.
         Es seguro llamarlo desde cualquier hilo.
@@ -408,7 +408,7 @@ class Asistente:
         from miku.servicios import arranque
         return {"modo": self.modo,
                 "inicio_windows": arranque.inicio_windows_activo(),
-                "atajo_f22": arranque.atajo_f22_activo()}
+                "atajo_tecla": arranque.atajo_activo()}
 
     def acciones_menu(self) -> Dict[str, Callable[..., Any]]:
         """Acciones del menú de la bandeja (se llaman en un hilo aparte)."""
@@ -417,29 +417,33 @@ class Asistente:
         def inicio_windows(marcado: bool) -> None:
             (arranque.activar_inicio_windows if marcado else arranque.desactivar_inicio_windows)()
 
-        def atajo_f22(marcado: bool) -> None:
-            (arranque.activar_atajo_f22 if marcado else arranque.desactivar_atajo_f22)()
-            self.actualizar_hotkey_f22()
+        def atajo_tecla(marcado: bool) -> None:
+            if marcado:
+                arranque.activar_atajo(tecla=self.tecla_invocacion())
+            else:
+                arranque.desactivar_atajo()
+            self.actualizar_hotkey()
 
         return {
             "invocar": self.invocar,
             "modo_voz": lambda _m=True: self.cambiar_modo("voz"),
             "modo_texto": lambda _m=True: self.cambiar_modo("texto"),
             "inicio_windows": inicio_windows,
-            "atajo_f22": atajo_f22,
+            "atajo_tecla": atajo_tecla,
             "elegir_tecla": self.elegir_tecla,
         }
 
     def tecla_invocacion(self) -> str:
-        """Tecla que invoca a Miku (``TECLA_INVOCAR``; F22 por defecto)."""
+        """Tecla que invoca a Miku (``TECLA_INVOCAR``; F13 por defecto)."""
         return str(self.cfg.get("tecla_invocar", tecla_mod.POR_DEFECTO) or tecla_mod.POR_DEFECTO).strip().lower()
 
-    def actualizar_hotkey_f22(self) -> None:
-        """Registra la tecla de invocación dentro de Miku (por defecto F22).
+    def actualizar_hotkey(self) -> None:
+        """Registra la tecla de invocación dentro de Miku (por defecto F13).
 
-        Con F22 y el atajo de Windows activo, Windows lanza una segunda ejecución que invoca a esta;
-        registrar además el hotkey acá haría que F22 disparara la invocación dos veces. Cualquier otra
-        tecla (``TECLA_INVOCAR``) se maneja siempre acá, y solo funciona con Miku abierta.
+        Con el atajo de Windows activo (y una tecla que un acceso directo admita, como F13), Windows
+        lanza una segunda ejecución que invoca a esta; registrar además el hotkey acá haría que la tecla
+        disparara la invocación dos veces. Cualquier otra tecla se maneja acá, y solo funciona con
+        Miku abierta.
         """
         from miku.servicios import arranque
         try:
@@ -448,18 +452,18 @@ class Asistente:
             logger.info("Sin 'keyboard' no registro la tecla de invocación dentro de Miku: %s", e)
             return
         tecla = self.tecla_invocacion()
-        lo_maneja_windows = tecla == tecla_mod.POR_DEFECTO and arranque.atajo_f22_activo()
-        if self._hotkey_f22 is not None and (lo_maneja_windows or self._tecla_registrada != tecla):
+        lo_maneja_windows = arranque.atajo_valido(tecla) is not None and arranque.atajo_activo()
+        if self._hotkey is not None and (lo_maneja_windows or self._tecla_registrada != tecla):
             try:
-                keyboard.remove_hotkey(self._hotkey_f22)
+                keyboard.remove_hotkey(self._hotkey)
             except Exception:  # noqa: BLE001
                 pass
-            self._hotkey_f22 = None
+            self._hotkey = None
         if lo_maneja_windows:
-            logger.info("F22 lo maneja el atajo de Windows.")
-        elif self._hotkey_f22 is None:
+            logger.info("La tecla %s la maneja el atajo de Windows.", tecla)
+        elif self._hotkey is None:
             try:
-                self._hotkey_f22 = keyboard.add_hotkey(tecla_mod.a_hotkey(tecla), self.invocar)
+                self._hotkey = keyboard.add_hotkey(tecla_mod.a_hotkey(tecla), self.invocar)
                 self._tecla_registrada = tecla
                 logger.info("Tecla de invocación registrada dentro de Miku: %s.", tecla)
             except Exception as e:  # noqa: BLE001
@@ -470,13 +474,19 @@ class Asistente:
 
         Se llama desde el menú de la bandeja (en un hilo aparte). Avisa por voz/consola.
         """
+        from miku.servicios import arranque
         self.decir("Apretá ahora la tecla que querés usar para invocarme. Te escucho diez segundos.")
         elegida = tecla_mod.detectar(segundos)
         if not elegida:
             self.decir("No detecté ninguna tecla. Puede que esa tecla la maneje un programa del fabricante.")
             return None
         self.cfg.guardar_preferencias({"tecla_invocar": elegida})
-        self.actualizar_hotkey_f22()
+        if arranque.atajo_activo():
+            # El acceso directo lleva su propia tecla: se rehace con la nueva (o se quita si esa tecla
+            # no sirve para un acceso directo; entonces Miku la maneja sola, con Miku abierta).
+            if not arranque.activar_atajo(tecla=elegida):
+                arranque.desactivar_atajo()
+        self.actualizar_hotkey()
         self.decir(f"Listo, ahora me invocás con {tecla_mod.nombre_legible(elegida)}.")
         return elegida
 
@@ -618,7 +628,7 @@ def seleccionar_modo_consola(cfg: "config_mod.Config") -> str:
     """Menú por consola (solo cuando no hay ventanita): voz o texto. Enter = el guardado."""
     default = cfg.modo_entrada
     print("\n¿Cómo querés operar esta vez?")
-    print("  [1] Voz    (decís 'Miku' o apretás F22)")
+    print("  [1] Voz    (decís 'Miku' o apretás la tecla de invocación)")
     print("  [2] Texto  (consola de depuración)")
     opcion = input(f"Elegí 1 o 2 (Enter = {default}): ").strip()
     return {"1": "voz", "2": "texto"}.get(opcion, default)
@@ -629,7 +639,7 @@ def _analizar_argumentos(argv: Optional[List[str]]) -> argparse.Namespace:
     analizador.add_argument("--silencioso", action="store_true",
                             help="no muestra la ventanita de modo; usa el modo guardado")
     analizador.add_argument("--invocar", action="store_true",
-                            help="al arrancar, saluda y escucha un comando (atajo F22)")
+                            help="al arrancar, saluda y escucha un comando (atajo de teclado)")
     args, _desconocidos = analizador.parse_known_args(argv)
     return args
 
@@ -697,11 +707,11 @@ def main(instancia: Any = None, argv: Optional[List[str]] = None) -> None:
     except Exception:  # noqa: BLE001
         logger.debug("No pude iniciar la bandeja (sigo sin ella).", exc_info=True)
 
-    # 4) Modo inicial + hotkey F22 + cambio a ese modo.
+    # 4) Modo inicial + tecla de invocación + cambio a ese modo.
     try:
         modo, elegido = _elegir_modo_inicial(asistente, args)
         logger.info("Modo de entrada: %s", modo)
-        asistente.actualizar_hotkey_f22()
+        asistente.actualizar_hotkey()
         if not asistente.cambiar_modo(modo, persistir=elegido):
             # Sin PyQt5 no hay ventana de texto: bucle por consola (respaldo).
             if modo == "texto":

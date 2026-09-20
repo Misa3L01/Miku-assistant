@@ -1,7 +1,7 @@
 """
-tecla.py - Elegir y diagnosticar la tecla que invoca a Miku (por defecto F22).
+tecla.py - Elegir y diagnosticar la tecla que invoca a Miku (por defecto F13).
 
-Un teclado de notebook no tiene F22: teclas especiales como la de OMEN (HP Victus/Omen), las de
+Un teclado de notebook no tiene F13-F24 (ni F22): teclas especiales como la de OMEN (HP Victus/Omen), las de
 volumen o las de macros llegan de otra forma. Este módulo permite **detectar qué manda la tecla que
 vos apretás** y usarla como tecla de invocación (``TECLA_INVOCAR``):
 
@@ -23,7 +23,7 @@ from typing import Any, List, Optional, Union
 logger = logging.getLogger("miku.tecla")
 
 #: Tecla por defecto.
-POR_DEFECTO = "f22"
+POR_DEFECTO = "f13"
 _PREFIJO_SC = "sc:"
 
 
@@ -39,7 +39,7 @@ def a_hotkey(valor: str) -> Union[str, int]:
 
 
 def nombre_legible(valor: str) -> str:
-    """Cómo decirle al usuario cuál es la tecla ("f22" -> "F22", "sc:57" -> "la tecla especial (código 57)")."""
+    """Cómo decirle al usuario cuál es la tecla ("f13" -> "F13", "sc:57" -> "la tecla especial (código 57)")."""
     valor = (valor or "").strip().lower() or POR_DEFECTO
     if valor.startswith(_PREFIJO_SC):
         return f"la tecla especial (código {valor[len(_PREFIJO_SC):]})"

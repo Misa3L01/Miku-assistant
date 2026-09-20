@@ -186,24 +186,24 @@ def teclado(monkeypatch):
     return falso
 
 
-def test_f22_dentro_de_miku_si_no_hay_atajo_de_windows(asistente, teclado, monkeypatch):
-    monkeypatch.setattr(arranque, "atajo_f22_activo", lambda ruta=None: False)
-    asistente.actualizar_hotkey_f22()
-    asistente.actualizar_hotkey_f22()                       # idempotente
-    assert teclado.altas == ["f22"]
+def test_la_tecla_dentro_de_miku_si_no_hay_atajo_de_windows(asistente, teclado, monkeypatch):
+    monkeypatch.setattr(arranque, "atajo_activo", lambda ruta=None: False)
+    asistente.actualizar_hotkey()
+    asistente.actualizar_hotkey()                       # idempotente
+    assert teclado.altas == ["f13"]
 
 
 def test_con_atajo_de_windows_no_se_duplica_la_invocacion(asistente, teclado, monkeypatch):
     activo = {"si": False}
-    monkeypatch.setattr(arranque, "atajo_f22_activo", lambda ruta=None: activo["si"])
-    asistente.actualizar_hotkey_f22()
-    assert teclado.altas == ["f22"]
+    monkeypatch.setattr(arranque, "atajo_activo", lambda ruta=None: activo["si"])
+    asistente.actualizar_hotkey()
+    assert teclado.altas == ["f13"]
     activo["si"] = True                                     # el usuario activa el atajo desde la bandeja
-    asistente.actualizar_hotkey_f22()
+    asistente.actualizar_hotkey()
     assert teclado.bajas == ["hk-1"], "se quita el hotkey propio para no invocar dos veces"
     activo["si"] = False
-    asistente.actualizar_hotkey_f22()
-    assert teclado.altas == ["f22", "f22"]
+    asistente.actualizar_hotkey()
+    assert teclado.altas == ["f13", "f13"]
 
 
 # ---------------------------------------------------------------- menú de la bandeja
@@ -211,22 +211,22 @@ def test_acciones_del_menu(asistente, monkeypatch):
     llamadas = []
     monkeypatch.setattr(arranque, "activar_inicio_windows", lambda *a: llamadas.append("inicio_on"))
     monkeypatch.setattr(arranque, "desactivar_inicio_windows", lambda *a: llamadas.append("inicio_off"))
-    monkeypatch.setattr(arranque, "activar_atajo_f22", lambda *a: llamadas.append("atajo_on"))
-    monkeypatch.setattr(arranque, "desactivar_atajo_f22", lambda *a: llamadas.append("atajo_off"))
-    monkeypatch.setattr(asistente, "actualizar_hotkey_f22", lambda: llamadas.append("hotkey"))
+    monkeypatch.setattr(arranque, "activar_atajo", lambda *a, **k: llamadas.append("atajo_on"))
+    monkeypatch.setattr(arranque, "desactivar_atajo", lambda *a: llamadas.append("atajo_off"))
+    monkeypatch.setattr(asistente, "actualizar_hotkey", lambda: llamadas.append("hotkey"))
     acciones = asistente.acciones_menu()
-    assert set(acciones) == {"invocar", "modo_voz", "modo_texto", "inicio_windows", "atajo_f22", "elegir_tecla"}
+    assert set(acciones) == {"invocar", "modo_voz", "modo_texto", "inicio_windows", "atajo_tecla", "elegir_tecla"}
     acciones["inicio_windows"](True)
     acciones["inicio_windows"](False)
-    acciones["atajo_f22"](True)
+    acciones["atajo_tecla"](True)
     assert llamadas == ["inicio_on", "inicio_off", "atajo_on", "hotkey"]
 
 
 def test_estado_del_menu(asistente, monkeypatch):
     monkeypatch.setattr(arranque, "inicio_windows_activo", lambda *a: True)
-    monkeypatch.setattr(arranque, "atajo_f22_activo", lambda *a: False)
+    monkeypatch.setattr(arranque, "atajo_activo", lambda *a: False)
     asistente.modo = "voz"
-    assert asistente.estado_menu() == {"modo": "voz", "inicio_windows": True, "atajo_f22": False}
+    assert asistente.estado_menu() == {"modo": "voz", "inicio_windows": True, "atajo_tecla": False}
 
 
 # ---------------------------------------------------------------- salida y logging
@@ -292,12 +292,12 @@ def test_menu_de_la_bandeja_marca_el_estado_y_ejecuta_acciones():
     from miku.ui.bandeja import Bandeja
 
     llamadas = []
-    estado = {"modo": "texto", "inicio_windows": True, "atajo_f22": False}
+    estado = {"modo": "texto", "inicio_windows": True, "atajo_tecla": False}
     acciones = {"invocar": lambda: llamadas.append("invocar"),
                 "modo_voz": lambda m=True: llamadas.append("voz"),
                 "modo_texto": lambda m=True: llamadas.append("texto"),
                 "inicio_windows": lambda m: llamadas.append(("inicio", m)),
-                "atajo_f22": lambda m: llamadas.append(("atajo", m))}
+                "atajo_tecla": lambda m: llamadas.append(("atajo", m))}
     b = Bandeja()
     assert b.iniciar(on_salir=lambda: None, acciones=acciones, estado=lambda: estado)
     panel = b._panel
@@ -307,7 +307,7 @@ def test_menu_de_la_bandeja_marca_el_estado_y_ejecuta_acciones():
         return {k: a.isChecked() for k, a in panel._checks.items()}
 
     assert b._hilo.ejecutar_y_esperar(marcas) == {
-        "modo_voz": False, "modo_texto": True, "inicio_windows": True, "atajo_f22": False}
+        "modo_voz": False, "modo_texto": True, "inicio_windows": True, "atajo_tecla": False}
     b._hilo.ejecutar_y_esperar(lambda: panel._ejecutar("invocar", False, False))
     b._hilo.ejecutar_y_esperar(lambda: panel._ejecutar("inicio_windows", False, True))
     for _ in range(40):

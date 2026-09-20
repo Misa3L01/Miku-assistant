@@ -6,7 +6,7 @@ jugar (CS, Fortnite, Genshin Impact), el uso diario y Discord. Lo controlás hab
 (Telegram). Arquitectura modular: un **núcleo** (`miku/cerebro`, `voz`, `ui`, `servicios`) y
 **plugins** enchufables (`miku/plugins/`) que le publican *tools* al cerebro (un LLM en Groq).
 
-- **Voz de entrada:** wake word "Miku" (escucha continua) o la tecla F22, transcripción con Whisper (Groq).
+- **Voz de entrada:** wake word "Miku" (escucha continua) o la tecla de invocación (F13), transcripción con Whisper (Groq).
 - **Voz de salida:** VOICEVOX local (traduce ES→JA con Groq) con subtítulos estilo anime; cae a la voz del sistema si VOICEVOX no está.
 - **Cerebro:** Groq con *function calling*, más un *fast-path* local (hora, saludos, calculadora, memoria) que no gasta API.
 - **Seguridad:** las acciones peligrosas (apagar la PC, expulsar a alguien de Discord) piden un "sí" explícito.
@@ -90,22 +90,23 @@ la invoca.
 
 | Modo | Cómo se usa |
 |---|---|
-| **Modo Voz** (el normal) | Escucha continua, como "OK Google": decí **"Miku"** y esperá el "¿Sí? Decime."; o todo junto: **"Miku, qué hora es"**. También podés **apretar F22**: saluda y escucha un comando sin decir "Miku". Mientras Miku habla, el micrófono espera para no oírla. Al iniciar da un *briefing* (hora, clima, recordatorios; se desactiva con `SALUDO_AL_INICIAR = False`). |
+| **Modo Voz** (el normal) | Escucha continua, como "OK Google": decí **"Miku"** y esperá el "¿Sí? Decime."; o todo junto: **"Miku, qué hora es"**. También podés **apretar F13** (en este equipo es la tecla Insert remapeada, ver abajo): saluda y escucha un comando sin decir "Miku". Mientras Miku habla, el micrófono espera para no oírla. Al iniciar da un *briefing* (hora, clima, recordatorios; se desactiva con `SALUDO_AL_INICIAR = False`). |
 | **Modo Texto** (depuración) | Una ventana para escribirle a Miku y ver las respuestas (habla igual). Sirve para probar sin micrófono. |
 
-**Menú del icono de la bandeja** (clic derecho): *Invocar ahora (F22)* · *Modo voz* · *Modo texto (depuración)* ·
-*Iniciar con Windows* · *Atajo F22 para abrir Miku* · *Elegir tecla de invocación…* · *Salir*. El modo se cambia en caliente y se recuerda para la
+**Menú del icono de la bandeja** (clic derecho): *Invocar ahora* · *Modo voz* · *Modo texto (depuración)* ·
+*Iniciar con Windows* · *Atajo de teclado para abrir Miku* · *Elegir tecla de invocación…* · *Salir*. El modo se cambia en caliente y se recuerda para la
 próxima vez.
 
-**F22 e inicio con Windows** (los dos son opcionales y los activás desde ese menú):
+**Tecla de invocación e inicio con Windows** (los dos son opcionales y los activás desde ese menú):
 
 - **Iniciar con Windows:** registra a Miku en el inicio del usuario. Aparece en *Administrador de tareas →
   Inicio*, donde también la podés desactivar. Arranca en segundo plano y sin ventanita.
-- **F22 con Miku abierta:** la invoca (saluda y escucha).
-- **Atajo F22 para abrir Miku:** crea un acceso directo en el Menú Inicio con **F22 como tecla de método
-  abreviado**. Así F22 abre a Miku **aunque esté cerrada** (y no necesita el inicio con Windows). Si ya estaba abierta,
-  la nueva ejecución le avisa a la primera y se cierra. Si no activás el atajo, F22 funciona igual pero solo mientras Miku corre.
-- **Otra tecla en vez de F22:** un teclado de notebook no tiene F22. Con *Elegir tecla de invocación…* (menú de la bandeja) apretás la tecla que querés y Miku la detecta y la guarda (`TECLA_INVOCAR`; una tecla sin nombre queda como `sc:NN`). Funciona **solo con Miku abierta** (el atajo de Windows que la abre cerrada es solo de F22). Para ver qué manda una tecla: `python -m miku.servicios.tecla`. Algunas teclas de fabricante (p. ej. la de **OMEN** en HP Victus/Omen) las consume el software del fabricante (OMEN Hub) antes que los programas: si al apretarla no aparece nada, esa tecla no se puede usar y conviene elegir otra (o reasignarla en OMEN Hub).
+- **F13 con Miku abierta:** la invoca (saluda y escucha).
+- **Atajo de teclado para abrir Miku:** crea un acceso directo en el Menú Inicio con **la tecla de invocación (F13) como tecla de método
+  abreviado**. Así esa tecla abre a Miku **aunque esté cerrada** (y no necesita el inicio con Windows). Si ya estaba abierta,
+  la nueva ejecución le avisa a la primera y se cierra. Si no activás el atajo, la tecla funciona igual pero solo mientras Miku corre.
+- **Insert → F13 (este equipo):** como el teclado no tiene F13, la tecla **Insert** se remapeó a F13 a nivel de Windows (registro `Scancode Map`, con `scripts/remapear_insert_a_f13.ps1`; pide administrador y **hay que reiniciar la PC**). Así el acceso directo del Menú Inicio (F13) abre a Miku aunque esté cerrada. Para volver a la Insert normal: `powershell -ExecutionPolicy Bypass -File scriptsemapear_insert_a_f13.ps1 -Restaurar` y reiniciar.
+- **Otra tecla en vez de F13:** un teclado de notebook no tiene F13-F24. Con *Elegir tecla de invocación…* (menú de la bandeja) apretás la tecla que querés y Miku la detecta y la guarda (`TECLA_INVOCAR`; una tecla sin nombre queda como `sc:NN`). Funciona **solo con Miku abierta** (el atajo de Windows que la abre cerrada es solo de F22). Para ver qué manda una tecla: `python -m miku.servicios.tecla`. Algunas teclas de fabricante (p. ej. la de **OMEN** en HP Victus/Omen) las consume el software del fabricante (OMEN Hub) antes que los programas: si al apretarla no aparece nada, esa tecla no se puede usar y conviene elegir otra (o reasignarla en OMEN Hub).
 - Argumentos: `--silencioso` (no muestra la ventanita) y `--invocar` (al arrancar, saluda y escucha).
 - Sin consola (con `pythonw`) el log queda en `data/miku.log`.
 - Para salir: menú de la bandeja → *Salir* (o `Ctrl+C` si la abriste desde una consola).
@@ -144,7 +145,7 @@ sacale el `#`. Las opciones principales:
 | `LLM_BASE_URL`, `LLM_MODELO`, `LLM_API_KEY`, `LLM_SOPORTA_TOOLS` | LLM local o de otro proveedor (compatible con OpenAI) | parser |
 | `STT_PROVEEDOR`, `STT_MODELO_LOCAL` | Transcripción en la nube (Groq) o local (faster-whisper) | STT |
 | `MICROFONO_INDEX` | Micrófono fijo (`None` = el del sistema) | STT |
-| `TECLA_INVOCAR` | Tecla que te invoca (F22 por defecto) | app |
+| `TECLA_INVOCAR` | Tecla que te invoca (F13 por defecto) | app |
 | `MODO_ENTRADA`, `LOG_LEVEL` | Modo por defecto de la consola; nivel de log | `main` |
 | `MEMORIA_ACTIVA`, `EMBEDDINGS_ACTIVOS`, `EMBEDDINGS_UMBRAL` | Memoria persistente y búsqueda semántica | memoria |
 | `HISTORIAL_TURNOS`, `HISTORIAL_MINUTOS`, `ENRUTAR_TOOLS`, `ENRUTAR_MAX_TOOLS` | Historial de la charla y enrutado de tools | parser |
@@ -185,7 +186,7 @@ miku-assistant/
 ├── docs/                         # Bitácoras, plan de reestructuración, empaquetado, interpolación
 └── miku/
     ├── plataforma/               # Helpers de Windows compartidos: texto · subprocesos · pantalla · audio · everything · openmeteo · hardware · procesos
-    ├── app.py                    # Ensambla todo: Asistente, modos (voz/texto) en caliente, F22, cierre ordenado
+    ├── app.py                    # Ensambla todo: Asistente, modos (voz/texto) en caliente, tecla de invocación, cierre ordenado
     ├── ajustes/                  # Configuración
     │   ├── esquema.py            #   Esquema ÚNICO de opciones (tipo, default, descripción)
     │   ├── carga.py              #   Capas defaults → preferences → config_local → entorno + guardado atómico
@@ -197,11 +198,11 @@ miku-assistant/
     │   ├── calculadora.py        #   Calculadora local (sin LLM ni eval)
     │   └── memoria/              #   almacen.py (SQLite) · embeddings.py (fastembed, opcional)
     ├── voz/
-    │   ├── entrada/escucha.py    #   STT: wake word "Miku" + invocación por F22, Whisper (Groq)
+    │   ├── entrada/escucha.py    #   STT: wake word "Miku" + invocación por tecla, Whisper (Groq)
     │   ├── salida/               #   tts.py (VOICEVOX + fallback pyttsx3) · traduccion.py (Groq, compartida)
     │   └── frases/               #   tono.py (variantes de tono) · banco.py (frases con variantes que rotan) · catalogo_proactivo.py
     ├── ui/                       #   qt_hilo.py (UN hilo de Qt) · bandeja.py · subtitulos.py · selector_modo.py · consola.py (modo texto)
-    ├── servicios/                #   instancia.py (una sola Miku) · arranque.py (inicio con Windows, atajo F22) · eventos · scheduler · notificaciones · modos · briefing · personalidad · proactivo (motor de avisos) · reglas_proactivas
+    ├── servicios/                #   instancia.py (una sola Miku) · arranque.py (inicio con Windows, atajo de teclado) · eventos · scheduler · notificaciones · modos · briefing · personalidad · proactivo (motor de avisos) · reglas_proactivas
     └── plugins/
         ├── base.py               #   Clase base Plugin (contrato documentado en el módulo)
         ├── registro.py           #   Catálogo de plugins con carga perezosa y aislada
@@ -217,7 +218,7 @@ miku-assistant/
 
 ### Flujo de un comando
 
-1. **Entrada:** el STT (wake word o F22), la consola o Telegram producen un texto y llaman a `Asistente.responder()`.
+1. **Entrada:** el STT (wake word o tecla de invocación), la consola o Telegram producen un texto y llaman a `Asistente.responder()`.
 2. **`CommandParser.procesar()`** (serializado con un lock: lo llaman hilos distintos) decide, en orden:
    1. ¿Hay una **confirmación** pendiente? → se resuelve (ver abajo).
    2. ¿Hay una **desambiguación** pendiente ("¿cuál de estos 3?")? → se resuelve con "el segundo", "2" o parte del nombre.

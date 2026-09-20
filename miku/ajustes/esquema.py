@@ -161,11 +161,12 @@ _OPCIONES: List[Opcion] = [
        "'voz' (escucha continua, decís \"Miku\") o 'texto' (ventana de depuración). Se puede "
        "cambiar desde el icono de la bandeja.", "texto", usado_por="app",
        permitidos=("voz", "texto")),
-    _o("tecla_invocar", "f22", "voz",
-       "Tecla que te invoca (saluda y escucha un comando). F22 por defecto; si tu teclado no la tiene "
-       "usá 'Elegir tecla de invocación…' en la bandeja (detecta la que aprietes) o poné un nombre "
-       "como 'f13' o 'ctrl+alt+m', o 'sc:NN' para una tecla especial. Solo funciona con Miku abierta, "
-       "salvo F22 con el atajo de Windows.", "texto", usado_por="app"),
+    _o("tecla_invocar", "f13", "voz",
+       "Tecla que te invoca (saluda y escucha un comando). F13 por defecto (en este equipo la tecla "
+       "Insert se remapea a F13). Con 'Elegir tecla de invocación…' en la bandeja detecta la que "
+       "aprietes; también sirve un nombre como 'f14' o 'ctrl+alt+m', o 'sc:NN' para una tecla especial. "
+       "Solo con Miku abierta, salvo las teclas F1-F24 con el atajo de teclado de Windows.",
+       "texto", usado_por="app"),
     _o("saludo_al_iniciar", True, "voz",
        "Al iniciar el modo voz, Miku saluda con la hora, el clima y tus pendientes. Ponelo en "
        "False si no querés que hable al arrancar con Windows.", "booleano", usado_por="app"),

@@ -38,7 +38,7 @@ class TecladoFalso:
 
 
 @pytest.mark.parametrize("valor,esperado", [("f22", "f22"), ("F13", "f13"), ("ctrl+alt+m", "ctrl+alt+m"),
-                                            ("sc:57", 57), ("", "f22"), ("sc:xx", "f22")])
+                                            ("sc:57", 57), ("", "f13"), ("sc:xx", "f13")])
 def test_a_hotkey(valor, esperado):
     assert tecla.a_hotkey(valor) == esperado
 
@@ -59,7 +59,7 @@ def test_detectar_sin_teclas_devuelve_none():
 
 
 def test_nombres_legibles():
-    assert tecla.nombre_legible("f22") == "F22" and "57" in tecla.nombre_legible("sc:57")
+    assert tecla.nombre_legible("f13") == "F13" and "57" in tecla.nombre_legible("sc:57")
 
 
 def test_la_descripcion_muestra_todo_para_diagnosticar():
@@ -82,22 +82,22 @@ def asistente(cfg, monkeypatch):
     dichos = []
     monkeypatch.setattr(a, "decir", dichos.append)
     a.dichos = dichos
-    monkeypatch.setattr(arranque, "atajo_f22_activo", lambda ruta=None: False)
+    monkeypatch.setattr(arranque, "atajo_activo", lambda ruta=None: False)
     return a
 
 
 def test_otra_tecla_se_registra_siempre_dentro_de_miku(asistente, teclado, cfg, monkeypatch):
     cfg.valores["tecla_invocar"] = "sc:57"
-    monkeypatch.setattr(arranque, "atajo_f22_activo", lambda ruta=None: True)     # el atajo es solo de F22
-    asistente.actualizar_hotkey_f22()
+    monkeypatch.setattr(arranque, "atajo_activo", lambda ruta=None: True)     # el atajo solo sirve para teclas F1-F24
+    asistente.actualizar_hotkey()
     assert teclado.altas == [57]
 
 
 def test_cambiar_de_tecla_reemplaza_el_hotkey(asistente, teclado, cfg):
-    asistente.actualizar_hotkey_f22()
-    cfg.valores["tecla_invocar"] = "f13"
-    asistente.actualizar_hotkey_f22()
-    assert teclado.altas == ["f22", "f13"] and teclado.bajas == ["hk-1"]
+    asistente.actualizar_hotkey()
+    cfg.valores["tecla_invocar"] = "f14"
+    asistente.actualizar_hotkey()
+    assert teclado.altas == ["f13", "f14"] and teclado.bajas == ["hk-1"]
 
 
 def test_elegir_tecla_guarda_activa_y_avisa(asistente, teclado, cfg, monkeypatch):
