@@ -148,14 +148,16 @@ class Navegador:
         perfil: Carpeta del perfil propio (se crea).
         puerto: Puerto de depuración (distinto del de tu Brave normal).
         visible: False = sin ventana (headless).
+        minimizada: con ``visible``, abre la ventana ya minimizada (no roba el foco).
     """
 
     def __init__(self, ruta_exe: str, perfil: Path, puerto: int = 9224, visible: bool = True,
-                 abrir_ws: Callable[[str], Any] = _ws_por_defecto) -> None:
+                 abrir_ws: Callable[[str], Any] = _ws_por_defecto, minimizada: bool = False) -> None:
         self.ruta_exe = ruta_exe
         self.perfil = Path(perfil)
         self.puerto = int(puerto)
         self.visible = visible
+        self.minimizada = minimizada
         self._abrir_ws = abrir_ws
         self._proceso: Optional[subprocess.Popen] = None
         self._paginas: list = []
@@ -183,6 +185,8 @@ class Navegador:
                 "--no-first-run", "--no-default-browser-check", "--disable-sync", "about:blank"]
         if self.visible:
             args.insert(-1, "--window-size=1150,850")
+            if self.minimizada:
+                args.insert(-1, "--start-minimized")
         else:
             args.insert(-1, "--headless=new")
         env = dict(os.environ)
@@ -196,9 +200,28 @@ class Navegador:
         limite = time.monotonic() + espera
         while time.monotonic() < limite:
             if self.vivo():
+                if self.visible and self.minimizada:
+                    self.minimizar()
                 return True
             time.sleep(0.4)
         return False
+
+    def minimizar(self) -> bool:
+        """Minimiza la ventana (``--start-minimized`` no siempre se respeta, así que también se pide por CDP)."""
+        pagina = self.pagina()
+        if pagina is None:
+            return False
+        try:
+            ventana = pagina.llamar("Browser.getWindowForTarget", {"targetId": pagina.id})
+            id_ventana = ((ventana.get("result") or {}).get("windowId"))
+            if id_ventana is None:
+                return False
+            r = pagina.llamar("Browser.setWindowBounds", {"windowId": id_ventana, "bounds": {"windowState": "minimized"}})
+            return "error" not in r
+        finally:
+            pagina.cerrar()
+            if pagina in self._paginas:
+                self._paginas.remove(pagina)
 
     def pagina(self) -> Optional[Pagina]:
         """La primera pestaña (o una nueva) lista para usar."""

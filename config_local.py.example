@@ -420,7 +420,15 @@ LLM_API_KEY = ""
 # (usado por: comedor)
 # COMEDOR_TIPOS = ['almuerzo']
 
-# Mostrar la ventana del navegador mientras Miku hace el trámite (False = oculta).
+# Cómo se ve el trámite del comedor: 'normal' (una ventana de Brave aparte que ves
+# trabajar), 'minimizada' (aparece en la barra de tareas sin robarte el foco) u 'oculta'
+# (sin ventana). En los tres casos es un Brave aparte que se cierra solo al terminar: tu
+# Brave de siempre no se toca.
+# Valores válidos: normal, minimizada, oculta
+# (usado por: comedor)
+# COMEDOR_VENTANA = "normal"
+
+# Compatibilidad: False = ventana oculta (equivale a COMEDOR_VENTANA = 'oculta').
 # (usado por: comedor)
 # COMEDOR_VER = True
 

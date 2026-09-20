@@ -1,0 +1,140 @@
+{
+ "url": "https://comedorobera.unam.edu.ar/comedorfi/1.0/aplicacion.php?ai=comedorfi%7C%7C103000019",
+ "titulo": "Comedorfi - Inscripciones",
+ "texto": "APELLIDO, NOMBRE\n00000000\nInicio\nAutogestion\n Inscripciones\n Credito Disponible\n Modifcar Perfil\n Historico de Asistencia\n Cambiar Contraseña\nVersión 3.0.1\nInscripciones\n¿Inscribirse?\n Inscribirse  Cancelar",
+ "elementos": [
+  {
+   "i": 0,
+   "tag": "img",
+   "id": "",
+   "texto": "",
+   "valor": "",
+   "titulo": "Cerrar ventana",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": ""
+  },
+  {
+   "i": 1,
+   "tag": "a",
+   "id": "",
+   "texto": "",
+   "valor": "",
+   "titulo": "Cerrar la sesión",
+   "href": "#",
+   "deshabilitado": false,
+   "contexto": "APELLIDO, NOMBRE 00000000 Inicio Autogestion Inscripciones Credito Disponible Modifcar Perfil Historico de Asistencia Cambiar Contraseña Versión 3.0.1 Inscripciones ¿Inscribirse? Inscribirse Cancelar"
+  },
+  {
+   "i": 2,
+   "tag": "a",
+   "id": "",
+   "texto": "Inicio",
+   "valor": "",
+   "titulo": "Inicio",
+   "href": "#",
+   "deshabilitado": false,
+   "contexto": "Inicio"
+  },
+  {
+   "i": 3,
+   "tag": "a",
+   "id": "",
+   "texto": "Autogestion",
+   "valor": "",
+   "titulo": "",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "Autogestion Inscripciones Credito Disponible Modifcar Perfil Historico de Asistencia Cambiar Contraseña"
+  },
+  {
+   "i": 4,
+   "tag": "a",
+   "id": "",
+   "texto": "Inscripciones",
+   "valor": "",
+   "titulo": "Inscripciones",
+   "href": "#",
+   "deshabilitado": false,
+   "contexto": "Inscripciones"
+  },
+  {
+   "i": 5,
+   "tag": "a",
+   "id": "",
+   "texto": "Credito Disponible",
+   "valor": "",
+   "titulo": "Credito Disponible",
+   "href": "#",
+   "deshabilitado": false,
+   "contexto": "Credito Disponible"
+  },
+  {
+   "i": 6,
+   "tag": "a",
+   "id": "",
+   "texto": "Modifcar Perfil",
+   "valor": "",
+   "titulo": "Modifcar Perfil",
+   "href": "#",
+   "deshabilitado": false,
+   "contexto": "Modifcar Perfil"
+  },
+  {
+   "i": 7,
+   "tag": "a",
+   "id": "",
+   "texto": "Historico de Asistencia",
+   "valor": "",
+   "titulo": "Historico de Asistencia",
+   "href": "#",
+   "deshabilitado": false,
+   "contexto": "Historico de Asistencia"
+  },
+  {
+   "i": 8,
+   "tag": "a",
+   "id": "",
+   "texto": "Cambiar Contraseña",
+   "valor": "",
+   "titulo": "Cambiar Contraseña",
+   "href": "#",
+   "deshabilitado": false,
+   "contexto": "Cambiar Contraseña"
+  },
+  {
+   "i": 9,
+   "tag": "button",
+   "id": "form_103000077_formulario_inscribirse",
+   "texto": "Inscribirse",
+   "valor": "",
+   "titulo": "[alt + shift + I]",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "¿Inscribirse? Inscribirse Cancelar"
+  },
+  {
+   "i": 10,
+   "tag": "button",
+   "id": "form_103000077_formulario_cancelar",
+   "texto": "Cancelar",
+   "valor": "",
+   "titulo": "[alt + shift + C]",
+   "href": "",
+   "deshabilitado": false,
+   "contexto": "¿Inscribirse? Inscribirse Cancelar"
+  }
+ ],
+ "tablas": [
+  [
+   [
+    "¿Inscribirse? Inscribirse Cancelar"
+   ]
+  ],
+  [
+   [
+    "¿Inscribirse? Inscribirse Cancelar"
+   ]
+  ]
+ ]
+}

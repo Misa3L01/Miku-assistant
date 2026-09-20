@@ -189,6 +189,26 @@ def decidir(inst: Dict[str, Any], objetivo: date, ahora: Optional[datetime] = No
     return _decidir_por_texto(inst, objetivo)
 
 
+def indice_de_confirmacion(inst: Dict[str, Any]) -> Optional[int]:
+    """El botón "Inscribirse" del segundo paso ("¿Inscribirse?  [Inscribirse] [Cancelar]"), o None.
+
+    La página pide confirmar: tras apretar "Inscribirse" en la fila aparece un formulario con
+    "Inscribirse" y "Cancelar". Se reconoce porque el botón comparte contexto con un "Cancelar" y con
+    la pregunta; nunca se devuelve el "Cancelar".
+    """
+    elementos = [e for e in (inst.get("elementos") or []) if isinstance(e, dict)]
+
+    def _rotulo(e: Dict[str, Any]) -> str:
+        return normalizar(f"{e.get('texto', '')} {e.get('valor', '')} {e.get('titulo', '')}")
+
+    for e in elementos:
+        contexto = normalizar(str(e.get("contexto", "")))
+        if (_RE_INSCRIBIR.search(_rotulo(e)) and not _RE_ANULAR.search(_rotulo(e)) and not e.get("deshabilitado")
+                and "cancelar" in contexto and "?" in str(e.get("contexto", ""))):
+            return int(e["i"])
+    return None
+
+
 def _decidir_con_tabla(inst: Dict[str, Any], filas: List[Dict[str, Any]], objetivo: date, ahora: datetime,
                        tipos: List[str]) -> Decision:
     elementos = [e for e in (inst.get("elementos") or []) if isinstance(e, dict)]
@@ -444,8 +464,11 @@ class Comedor(Plugin):
             puerto = int(cfg.get("navegador_auto_puerto", 9224))
         except (TypeError, ValueError):
             puerto = 9224
+        ventana = str(cfg.get("comedor_ventana", "normal") or "normal").strip().lower()
+        if not cfg.get("comedor_ver", True):
+            ventana = "oculta"                       # compatibilidad: COMEDOR_VER = False
         return Navegador(exe, config_mod.BASE_DIR / "data" / "navegador_miku", puerto,
-                         visible=bool(cfg.get("comedor_ver", True)))
+                         visible=ventana != "oculta", minimizada=ventana == "minimizada")
 
     def iniciar_sesion(self, pagina: Pagina, usuario: str, clave: str) -> bool:
         """Entra con usuario y contraseña. True si la página ya no muestra el formulario de acceso."""
@@ -485,18 +508,28 @@ class Comedor(Plugin):
                 estado = DESCONOCIDO
             return Resultado(estado, decision.detalle, dia, captura if captura.exists() else None, decision)
 
-        inscriptas = 0
         for _ in range(3):                                     # por si ese día hay más de una comida elegida
             pagina.evaluar(_JS_SIN_DIALOGOS)
             if not pagina.evaluar(_JS_CLIC_INDICE % int(decision.indice or 0)):
                 return Resultado(ERROR, "no pude apretar el botón de inscripción", dia, decision=decision)
-            inscriptas += 1
             time.sleep(2.0)
             pagina.esperar("document.readyState === 'complete'", 15)
+            # La página pide CONFIRMAR ("¿Inscribirse? [Inscribirse] [Cancelar]"): hay que apretar de nuevo
+            # ANTES de volver a cargar nada, o la confirmación pendiente se pierde.
+            paso2 = pagina.evaluar(_JS_INSTANTANEA) or {}
+            confirmar = indice_de_confirmacion(paso2)
+            if confirmar is not None:
+                pagina.evaluar(_JS_SIN_DIALOGOS)
+                if not pagina.evaluar(_JS_CLIC_INDICE % confirmar):
+                    return Resultado(ERROR, "no pude confirmar la inscripción", dia, decision=decision)
+                time.sleep(2.0)
+                pagina.esperar("document.readyState === 'complete'", 15)
             # Se vuelve a leer la página: la inscripción se confirma mirándola, no dándola por hecha.
             pagina.ir(url)
             time.sleep(1.0)
-            decision = decidir(pagina.evaluar(_JS_INSTANTANEA) or {}, dia, tipos=tipos)
+            despues = pagina.evaluar(_JS_INSTANTANEA) or {}
+            self._guardar_instantanea(despues)
+            decision = decidir(despues, dia, tipos=tipos)
             if decision.accion != "inscribir":
                 break
         pagina.captura(captura)
@@ -504,6 +537,16 @@ class Comedor(Plugin):
         estado = INSCRIPTO if confirmada else DESCONOCIDO
         detalle = decision.detalle if not confirmada else ""
         return Resultado(estado, detalle, dia, captura if captura.exists() else None, decision)
+
+    @staticmethod
+    def _guardar_instantanea(inst: Dict[str, Any]) -> None:
+        """Deja la última lectura de la página en ``data/comedor/`` (para ver cómo quedó tras inscribirse)."""
+        try:
+            destino = config_mod.BASE_DIR / "data" / "comedor" / "ultima_lectura.json"
+            destino.parent.mkdir(parents=True, exist_ok=True)
+            destino.write_text(json.dumps(inst, ensure_ascii=False, indent=1), encoding="utf-8")
+        except OSError:
+            logger.debug("No pude guardar la lectura de la página.", exc_info=True)
 
     # ---------------- Avisos ----------------
     def _avisar(self, r: Resultado) -> None:

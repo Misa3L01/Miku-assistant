@@ -124,8 +124,13 @@ _OPCIONES: List[Opcion] = [
     _o("comedor_tipos", ["almuerzo"], "avisos",
        "Tipos de comida a los que se inscribe ('almuerzo', 'cena'...). Vacío = todos los que haya ese día.",
        "lista", 'COMEDOR_TIPOS = ["almuerzo"]', "comedor"),
+    _o("comedor_ventana", "normal", "avisos",
+       "Cómo se ve el trámite del comedor: 'normal' (una ventana de Brave aparte que ves trabajar), "
+       "'minimizada' (aparece en la barra de tareas sin robarte el foco) u 'oculta' (sin ventana). En los "
+       "tres casos es un Brave aparte que se cierra solo al terminar: tu Brave de siempre no se toca.",
+       "texto", usado_por="comedor", permitidos=("normal", "minimizada", "oculta")),
     _o("comedor_ver", True, "avisos",
-       "Mostrar la ventana del navegador mientras Miku hace el trámite (False = oculta).", "booleano",
+       "Compatibilidad: False = ventana oculta (equivale a COMEDOR_VENTANA = 'oculta').", "booleano",
        usado_por="comedor"),
     _o("comedor_enviar_captura", True, "avisos",
        "Mandarte por Telegram la captura de la inscripción confirmada (necesita el bot de Telegram).",

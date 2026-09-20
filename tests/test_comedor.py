@@ -96,6 +96,8 @@ class PaginaFalsa:
     def ir(self, url, espera=20):
         self.url_actual = url
         self.eventos.append(("ir", url))
+        if self.s.get("dos_pasos") and self.s.get("paso") == 1:
+            self.s["paso"] = 0                          # recargar la página abandona la confirmación pendiente
         return True
 
     def esperar(self, js, segundos=15):
@@ -125,8 +127,15 @@ class PaginaFalsa:
         if "confirm" in js:
             return True
         if "data-miku-i" in js:                                  # clic en un elemento de la página
-            self.s["inscripto"] = True
+            indice = int(__import__("re").search(r'data-miku-i="(\d+)"', js).group(1))
             self.eventos.append(("clic_indice", js))
+            if self.s.get("dos_pasos"):
+                if self.s.get("paso") == 1 and indice == self.s["confirmar"]:
+                    self.s["inscripto"], self.s["paso"] = True, 2
+                elif self.s.get("paso", 0) == 0 and indice == self.s["boton"]:
+                    self.s["paso"] = 1                       # primer clic: aparece "¿Inscribirse?"
+            else:
+                self.s["inscripto"] = True
             return True
         return None
 
@@ -546,3 +555,68 @@ def test_guardar_clave_no_guarda_si_no_coinciden_o_esta_vacia(cfg, monkeypatch, 
     assert mod._cli_guardar_clave() == 1 and guardado == {}
     cfg.valores["comedor_usuario"] = "12 34"
     assert mod._cli_guardar_clave() == 1 and "no acepta" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------- #
+# Doble confirmación (bug real): "Inscribirse" en la fila y otra vez "Inscribirse" en "¿Inscribirse?"
+# --------------------------------------------------------------------------- #
+PASO2 = json.loads((__import__("pathlib").Path(__file__).parent / "fixtures" / "comedor_paso2_real.json")
+                   .read_text(encoding="utf-8"))
+
+
+def _sitio_dos_pasos():
+    sitio = {"inscripto": False, "dos_pasos": True, "paso": 0, "boton": 35, "confirmar": 9}
+
+    def instantanea():
+        if sitio["inscripto"]:
+            return _real(celda_inscripto="tilde.png", sin_boton=True)
+        return PASO2 if sitio["paso"] == 1 else REAL
+
+    sitio["instantanea"] = instantanea
+    return sitio
+
+
+def test_el_segundo_paso_real_se_reconoce_y_nunca_es_cancelar():
+    assert mod.indice_de_confirmacion(PASO2) == 9
+    cancelar = PASO2["elementos"][10]
+    assert cancelar["texto"] == "Cancelar" and mod.indice_de_confirmacion(PASO2) != cancelar["i"]
+    assert mod.indice_de_confirmacion(REAL) is None                 # la tabla del paso 1 no es una confirmación
+    assert mod.indice_de_confirmacion({}) is None
+
+
+def test_tramite_con_doble_confirmacion_aprieta_las_dos_veces_sin_recargar_en_el_medio(comedor):
+    sitio = _sitio_dos_pasos()
+    nav = NavegadorFalso(PaginaFalsa(sitio))
+    r = comedor.ejecutar(dia=DIA_REAL, navegador=nav)
+    assert r.estado == mod.INSCRIPTO
+    eventos = nav._pagina.eventos
+    clics = [i for i, e in enumerate(eventos) if e[0] == "clic_indice"]
+    assert len(clics) == 2 and '"35"' in eventos[clics[0]][1] and '"9"' in eventos[clics[1]][1]
+    assert not [e for e in eventos[clics[0]:clics[1]] if e[0] == "ir"]         # ninguna recarga entre los dos clics
+    assert eventos[-1][0] != "clic_indice" and any(e[0] == "ir" for e in eventos[clics[1]:])   # y después sí relee
+
+
+def test_si_la_confirmacion_no_se_pudo_apretar_no_se_da_por_inscripto(comedor):
+    sitio = _sitio_dos_pasos()
+    sitio["confirmar"] = 999                    # el sitio no reacciona al botón que Miku aprieta en el paso 2
+    r = comedor.ejecutar(dia=DIA_REAL, navegador=NavegadorFalso(PaginaFalsa(sitio)))
+    assert r.estado == mod.DESCONOCIDO and sitio["inscripto"] is False
+
+
+def test_se_guarda_la_ultima_lectura_para_ver_como_queda_inscripto(comedor):
+    comedor.ejecutar(dia=DIA_REAL, navegador=NavegadorFalso(PaginaFalsa(_sitio_dos_pasos())))
+    guardado = json.loads((comedor.tmp / "data" / "comedor" / "ultima_lectura.json").read_text(encoding="utf-8"))
+    assert "tablas" in guardado
+
+
+def test_la_ventana_del_comedor_normal_minimizada_u_oculta(comedor, cfg):
+    cfg.valores["brave_ruta_exe"] = "C:/x/brave.exe"
+    n = comedor._navegador()
+    assert (n.visible, n.minimizada) == (True, False)
+    cfg.valores["comedor_ventana"] = "minimizada"
+    n = comedor._navegador()
+    assert (n.visible, n.minimizada) == (True, True)
+    cfg.valores["comedor_ventana"] = "oculta"
+    assert comedor._navegador().visible is False
+    cfg.valores.update(comedor_ventana="normal", comedor_ver=False)             # compatibilidad con la opción vieja
+    assert comedor._navegador().visible is False
