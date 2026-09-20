@@ -51,6 +51,11 @@ class Resultado:
     artista: str = ""
 
     @property
+    def tipo_web(self) -> str:
+        """Segmento de la URL de TIDAL para este tipo (``track``, ``album``, ``artist``, ``playlist``)."""
+        return TIPOS[self.tipo][2]
+
+    @property
     def enlace(self) -> str:
         """Enlace que abre el elemento en TIDAL de escritorio."""
         return f"tidal://{TIPOS[self.tipo][2]}/{self.id}"

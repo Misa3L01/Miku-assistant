@@ -303,7 +303,8 @@ class Browser(Plugin):
         except Exception:  # noqa: BLE001
             return False
         try:
-            ws = websocket.create_connection(ws_url, timeout=4)
+            # Sin Origin: Chromium/Brave rechazan los websockets de CDP que traen esa cabecera.
+            ws = websocket.create_connection(ws_url, timeout=4, suppress_origin=True)
             try:
                 ws.send(json.dumps({"id": 1, "method": "Page.navigate", "params": {"url": url}}))
                 respuesta = json.loads(ws.recv())

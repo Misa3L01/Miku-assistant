@@ -26,6 +26,8 @@ class Informe:
     obsoletas: List[Tuple[str, str]] = field(default_factory=list)
     errores: List[str] = field(default_factory=list)
     incompletos: List[Tuple[str, str, List[str]]] = field(default_factory=list)
+    #: (para qué, paquete de pip) de las librerías opcionales que faltan y que la config necesita.
+    dependencias: List[Tuple[str, str]] = field(default_factory=list)
 
     @property
     def hay_problemas(self) -> bool:
@@ -41,6 +43,8 @@ class Informe:
         for nombre, motivo in self.obsoletas:
             lineas.append(f"Opción obsoleta {nombre.upper()}: {motivo}.")
         lineas.extend(self.errores)
+        for para_que, paquete in self.dependencias:
+            lineas.append(f"Configuraste {para_que} pero falta la librería: pip install {paquete}")
         return lineas
 
     def informativos(self) -> List[str]:
@@ -50,6 +54,27 @@ class Informe:
             claves = " / ".join(k.upper() for k in faltan)
             lineas.append(f"Sin configurar '{plugin}' ({para_que}): falta {claves}.")
         return lineas
+
+
+#: Opciones que activan una función y la librería opcional que esa función necesita:
+#: (opción, módulo a importar, paquete de pip, para qué).
+_DEPENDENCIAS = (
+    ("telegram_bot_token", "telegram", "python-telegram-bot", "el control por Telegram"),
+    ("discord_bot_token", "discord", "discord.py", "el bot de Discord"),
+    ("tidal_ruta_exe", "tidalapi", "tidalapi", "TIDAL (poné X por nombre)"),
+    ("tidal_ruta_exe", "websocket", "websocket-client", "TIDAL (poné X por nombre)"),
+    ("brave_ruta_exe", "websocket", "websocket-client", "Brave (buscar en la pestaña actual)"),
+)
+
+
+def dependencias_faltantes(valores: Dict[str, Any]) -> List[Tuple[str, str]]:
+    """Librerías opcionales que faltan para las funciones que el usuario configuró."""
+    from importlib.util import find_spec
+    faltan: List[Tuple[str, str]] = []
+    for opcion, modulo, paquete, para_que in _DEPENDENCIAS:
+        if _valor_configurado(valores.get(opcion)) and find_spec(modulo) is None                 and (para_que, paquete) not in faltan:
+            faltan.append((para_que, paquete))
+    return faltan
 
 
 def _valor_configurado(valor: Any) -> bool:
@@ -125,4 +150,5 @@ def validar(valores: Dict[str, Any], claves_definidas: Iterable[str],
                   if not any(_valor_configurado(valores.get(k)) for k in alternativas)]
         if faltan:
             informe.incompletos.append((plugin, para_que, faltan))
+    informe.dependencias = dependencias_faltantes(valores)
     return informe

@@ -622,6 +622,10 @@ def main(instancia: Any = None, argv: Optional[List[str]] = None) -> None:
         instancia: ``InstanciaUnica`` ya adquirida por ``main.py`` (si es None se adquiere acá).
         argv: Argumentos (por defecto ``sys.argv``).
     """
+    # Si Miku se abrió desde VS Code (o cualquier app Electron) hereda ELECTRON_RUN_AS_NODE=1, y las
+    # apps Electron que ella lance (TIDAL, Discord...) morirían al instante sin abrir ventana.
+    os.environ.pop("ELECTRON_RUN_AS_NODE", None)
+
     args = _analizar_argumentos(argv)
 
     # 0) Una sola Miku: si ya hay una corriendo, se la invoca y se termina.

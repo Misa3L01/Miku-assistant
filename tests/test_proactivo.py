@@ -253,7 +253,8 @@ def test_una_regla_que_falla_no_frena_a_las_demas(cfg):
 
 def test_una_salida_que_falla_no_rompe_el_motor(cfg):
     motor = MotorProactivo(cfg, [ReglaFija(_aviso())], lambda t, m: 1 / 0,
-                           detector_juego=lambda c: None, banco=Banco())
+                           detector_juego=lambda c: None, banco=Banco(),
+                           ahora=lambda: datetime(2026, 5, 1, 12, 0))
     assert motor.tick() == 1
 
 

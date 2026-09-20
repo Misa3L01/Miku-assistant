@@ -231,6 +231,33 @@ class _SesionFalsa:
         ruta.write_text("{}", encoding="utf-8")
 
 
+class _ControlFalso:
+    """ControlTidal falso: registra qué se le pidió y devuelve lo que se configure."""
+
+    def __init__(self):
+        from miku.plugins.multimedia.tidal_control import LISTO
+        self.estado, self.suena, self.pedidos, self.botones = LISTO, True, [], []
+        self.en_vivo = True
+        self.ahora_datos = {"titulo": "Show", "artista": "Ado", "reproduciendo": True}
+
+    def asegurar(self, espera=30.0):
+        return self.estado
+
+    def reproducir(self, tipo, id_, titulo="", artista=""):
+        self.pedidos.append((tipo, id_, titulo, artista))
+        return self.suena
+
+    def vivo(self):
+        return self.en_vivo
+
+    def boton(self, nombre):
+        self.botones.append(nombre)
+        return True
+
+    def ahora(self):
+        return self.ahora_datos
+
+
 @pytest.fixture
 def tidal(tmp_path, monkeypatch):
     from miku.plugins.multimedia import tidal as mod
@@ -244,7 +271,7 @@ def tidal(tmp_path, monkeypatch):
     plugin._buscador = BuscadorTidal(ruta, fabrica_sesion=lambda: sesion)
     abiertos = []
     monkeypatch.setattr(mod.Tidal, "_abrir_enlace", staticmethod(lambda e: abiertos.append(e) or True))
-    monkeypatch.setattr(mod.Tidal, "_asegurar_reproduccion", lambda self: None)
+    plugin._control = _ControlFalso()
     plugin.abiertos, plugin.sesion = abiertos, sesion
     return plugin
 
@@ -253,13 +280,14 @@ def test_pone_una_cancion_abriendo_el_enlace_de_tidal(tidal):
     r = tidal.manejar_tool("reproducir_en_tidal", {"consulta": "bohemian rhapsody queen"}, {})
     assert r.ok and r.intencion == "tidal.reproduciendo"
     assert "Bohemian Rhapsody" in r and "Queen" in r
-    assert tidal.abiertos == ["tidal://track/77"]
+    assert tidal._control.pedidos == [("track", "77", "Bohemian Rhapsody", "Queen")]
+    assert tidal.abiertos == []            # con control de TIDAL no hace falta abrir el enlace
     assert tidal.sesion.consultas[0][0] == "bohemian rhapsody queen"
 
 
 def test_pone_un_artista(tidal):
     r = tidal.reproducir_en_tidal("Soda Stereo", "banda")
-    assert tidal.abiertos == ["tidal://artist/5"] and "de " not in r
+    assert tidal._control.pedidos == [("artist", "5", "Soda Stereo", "")] and "de " not in r
 
 
 def test_sin_resultados_es_honesto(tidal):
@@ -411,3 +439,25 @@ def test_buscar_sin_poder_navegar_abre_nueva_y_lo_dice(brave, monkeypatch):
     r = brave.buscar_en_pestana_actual("recetas")
     assert r.intencion == "brave.buscado_en_nueva" and len(brave.nuevas) == 1
     assert brave.buscar_en_pestana_actual("  ").intencion == "brave.buscar_sin_consulta"
+
+
+def test_si_tidal_no_reproduce_lo_dice_y_no_finge(tidal):
+    tidal._control.suena = False
+    r = tidal.reproducir_en_tidal("bohemian rhapsody")
+    assert hubo_falla(r) and r.intencion == "tidal.no_reprodujo"
+
+
+def test_sin_ruta_de_tidal_abre_la_ficha_pero_avisa_que_no_reprodujo(tidal):
+    from miku.plugins.multimedia.tidal_control import SIN_EXE
+    tidal._control.estado = SIN_EXE
+    r = tidal.reproducir_en_tidal("bohemian rhapsody")
+    assert r.intencion == "tidal.sin_control" and tidal.abiertos == ["tidal://track/77"]
+
+
+def test_controles_y_que_suena_usan_tidal_si_esta_disponible(tidal):
+    tidal.controlar_tidal("pausa")
+    assert tidal._control.botones == ["play_pausa"]
+    r = tidal.que_esta_sonando()
+    assert "Show" in r and "Ado" in r and "sonando" in r
+    tidal._control.ahora_datos = {"titulo": "Show", "artista": "Ado", "reproduciendo": False}
+    assert "pausa" in tidal.que_esta_sonando()

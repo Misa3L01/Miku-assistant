@@ -273,9 +273,15 @@ LLM_API_KEY = ""
 # (usado por: browser)
 # BRAVE_DEBUG_PORT = 9222
 
-# Ruta a TIDAL.exe.
+# Ruta a TIDAL.exe. Para 'poné X' Miku abre TIDAL con un puerto de control (si estaba
+# abierto sin él, lo reinicia una vez).
 # (usado por: tidal)
 # TIDAL_RUTA_EXE = ""
+
+# Puerto de depuración con el que Miku abre TIDAL para poder reproducir temas por
+# nombre.
+# (usado por: tidal)
+# TIDAL_PUERTO_CONTROL = 9223
 
 
 # ======================================================================================

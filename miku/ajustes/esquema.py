@@ -225,7 +225,11 @@ _OPCIONES: List[Opcion] = [
     _o("brave_debug_port", 9222, "navegador",
        "Puerto de depuración remota de Brave.", "entero", usado_por="browser"),
     _o("tidal_ruta_exe", "", "navegador",
-       "Ruta a TIDAL.exe.", "ruta", usado_por="tidal"),
+       "Ruta a TIDAL.exe. Para 'poné X' Miku abre TIDAL con un puerto de control (si estaba abierto "
+       "sin él, lo reinicia una vez).", "ruta", usado_por="tidal"),
+    _o("tidal_puerto_control", 9223, "navegador",
+       "Puerto de depuración con el que Miku abre TIDAL para poder reproducir temas por nombre.",
+       "entero", usado_por="tidal"),
 
     # ------------------------------------------------------------------- video
     _o("carpeta_videos", "", "video",

@@ -12,8 +12,9 @@ TIDAL (app de escritorio) NO expone una API pública de reproducción, así que:
       puede, lo decimos claro (límite real de Windows, no nuestro).
 
     - "Poné X de Y" busca el tema en TIDAL con la librería opcional ``tidalapi`` (con tu cuenta, ver
-      ``tidal_busqueda.py``) y abre el enlace ``tidal://track/<id>`` en la app de escritorio. Si tras
-      abrirlo no empezó a sonar, manda un "play". No probado contra una cuenta real desde el desarrollo.
+      ``tidal_busqueda.py``) y lo reproduce manejando TIDAL de escritorio por su puerto de depuración
+      (``tidal_control.py``): el enlace ``tidal://track/<id>`` solo abre la ficha, no da play.
+      Con el puerto activo, play/pausa/siguiente/anterior y "qué suena" también van directo a TIDAL.
 
 Ver también: control multimedia genérico en ``miku/plugins/sistema/audio.py``
 (``control_multimedia``); este plugin lo especializa para TIDAL.
@@ -22,8 +23,6 @@ from __future__ import annotations
 
 import logging
 import os
-import threading
-import time
 import webbrowser
 from typing import Any, Dict, List, Optional
 
@@ -31,6 +30,7 @@ from miku.ajustes import carga as config_mod
 from miku.plataforma.subprocesos import PREAMBULO_WINRT, correr_powershell
 from miku.plugins.base import Plugin
 from miku.plugins.multimedia.tidal_busqueda import BuscadorTidal, libreria_disponible
+from miku.plugins.multimedia.tidal_control import LISTO, SIN_EXE, ControlTidal
 from miku.voz.frases.respuesta import exito, falla, responder
 
 logger = logging.getLogger("miku.plugins.tidal")
@@ -113,6 +113,7 @@ class Tidal(Plugin):
         super().__init__()
         self._event_bus: Any = None
         self._buscador: Optional[BuscadorTidal] = None
+        self._control: Optional[ControlTidal] = None
 
     def initialize(self, event_bus: Any = None) -> None:
         super().initialize(event_bus)
@@ -141,6 +142,17 @@ class Tidal(Plugin):
             self._buscador = BuscadorTidal(config_mod.BASE_DIR / "data" / "tidal_sesion.json")
         return self._buscador
 
+    def control(self) -> ControlTidal:
+        """Controlador de TIDAL de escritorio por CDP (se crea la primera vez que se usa)."""
+        if self._control is None:
+            cfg = config_mod.config
+            try:
+                puerto = int(cfg.get("tidal_puerto_control", 9223))
+            except (TypeError, ValueError):
+                puerto = 9223
+            self._control = ControlTidal(str(cfg.get("tidal_ruta_exe", "") or ""), puerto)
+        return self._control
+
     def reproducir_en_tidal(self, consulta: str, tipo: str = "") -> str:
         """Busca ``consulta`` en TIDAL y la abre en la app de escritorio."""
         consulta = (consulta or "").strip()
@@ -152,11 +164,16 @@ class Tidal(Plugin):
         r = buscador.buscar(consulta, tipo)
         if r is None:
             return falla("tidal.sin_resultados", consulta=consulta)
-        if not self._abrir_enlace(r.enlace):
-            return falla("tidal.no_abre")
-        threading.Thread(target=self._asegurar_reproduccion, daemon=True, name="tidal_play").start()
         de = f", de {r.artista}" if r.artista else ""
-        return exito("tidal.reproduciendo", titulo=r.titulo, de=de)
+        control = self.control()
+        estado = control.asegurar()
+        if estado == LISTO and control.reproducir(r.tipo_web, r.id, r.titulo, r.artista):
+            return exito("tidal.reproduciendo", titulo=r.titulo, de=de)
+        # Sin control de TIDAL: solo se puede abrir la ficha, que NO reproduce. Se dice tal cual.
+        if estado == LISTO or estado == SIN_EXE:
+            self._abrir_enlace(r.enlace)
+        return falla("tidal.sin_control" if estado == SIN_EXE else "tidal.no_reprodujo",
+                     titulo=r.titulo, de=de)
 
     def conectar_tidal(self) -> str:
         """Inicia el inicio de sesión (una vez): abre el navegador y espera la aprobación."""
@@ -195,13 +212,6 @@ class Tidal(Plugin):
             logger.error("No pude abrir %s: %s", enlace, e)
             return False
 
-    def _asegurar_reproduccion(self) -> None:
-        """Si tras abrir el enlace TIDAL quedó en pausa, manda "play" (nunca si no pudo leer el estado)."""
-        time.sleep(4.0)
-        info = self._leer_smtc()
-        if info and info.get("status") in ("paused", "stopped"):
-            self._enviar_tecla("play_pausa")
-
     # ---------------- Controles (teclas multimedia) ---------------- #
     def controlar_tidal(self, accion: str) -> str:
         """Play/pausa/siguiente/anterior por teclas multimedia del sistema."""
@@ -217,6 +227,15 @@ class Tidal(Plugin):
             return ("No entendí. Puedo pausar/reproducir, pasar a la siguiente "
                     "o volver a la anterior.")
 
+        # Con el puerto de control activo el botón se aprieta en TIDAL mismo (las teclas multimedia van
+        # al último reproductor que sonó, que puede ser el navegador).
+        control = self.control()
+        if control.vivo() and control.boton(clave):
+            return {
+                "play_pausa": "Listo, alterné play/pausa en TIDAL.",
+                "siguiente": "Dale, pasé a la siguiente en TIDAL.",
+                "anterior": "Listo, volví a la anterior en TIDAL.",
+            }[clave]
         if self._enviar_tecla(clave):
             return {
                 "play_pausa": "Listo, alterné play/pausa en TIDAL.",
@@ -249,6 +268,13 @@ class Tidal(Plugin):
         Usa PowerShell + WinRT (Windows.Media.Control). Best-effort: si no se
         puede, se explica el límite en vez de inventar.
         """
+        control = self.control()
+        if control.vivo():
+            ahora = control.ahora()
+            if ahora and ahora.get("titulo"):
+                artista = f", de {ahora['artista']}" if ahora.get("artista") else ""
+                estado = "Está sonando" if ahora.get("reproduciendo") else "Está en pausa"
+                return f"{estado} en TIDAL: {ahora['titulo']}{artista}."
         info = self._leer_smtc()
         if info is None:
             return ("No pude leer qué está sonando (Windows no me da la info de "
@@ -269,7 +295,8 @@ class Tidal(Plugin):
         ps = PREAMBULO_WINRT + (
             "$T = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager, Windows.Media.Control, ContentType = WindowsRuntime]; "
             "$mgr = Await ($T::RequestAsync()) ($T); "
-            "$ses = $mgr.GetCurrentSession(); "
+            "$ses = $mgr.GetSessions() | Where-Object { $_.SourceAppUserModelId -match 'tidal' } | Select-Object -First 1; "
+            "if ($ses -eq $null) { $ses = $mgr.GetCurrentSession() }; "
             "if ($ses -eq $null) { Write-Output ''; exit 0 }; "
             "$P = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties, Windows.Media.Control, ContentType = WindowsRuntime]; "
             "$props = Await ($ses.TryGetMediaPropertiesAsync()) ($P); "

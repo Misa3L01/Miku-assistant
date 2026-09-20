@@ -341,6 +341,14 @@ CATALOGO: Dict[str, List[str]] = {
         "Para poner música por nombre necesito la librería tidalapi. Instalala con pip install tidalapi y probamos.",
         "Me falta tidalapi para buscar en TIDAL. Se instala con pip install tidalapi.",
     ],
+    "tidal.no_reprodujo": [
+        "Encontré {titulo}{de}, pero no logré ponerlo a sonar en TIDAL. Probá de nuevo en un momento.",
+        "No pude darle play a {titulo}{de} en TIDAL. Puede que la app todavía esté arrancando.",
+    ],
+    "tidal.sin_control": [
+        "Encontré {titulo}{de}, pero no puedo manejar TIDAL: revisá TIDAL_RUTA_EXE en config_local.py. Abrí la ficha del tema, pero no lo reproduje.",
+        "Encontré {titulo}{de} y abrí su ficha en TIDAL, pero sin TIDAL_RUTA_EXE bien configurado no puedo darle play.",
+    ],
     "tidal.no_abre": [
         "Encontré el tema pero no pude abrirlo en TIDAL. ¿Está instalada la app de escritorio?",
         "No logré abrir TIDAL con ese tema. Revisá que la app esté instalada.",
