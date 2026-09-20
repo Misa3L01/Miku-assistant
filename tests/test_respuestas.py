@@ -39,7 +39,10 @@ def test_todas_las_frases_se_pueden_armar_sin_dejar_llaves():
     cat.registrar(b)
     datos = {k: "x" for k in ("nombre", "app", "a", "b", "falta", "puesta", "izq", "der", "lado",
                               "lugar", "accion", "orientacion", "pct", "etiqueta", "monitor",
-                              "descripcion", "carpeta", "consulta", "idioma", "traduccion")}
+                              "descripcion", "carpeta", "consulta", "idioma", "traduccion", "contenido", "recortado",
+                              "dia", "detalle", "hora", "texto", "nivel", "de", "modo", "titulo", "archivo", "mb",
+                              "contacto", "motivo", "cantidad", "mas", "nombres", "titulos", "listado",
+                              "recuerdo", "total", "restaurado", "fallos", "con_titulo")}
     for clave, variantes in cat.CATALOGO.items():
         assert variantes, clave
         for _ in range(len(variantes) * 2):

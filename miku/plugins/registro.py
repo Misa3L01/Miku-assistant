@@ -45,6 +45,7 @@ _CATALOGO: List[_Entrada] = [
     _Entrada("productividad.macros", "Macros"),
     _Entrada("productividad.video", "VideoInterpolador"),
     _Entrada("gaming.traductor", "TraductorJuegos"),
+    _Entrada("productividad.portapapeles_inteligente", "PortapapelesInteligente"),
     _Entrada("social.discord_bot", "DiscordControl"),
     _Entrada("sistema.estado_pc", "SystemStatus"),
     _Entrada("productividad.favoritos", "Favoritos"),

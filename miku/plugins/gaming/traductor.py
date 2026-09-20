@@ -25,6 +25,7 @@ import logging
 from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple
 
+from miku.plataforma import portapapeles
 from miku.plugins.base import Plugin
 from miku.voz.frases.respuesta import exito, falla
 
@@ -35,23 +36,8 @@ _CACHE_MAX = 200
 
 
 def _copiar_al_portapapeles(texto: str) -> bool:
-    """Copia ``texto`` al portapapeles de Windows (CF_UNICODETEXT). True si pudo."""
-    try:
-        import win32clipboard  # type: ignore  # import tardío (Windows)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("win32clipboard no disponible: %s", e)
-        return False
-    try:
-        win32clipboard.OpenClipboard()
-        try:
-            win32clipboard.EmptyClipboard()
-            win32clipboard.SetClipboardData(win32clipboard.CF_UNICODETEXT, texto)
-        finally:
-            win32clipboard.CloseClipboard()
-        return True
-    except Exception as e:  # noqa: BLE001
-        logger.error("No pude copiar al portapapeles: %s", e)
-        return False
+    """Copia ``texto`` al portapapeles de Windows. True si pudo."""
+    return portapapeles.escribir_texto(texto)
 
 
 def resolver_atajo(texto: str, mensajes: Dict[str, Any]) -> str:

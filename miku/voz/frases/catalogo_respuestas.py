@@ -307,6 +307,60 @@ CATALOGO: Dict[str, List[str]] = {
         "Presente.",
     ],
 
+    # ------------------------------------------------------------------ portapapeles
+    "portapapeles.traducir": [
+        "Listo, lo traduje al {idioma} y quedó en el portapapeles{recortado}. Pegalo con Ctrl+V.",
+        "Traducido al {idioma}{recortado}. Ya está copiado, pegalo cuando quieras.",
+    ],
+    "portapapeles.corregir": [
+        "Listo, corregí el texto y lo dejé en el portapapeles. Si no te gusta, decime 'deshacé'.",
+        "Texto corregido y copiado. Pegalo con Ctrl+V; con 'deshacé' vuelve el original.",
+    ],
+    "portapapeles.reescribir": [
+        "Listo, lo reescribí y quedó en el portapapeles. Con 'deshacé' vuelve el original.",
+        "Reescrito y copiado. Pegalo con Ctrl+V.",
+    ],
+    "portapapeles.dicho": ["{texto}"],
+    "portapapeles.dicho_y_copiado": [
+        "{texto} Además lo dejé copiado en el portapapeles.",
+    ],
+    "portapapeles.deshecho": [
+        "Listo, el portapapeles volvió a como estaba antes.",
+        "Deshecho: recuperé el texto original.",
+    ],
+    "portapapeles.nada_que_deshacer": [
+        "No tengo nada para deshacer del portapapeles.",
+        "No hice ninguna transformación reciente que pueda deshacer.",
+    ],
+    "portapapeles.vacio": [
+        "No hay nada copiado en el portapapeles.",
+        "El portapapeles está vacío. Copiá un texto y volvé a pedírmelo.",
+    ],
+    "portapapeles.no_es_texto": [
+        "Lo que copiaste no es texto (es {contenido}). Copiá un texto y probamos.",
+        "En el portapapeles hay {contenido}, no texto. Por ahora solo trabajo con texto.",
+    ],
+    "portapapeles.sin_idioma": [
+        "¿A qué idioma lo traduzco?",
+        "Decime a qué idioma traducir lo que copiaste.",
+    ],
+    "portapapeles.sin_instruccion": [
+        "¿Cómo lo reescribo? Por ejemplo: más formal, más corto o más simple.",
+        "Decime cómo querés el texto: más formal, más corto, más simple...",
+    ],
+    "portapapeles.accion_desconocida": [
+        "No sé hacer eso con el portapapeles. Puedo traducir, corregir, reescribir, resumir, explicar o leer.",
+        "Con lo copiado puedo traducir, corregir, reescribir, resumir, explicar o leer. ¿Cuál querés?",
+    ],
+    "portapapeles.sin_respuesta": [
+        "No pude procesar el texto ahora mismo. Revisá la conexión o la clave de Groq.",
+        "El modelo no me respondió; probá de nuevo en un rato.",
+    ],
+    "portapapeles.no_pude_copiar": [
+        "Tengo el resultado pero no pude copiarlo al portapapeles. Probá de nuevo.",
+        "No logré escribir en el portapapeles; puede que otro programa lo esté usando.",
+    ],
+
     # ---------------------------------------------------------------------- macros
     "macros.lista": [
         "Tengo {cantidad} macros: {nombres}.",
