@@ -66,7 +66,7 @@ def test_boton_deshabilitado_o_aviso_de_paro_no_habilita():
 
 
 def test_pagina_vacia_es_que_no_hay_comidas():
-    assert decidir(pagina("No hay comidas para inscribirse.", [elemento(0, "Salir")]), MANANA).accion == "sin_comidas"
+    assert decidir(pagina("Autogestión Inscripciones. No hay comidas para inscribirse.", [elemento(0, "Salir")]), MANANA).accion == "sin_comidas"
 
 
 def test_una_pagina_que_no_se_reconoce_no_adivina():
@@ -373,3 +373,103 @@ def test_clave_en_el_administrador_de_credenciales(monkeypatch):
     monkeypatch.setitem(sys.modules, "keyring", falso)
     assert mod.guardar_clave("alumno", "x") and mod.leer_clave("alumno") == "x" and mod.leer_clave("otro") is None
     assert (mod.SERVICIO_CLAVE, "alumno") in guardado
+
+
+# --------------------------------------------------------------------------- #
+# Con la página REAL del comedor (volcado anonimizado, tests/fixtures/comedor_pagina_real.json)
+# --------------------------------------------------------------------------- #
+REAL = json.loads((__import__("pathlib").Path(__file__).parent / "fixtures" / "comedor_pagina_real.json")
+                  .read_text(encoding="utf-8"))
+DIA_REAL = date(2026, 9, 21)
+DOMINGO_14_09 = datetime(2026, 9, 20, 14, 9)
+
+
+def _real(**cambios):
+    """Copia de la página real con retoques (para simular otros estados)."""
+    import copy
+    p = copy.deepcopy(REAL)
+    if cambios.get("sin_boton"):
+        p["elementos"] = [e for e in p["elementos"] if e.get("texto") != "Inscribirse"]
+    if "celda_inscripto" in cambios:
+        p["tablas"][-1][1][8] = cambios["celda_inscripto"]
+    if cambios.get("sin_filas"):
+        p["tablas"][-1] = p["tablas"][-1][:1]
+    if cambios.get("deshabilitado"):
+        for e in p["elementos"]:
+            if e.get("texto") == "Inscribirse":
+                e["deshabilitado"] = True
+    return p
+
+
+def test_la_pagina_real_se_lee_como_tabla():
+    filas = mod.filas_de_comidas(REAL)
+    assert len(filas) == 1
+    f = filas[0]
+    assert f["tipo de comida"] == "Almuerzo" and f["fecha comida"] == "21/09/2026"
+    assert f["habilitado desde"] == "20/09/2026 14:00" and f["cupo"] == "900" and f["inscripto"] == ""
+
+
+def test_real_hay_almuerzo_habilitado_y_se_aprieta_el_boton_correcto():
+    d = decidir(REAL, DIA_REAL, DOMINGO_14_09, ["almuerzo"])
+    assert d.accion == "inscribir" and d.indice == 35            # el elemento 35 es el botón "Inscribirse"
+    assert REAL["elementos"][35]["id"].endswith("cuadro0_seleccion")
+
+
+def test_real_antes_de_la_hora_de_habilitacion_no_se_inscribe():
+    d = decidir(REAL, DIA_REAL, datetime(2026, 9, 20, 13, 0), ["almuerzo"])
+    assert d.accion == "no_habilitado" and "14:00" in d.detalle
+
+
+def test_real_otro_dia_o_otro_tipo_de_comida_no_hay_nada():
+    assert decidir(REAL, date(2026, 9, 22), DOMINGO_14_09).accion == "sin_comidas"
+    d = decidir(REAL, DIA_REAL, DOMINGO_14_09, ["cena"])
+    assert d.accion == "sin_comidas" and "Almuerzo" in d.detalle
+    assert decidir(REAL, DIA_REAL, DOMINGO_14_09, []).accion == "inscribir"        # sin filtro: cualquier tipo
+
+
+def test_real_tabla_vacia_es_sin_comidas():
+    assert decidir(_real(sin_filas=True), DIA_REAL, DOMINGO_14_09).accion == "sin_comidas"
+
+
+def test_real_sin_boton_no_se_da_por_inscripto_por_el_encabezado():
+    """Regresión: el título de columna "Inscripto?" no significa que estés inscripto."""
+    d = decidir(_real(sin_boton=True), DIA_REAL, DOMINGO_14_09)
+    assert d.accion == "sin_boton"
+
+
+def test_real_con_la_columna_inscripto_marcada_ya_esta_inscripto():
+    assert decidir(_real(celda_inscripto="tilde.png", sin_boton=True), DIA_REAL, DOMINGO_14_09).accion == "ya_inscripto"
+    assert decidir(_real(celda_inscripto="Sí"), DIA_REAL, DOMINGO_14_09).accion == "ya_inscripto"
+    assert decidir(_real(celda_inscripto="No"), DIA_REAL, DOMINGO_14_09).accion == "inscribir"
+
+
+def test_real_boton_deshabilitado():
+    assert decidir(_real(deshabilitado=True), DIA_REAL, DOMINGO_14_09).accion == "no_habilitado"
+
+
+def test_una_pagina_de_login_no_tiene_tabla_y_no_se_confunde():
+    login = {"url": "x", "titulo": "Autentificación", "texto": "Usuario Clave Ingresar", "elementos": [], "tablas": []}
+    assert mod.filas_de_comidas(login) is None
+    assert decidir(login, DIA_REAL, DOMINGO_14_09).accion == "desconocido"       # sesión vencida/login: no es "no hay comida"
+
+
+def test_tramite_completo_con_la_estructura_real(comedor):
+    """Sitio simulado con la página real: antes del clic hay botón; después, la fila queda marcada."""
+    sitio = {"inscripto": False}
+
+    def instantanea():
+        return _real(celda_inscripto="tilde.png", sin_boton=True) if sitio["inscripto"] else REAL
+
+    sitio["instantanea"] = instantanea
+    nav = NavegadorFalso(PaginaFalsa(sitio))
+    r = comedor.ejecutar(dia=DIA_REAL, navegador=nav)
+    assert r.estado == mod.INSCRIPTO
+    assert any(e[0] == "clic_indice" and '"35"' in e[1] for e in nav._pagina.eventos)
+
+
+def test_tipos_de_comida_desde_la_config(comedor, cfg):
+    cfg.valores["comedor_tipos"] = ["cena"]
+    sitio = {"inscripto": False, "instantanea": lambda: REAL}
+    r = comedor.ejecutar(dia=DIA_REAL, navegador=NavegadorFalso(PaginaFalsa(sitio)))
+    assert r.estado == mod.SIN_COMIDAS
+    assert mod._lista("almuerzo") == ["almuerzo"] and mod._lista(None) == [] and mod._lista(["a", ""]) == ["a"]

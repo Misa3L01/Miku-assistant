@@ -121,6 +121,9 @@ _OPCIONES: List[Opcion] = [
     _o("comedor_auto", False, "avisos",
        "Inscribirte sola a la hora de COMEDOR_HORA, sin que lo pidas (solo si estás usando la PC y no "
        "jugando). Con False solo te avisa.", "booleano", usado_por="comedor"),
+    _o("comedor_tipos", ["almuerzo"], "avisos",
+       "Tipos de comida a los que se inscribe ('almuerzo', 'cena'...). Vacío = todos los que haya ese día.",
+       "lista", 'COMEDOR_TIPOS = ["almuerzo"]', "comedor"),
     _o("comedor_ver", True, "avisos",
        "Mostrar la ventana del navegador mientras Miku hace el trámite (False = oculta).", "booleano",
        usado_por="comedor"),

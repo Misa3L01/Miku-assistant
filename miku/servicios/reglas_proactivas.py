@@ -281,7 +281,7 @@ class BriefingAlVolver(Regla):
 
 class ComedorDiario(Regla):
     """Cada día, a partir de ``comedor_hora``, avisa (o con ``comedor_auto`` hace) la inscripción al
-    comedor de mañana. Solo de lunes a jueves (mañana = día de semana) y una sola vez por día."""
+    comedor de mañana. Solo si mañana es un día de semana (de domingo a jueves) y una sola vez por día."""
 
     nombre = "comedor"
     intervalo = 60.0

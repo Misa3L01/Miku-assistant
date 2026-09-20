@@ -415,6 +415,11 @@ LLM_API_KEY = ""
 # (usado por: comedor)
 # COMEDOR_AUTO = False
 
+# Tipos de comida a los que se inscribe ('almuerzo', 'cena'...). Vacío = todos los que
+# haya ese día.
+# (usado por: comedor)
+# COMEDOR_TIPOS = ['almuerzo']
+
 # Mostrar la ventana del navegador mientras Miku hace el trámite (False = oculta).
 # (usado por: comedor)
 # COMEDOR_VER = True

@@ -14,7 +14,8 @@ La página no guarda sesiones, así que se inicia sesión **cada vez**. La contr
 
 Configuración (``config_local.py``): ``COMEDOR_USUARIO`` (obligatorio, activa el plugin),
 ``COMEDOR_HORA`` (aviso diario, "19:00"), ``COMEDOR_AUTO`` (inscribirte sola a esa hora),
-``COMEDOR_VER`` (mostrar la ventana), ``COMEDOR_ENVIAR_CAPTURA`` (mandar la captura por Telegram).
+``COMEDOR_TIPOS`` (["almuerzo"]), ``COMEDOR_VER`` (mostrar la ventana), ``COMEDOR_ENVIAR_CAPTURA``
+(mandar la captura por Telegram).
 
 Herramientas para ajustar la lectura de la página (necesitan que la contraseña esté guardada)::
 
@@ -76,8 +77,10 @@ _JS_INSTANTANEA = r"""(() => {
     href: sinAh(e.getAttribute('href') || '').slice(0, 160),
     deshabilitado: !!e.disabled || e.classList.contains('disabled') || e.getAttribute('aria-disabled') === 'true',
     contexto: limpiar((e.closest('tr, li') || e.parentElement || e).innerText || '').slice(0, 240)}));
+  const celda = c => limpiar(c.innerText || [...c.querySelectorAll('img')].map(
+    i => i.alt || i.title || (i.getAttribute('src') || '').split('/').pop().split('?')[0]).join(',')).slice(0, 80);
   const tablas = [...document.querySelectorAll('table')].filter(visible).slice(0, 10).map(
-    t => [...t.rows].slice(0, 40).map(r => [...r.cells].map(c => limpiar(c.innerText).slice(0, 80))));
+    t => [...t.rows].slice(0, 40).map(r => [...r.cells].map(celda)));
   return {url: sinAh(location.href), titulo: document.title,
           texto: (document.body ? document.body.innerText : '').slice(0, 8000), elementos, tablas};
 })()"""
@@ -88,7 +91,7 @@ _JS_CLIC_INDICE = ("(() => { const e = document.querySelector('[data-miku-i=\"%d
 _RE_INSCRIBIR = re.compile(r"\b(inscrib|inscripc|anotar|reservar)")
 _RE_ANULAR = re.compile(r"\b(anular|cancelar|baja|desinscrib|dar de baja|eliminar)")
 _RE_YA = re.compile(r"(ya (te )?(esta|estas|se encuentra|figura)s? inscript|inscripcion (realizada|confirmada|exitosa)|"
-                    r"inscripto|inscripta|reserva confirmada)")
+                    r"reserva confirmada)")
 _RE_SIN_SERVICIO = re.compile(r"(paro|suspendid|feriado|sin servicio|no habra|no hay servicio|cerrado|no se prestara)")
 
 
@@ -113,13 +116,116 @@ def menciona_fecha(texto: str, d: date) -> bool:
 class Decision:
     """Qué hacer con la página de inscripciones."""
 
-    accion: str                       # inscribir | ya_inscripto | sin_comidas | no_habilitado | desconocido
+    accion: str                       # inscribir | ya_inscripto | sin_comidas | no_habilitado | sin_boton | desconocido
     indice: Optional[int] = None      # elemento a apretar (solo con "inscribir")
     detalle: str = ""
 
 
-def decidir(inst: Dict[str, Any], objetivo: date) -> Decision:
-    """Decide qué hacer según la instantánea de la página y el día a inscribirse."""
+_ENCABEZADOS = ("fecha comida", "inscripto")
+
+
+def _texto_norm(s: Any) -> str:
+    return normalizar(str(s or "")).replace("?", "").strip()
+
+
+def filas_de_comidas(inst: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
+    """Las filas de la tabla de comidas como diccionarios ``{columna: texto, "_n": posición}``.
+
+    None si la página no tiene esa tabla (login, error...). Una tabla sin comidas da ``[]``.
+    """
+    for tabla in inst.get("tablas") or []:
+        if not tabla or not isinstance(tabla[0], list):
+            continue
+        cabecera = [_texto_norm(c) for c in tabla[0]]
+        if all(any(h in c for c in cabecera) for h in _ENCABEZADOS):
+            filas = []
+            for celdas in tabla[1:]:
+                if len(celdas) >= 3 and any(str(c).strip() for c in celdas):
+                    fila: Dict[str, Any] = {cabecera[i]: str(celdas[i]).strip() for i in range(min(len(cabecera), len(celdas)))}
+                    fila["_n"] = len(filas)
+                    filas.append(fila)
+            return filas
+    return None
+
+
+def _boton_de_la_fila(fila: Dict[str, Any], elementos: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """El botón "Inscribirse" de una fila: por el número que lleva en su id (``cuadro..._cuadroN_seleccion``)
+    y, si no, por el texto de la fila que lo rodea."""
+    n = fila["_n"]
+    for e in elementos:
+        if re.search(rf"cuadro{n}_seleccion$", str(e.get("id", ""))):
+            return e
+    fecha, descripcion = fila.get("fecha comida", ""), fila.get("descripcion", "")[:30]
+    for e in elementos:
+        contexto = str(e.get("contexto", ""))
+        if fecha and fecha in contexto and descripcion in contexto and _RE_INSCRIBIR.search(
+                normalizar(f"{e.get('texto', '')} {e.get('valor', '')} {e.get('titulo', '')}")):
+            return e
+    return None
+
+
+def _fecha_hora(texto: str) -> Optional[datetime]:
+    """"20/09/2026 14:00" -> datetime (None si no tiene ese formato)."""
+    m = re.search(r"(\d{1,2})/(\d{1,2})/(\d{4})\s+(\d{1,2}):(\d{2})", texto or "")
+    if not m:
+        return None
+    try:
+        return datetime(int(m.group(3)), int(m.group(2)), int(m.group(1)), int(m.group(4)), int(m.group(5)))
+    except ValueError:
+        return None
+
+
+def decidir(inst: Dict[str, Any], objetivo: date, ahora: Optional[datetime] = None,
+            tipos: Optional[List[str]] = None) -> Decision:
+    """Decide qué hacer según la instantánea de la página y el día a inscribirse.
+
+    Args:
+        tipos: Tipos de comida a inscribir ("almuerzo"); vacío/None = todos los que haya ese día.
+    """
+    ahora = ahora or datetime.now()
+    filas = filas_de_comidas(inst)
+    if filas is not None:
+        return _decidir_con_tabla(inst, filas, objetivo, ahora, [_texto_norm(t) for t in (tipos or []) if str(t).strip()])
+    return _decidir_por_texto(inst, objetivo)
+
+
+def _decidir_con_tabla(inst: Dict[str, Any], filas: List[Dict[str, Any]], objetivo: date, ahora: datetime,
+                       tipos: List[str]) -> Decision:
+    elementos = [e for e in (inst.get("elementos") or []) if isinstance(e, dict)]
+    del_dia = [f for f in filas if menciona_fecha(f.get("fecha comida", ""), objetivo)]
+    if not del_dia:
+        return Decision(SIN_COMIDAS, detalle="no aparece ninguna comida para ese día")
+    candidatas = [f for f in del_dia if not tipos or any(t in _texto_norm(f.get("tipo de comida", "")) for t in tipos)]
+    if not candidatas:
+        cargados = ", ".join(sorted({f.get("tipo de comida", "?") for f in del_dia}))
+        return Decision(SIN_COMIDAS, detalle=f"ese día solo hay: {cargados}")
+
+    pendientes: List[Decision] = []
+    sin_boton = None
+    for fila in candidatas:
+        celda = _texto_norm(fila.get("inscripto", ""))
+        if celda and celda not in ("no", "0", "false"):
+            continue                                               # esta comida ya está inscripta
+        desde = _fecha_hora(fila.get("habilitado desde", ""))
+        if desde is not None and ahora < desde:
+            pendientes.append(Decision(NO_HABILITADO, detalle=f"la inscripción se habilita el {desde:%d/%m} a las {desde:%H:%M}"))
+            continue
+        boton = _boton_de_la_fila(fila, elementos)
+        if boton is None:
+            sin_boton = sin_boton or Decision("sin_boton", detalle="la fila no tiene botón de inscripción")
+        elif boton.get("deshabilitado"):
+            pendientes.append(Decision(NO_HABILITADO, detalle="el botón de inscripción está deshabilitado"))
+        else:
+            return Decision("inscribir", int(boton["i"]), str(fila.get("descripcion", ""))[:120])
+    if pendientes:
+        return pendientes[0]
+    if sin_boton is not None:
+        return sin_boton
+    return Decision("ya_inscripto", detalle="la columna Inscripto? ya está marcada")
+
+
+def _decidir_por_texto(inst: Dict[str, Any], objetivo: date) -> Decision:
+    """Respaldo para páginas sin la tabla conocida (menos preciso: nunca inscribe sin ver el día)."""
     texto_n = normalizar(str(inst.get("texto", "")))
     elementos = [e for e in (inst.get("elementos") or []) if isinstance(e, dict)]
 
@@ -127,7 +233,6 @@ def decidir(inst: Dict[str, Any], objetivo: date) -> Decision:
         return normalizar(f"{e.get('texto', '')} {e.get('valor', '')} {e.get('titulo', '')}")
 
     del_dia = [e for e in elementos if menciona_fecha(str(e.get("contexto", "")), objetivo)]
-    # Un botón de "anular/cancelar" en la fila del día = ya estás inscripto.
     if any(_RE_ANULAR.search(_rotulo(e)) for e in del_dia):
         return Decision("ya_inscripto", detalle="hay un botón para anular la inscripción de ese día")
     tiene_fecha = menciona_fecha(texto_n, objetivo)
@@ -143,8 +248,10 @@ def decidir(inst: Dict[str, Any], objetivo: date) -> Decision:
         return Decision(NO_HABILITADO, detalle="el botón de inscripción está deshabilitado")
     if tiene_fecha and _RE_SIN_SERVICIO.search(texto_n):
         return Decision(NO_HABILITADO, detalle="la página avisa que no hay servicio ese día")
-    if not tiene_fecha and not any(_RE_INSCRIBIR.search(_rotulo(e)) for e in elementos):
+    en_inscripciones = "inscripciones" in normalizar(str(inst.get("titulo", ""))) or "autogestion" in texto_n
+    if en_inscripciones and not tiene_fecha and not any(_RE_INSCRIBIR.search(_rotulo(e)) for e in elementos):
         return Decision(SIN_COMIDAS, detalle="no aparece ninguna comida para ese día")
+    # Cualquier otra página (login, error, sesión vencida...) no se interpreta como "no hay comida".
     return Decision(DESCONOCIDO, detalle="no reconozco la página")
 
 
@@ -184,6 +291,13 @@ class Resultado:
     dia: Optional[date] = None
     captura: Optional[Path] = None
     decision: Optional[Decision] = field(default=None, repr=False)
+
+
+def _lista(valor: Any) -> List[str]:
+    """Una lista de textos a partir de lo que haya en la config (lista, texto suelto o nada)."""
+    if isinstance(valor, str):
+        return [valor] if valor.strip() else []
+    return [str(v) for v in (valor or []) if str(v).strip()]
 
 
 def dia_a_inscribirse(hoy: Optional[date] = None) -> date:
@@ -331,25 +445,36 @@ class Comedor(Plugin):
         if not pagina.ir(url):
             return Resultado(ERROR, "no cargó la página de inscripciones", dia)
         time.sleep(1.0)
-        decision = decidir(pagina.evaluar(_JS_INSTANTANEA) or {}, dia)
+        tipos = _lista(config_mod.config.get("comedor_tipos", ["almuerzo"]))
+        decision = decidir(pagina.evaluar(_JS_INSTANTANEA) or {}, dia, tipos=tipos)
         carpeta = config_mod.BASE_DIR / "data" / "comedor"
         captura = carpeta / f"comedor_{dia.isoformat()}.png"
-        if decision.accion == "inscribir" and not simulacro:
+        if decision.accion != "inscribir" or simulacro:
+            pagina.captura(captura)
+            estado = {"inscribir": "listo_para_inscribir"}.get(decision.accion, decision.accion)
+            if estado == "sin_boton":
+                estado = DESCONOCIDO
+            return Resultado(estado, decision.detalle, dia, captura if captura.exists() else None, decision)
+
+        inscriptas = 0
+        for _ in range(3):                                     # por si ese día hay más de una comida elegida
             pagina.evaluar(_JS_SIN_DIALOGOS)
             if not pagina.evaluar(_JS_CLIC_INDICE % int(decision.indice or 0)):
                 return Resultado(ERROR, "no pude apretar el botón de inscripción", dia, decision=decision)
+            inscriptas += 1
             time.sleep(2.0)
             pagina.esperar("document.readyState === 'complete'", 15)
-            # Se vuelve a leer la página: si ahora figura como inscripto, salió bien.
+            # Se vuelve a leer la página: la inscripción se confirma mirándola, no dándola por hecha.
             pagina.ir(url)
             time.sleep(1.0)
-            despues = decidir(pagina.evaluar(_JS_INSTANTANEA) or {}, dia)
-            pagina.captura(captura)
-            estado = INSCRIPTO if despues.accion == "ya_inscripto" else DESCONOCIDO
-            return Resultado(estado, despues.detalle, dia, captura if captura.exists() else None, despues)
+            decision = decidir(pagina.evaluar(_JS_INSTANTANEA) or {}, dia, tipos=tipos)
+            if decision.accion != "inscribir":
+                break
         pagina.captura(captura)
-        estado = {"inscribir": "listo_para_inscribir"}.get(decision.accion, decision.accion)
-        return Resultado(estado, decision.detalle, dia, captura if captura.exists() else None, decision)
+        confirmada = decision.accion in ("ya_inscripto", "sin_boton")
+        estado = INSCRIPTO if confirmada else DESCONOCIDO
+        detalle = decision.detalle if not confirmada else ""
+        return Resultado(estado, detalle, dia, captura if captura.exists() else None, decision)
 
     # ---------------- Avisos ----------------
     def _avisar(self, r: Resultado) -> None:
