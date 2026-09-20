@@ -475,6 +475,77 @@ CATALOGO: Dict[str, List[str]] = {
         "El comedor ya está en marcha; te aviso cuando termine.",
     ],
 
+    # -------------------------------------------------------------------- whatsapp
+    "whatsapp.enviando": [
+        "Dale, se lo mando por WhatsApp{a}. Tarda unos segundos; te aviso cuando salga.",
+        "Voy con el WhatsApp{a}. Te cuento cuando esté enviado.",
+    ],
+    "whatsapp.enviado": [
+        "Listo, ya salió por WhatsApp{a}.",
+        "Enviado por WhatsApp{a}.",
+        "Ya lo mandé por WhatsApp{a}.",
+    ],
+    "whatsapp.sin_sesion": [
+        "WhatsApp todavía no está vinculado (o se cerró la sesión). Decime 'conectá WhatsApp' y escaneás el código QR.",
+        "Me pide el código QR: falta vincular WhatsApp. Decime 'conectá WhatsApp'.",
+    ],
+    "whatsapp.numero_invalido": [
+        "WhatsApp dice que el número {detalle} no existe o no tiene WhatsApp. Revisá el número en config_local.py.",
+        "No pude enviarlo: {detalle} no figura en WhatsApp.",
+    ],
+    "whatsapp.no_cargo": [
+        "WhatsApp Web no terminó de cargar. Revisá la conexión y probá de nuevo.",
+        "La página de WhatsApp no cargó a tiempo; probá otra vez en un rato.",
+    ],
+    "whatsapp.no_envio": [
+        "Abrí el chat pero no logré enviar {detalle}. Puede que WhatsApp haya cambiado su página.",
+        "No pude confirmar que {detalle} haya salido. Fijate en el chat.",
+    ],
+    "whatsapp.archivo_grande": [
+        "No lo mando: {detalle} es demasiado grande para enviarlo así.",
+        "El archivo es muy pesado ({detalle}). Probá con uno más chico.",
+    ],
+    "whatsapp.archivo_no_encontrado": [
+        "No encuentro el archivo '{archivo}' para mandarlo por WhatsApp.",
+        "No di con '{archivo}'. Decime la ruta o el nombre exacto.",
+    ],
+    "whatsapp.sin_navegador": [
+        "No pude abrir el navegador para WhatsApp. Revisá BRAVE_RUTA_EXE en config_local.py.",
+        "Sin el navegador no puedo usar WhatsApp: revisá BRAVE_RUTA_EXE.",
+    ],
+    "whatsapp.sin_numero": [
+        "No tengo el número por defecto de WhatsApp. Agregá WHATSAPP_CONTACTO_DEFAULT en config_local.py.",
+        "Me falta WHATSAPP_CONTACTO_DEFAULT para saber a quién mandárselo.",
+    ],
+    "whatsapp.sin_contacto": [
+        "No tengo a '{contacto}' entre los contactos de WhatsApp. Agregalo en WHATSAPP_CONTACTOS con su número.",
+        "No conozco a '{contacto}' en WhatsApp; sumalo a WHATSAPP_CONTACTOS.",
+    ],
+    "whatsapp.sin_contenido": [
+        "¿Qué querés que mande por WhatsApp? Decime un mensaje o un archivo.",
+        "No me dijiste qué enviar: un mensaje o un archivo.",
+    ],
+    "whatsapp.en_curso": [
+        "Ya estoy con un envío de WhatsApp, esperá un momento.",
+        "Hay otro WhatsApp en marcha; te aviso cuando termine.",
+    ],
+    "whatsapp.error": [
+        "Algo falló con WhatsApp ({detalle}). Probá de nuevo.",
+        "No pude completar el envío por WhatsApp: {detalle}.",
+    ],
+    "whatsapp.conectando": [
+        "Te abro WhatsApp Web: escaneá el código QR con el teléfono del número que va a enviar. Tenés unos minutos.",
+        "Abrí WhatsApp Web. Escaneá el QR con el teléfono (Ajustes, Dispositivos vinculados) y te aviso.",
+    ],
+    "whatsapp.conectado": [
+        "Listo, WhatsApp quedó vinculado. Ya puedo mandar mensajes.",
+        "WhatsApp vinculado. Pedime lo que quieras enviar.",
+    ],
+    "whatsapp.conexion_fallida": [
+        "No se completó la vinculación de WhatsApp (venció el código o no se escaneó). Decime 'conectá WhatsApp' otra vez.",
+        "La vinculación de WhatsApp no terminó. Podemos intentar de nuevo cuando quieras.",
+    ],
+
     # -------------------------------------------------------------------- telegram
     "telegram.enviado": [
         "Listo, te mandé {nombre}{a} por Telegram.",

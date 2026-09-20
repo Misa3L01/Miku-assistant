@@ -149,11 +149,15 @@ class Navegador:
         puerto: Puerto de depuración (distinto del de tu Brave normal).
         visible: False = sin ventana (headless).
         minimizada: con ``visible``, abre la ventana ya minimizada (no roba el foco).
+        user_agent: Identificación del navegador. Sin ventana (headless) Chrome se anuncia como
+            "HeadlessChrome" y sitios como WhatsApp Web se niegan a abrir.
     """
 
     def __init__(self, ruta_exe: str, perfil: Path, puerto: int = 9224, visible: bool = True,
-                 abrir_ws: Callable[[str], Any] = _ws_por_defecto, minimizada: bool = False) -> None:
+                 abrir_ws: Callable[[str], Any] = _ws_por_defecto, minimizada: bool = False,
+                 user_agent: str = "") -> None:
         self.ruta_exe = ruta_exe
+        self.user_agent = user_agent
         self.perfil = Path(perfil)
         self.puerto = int(puerto)
         self.visible = visible
@@ -183,6 +187,8 @@ class Navegador:
         self.perfil.mkdir(parents=True, exist_ok=True)
         args = [self.ruta_exe, f"--remote-debugging-port={self.puerto}", f"--user-data-dir={self.perfil}",
                 "--no-first-run", "--no-default-browser-check", "--disable-sync", "about:blank"]
+        if self.user_agent:
+            args.insert(-1, f"--user-agent={self.user_agent}")
         if self.visible:
             args.insert(-1, "--window-size=1150,850")
             if self.minimizada:

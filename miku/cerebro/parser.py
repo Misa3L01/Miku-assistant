@@ -579,6 +579,13 @@ class CommandParser:
                     "volumen_usuario_discord"):
             return self._describir_discord(tool, args)
 
+        if tool == "enviar_whatsapp_a_contacto":
+            contacto = str((args or {}).get("contacto", "") or "").strip() or "esa persona"
+            que = str((args or {}).get("mensaje", "") or "").strip() or str((args or {}).get("archivo", "") or "").strip() \
+                or "eso"
+            return (f"¿Confirmás que le mande por WhatsApp a {contacto}: {que[:80]}? "
+                    f"Decime 'sí' para confirmar o 'no' para cancelar.")
+
         if tool == "enviar_a_contacto_telegram":
             contacto = str((args or {}).get("contacto", "") or "").strip() or "esa persona"
             archivo = str((args or {}).get("archivo", "") or "").strip() or "la última captura"

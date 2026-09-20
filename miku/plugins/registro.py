@@ -66,6 +66,9 @@ _CATALOGO: List[_Entrada] = [
              lambda cfg: bool(str(cfg.get("comedor_usuario", "") or "").strip())),
     _Entrada("social.telegram_bot", "TelegramControl",
              lambda cfg: bool(cfg.telegram_bot_token)),
+    _Entrada("social.whatsapp", "WhatsApp",
+             lambda cfg: bool(str(cfg.get("whatsapp_contacto_default", "") or "").strip()
+                             or cfg.get("whatsapp_contactos"))),
     _Entrada("social.telegram_envio", "TelegramEnvio",
              lambda cfg: bool(cfg.telegram_bot_token)),
     _Entrada("asistente.proactivo", "AsistenteProactivo",

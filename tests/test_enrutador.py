@@ -53,6 +53,8 @@ CASOS = [
     ("traducí lo que copié al inglés", "procesar_portapapeles"), ("resumí lo que copié", "procesar_portapapeles"),
     ("corregí lo que copié", "procesar_portapapeles"), ("deshacé lo del portapapeles", "deshacer_portapapeles"),
     ("comedor", "inscribir_comedor"), ("inscribime al comedor", "inscribir_comedor"),
+    ("mandame la última captura al whatsapp", "enviar_a_whatsapp"), ("mandame por wasap que compre leche", "enviar_a_whatsapp"),
+    ("conectá whatsapp", "conectar_whatsapp"),
     ("qué pestañas tengo abiertas", "listar_pestanas"), ("subí el volumen de la música", "volumen_tidal"),
     ("mandame la última captura al telegram", "enviar_a_telegram"),
     ("qué estoy viendo en el monitor 2", "ver_pantalla"), ("abrí genshin impact", "abrir_programa"),
@@ -63,7 +65,7 @@ CASOS = [
 def tools():
     from miku.ajustes import carga
     cfg = carga.Config()
-    cfg.valores.update(telegram_bot_token="x", juegos_booster=["cs2"], todoist_api_token="x", gemini_api_key="x", comedor_usuario="x")
+    cfg.valores.update(telegram_bot_token="x", juegos_booster=["cs2"], todoist_api_token="x", gemini_api_key="x", comedor_usuario="x", whatsapp_contacto_default="+54 3751 123456")
     return [t for p in registro.instanciar_plugins(cfg) for t in p.tools]
 
 

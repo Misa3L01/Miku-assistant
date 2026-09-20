@@ -284,6 +284,10 @@ LLM_API_KEY = ""
 # Navegador y música
 # ======================================================================================
 
+# Puerto de depuración del Brave aparte de WhatsApp.
+# (usado por: whatsapp)
+# WHATSAPP_PUERTO = 9225
+
 # Puerto de depuración del navegador aparte que Miku usa para automatizar páginas (no es
 # el de tu Brave normal).
 # (usado por: comedor)
@@ -392,6 +396,22 @@ LLM_API_KEY = ""
 # ======================================================================================
 # Tareas, control remoto y avisos automáticos
 # ======================================================================================
+
+# Número al que Miku manda por WhatsApp cuando no decís a quién (tu otro número), con
+# código de país: '+54 3751 123456'. Activa el plugin de WhatsApp.
+# (usado por: whatsapp)
+# WHATSAPP_CONTACTO_DEFAULT = ""
+
+# Otras personas a las que Miku puede escribirles por WhatsApp: nombre -> número.
+# Escribirle a otra persona pide confirmación.
+# (usado por: whatsapp)
+# WHATSAPP_CONTACTOS = {"mamá": "+54 3751 000000"}
+
+# Cómo se ve el Brave aparte de WhatsApp al enviar: 'minimizada' (recomendada), 'normal'
+# u 'oculta'.
+# Valores válidos: minimizada, normal, oculta
+# (usado por: whatsapp)
+# WHATSAPP_VENTANA = "minimizada"
 
 # Personas a las que Miku puede mandarles archivos por Telegram: nombre -> ID numérico
 # de chat (deben haber iniciado tu bot con /start). Enviar a otra persona pide

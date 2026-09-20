@@ -8,6 +8,8 @@ env/
 
 # Archivos de configuración (secretos)
 config_local.py
+config_local.py.*
+!config_local.py.example
 keys.txt
 *.key
 
@@ -22,6 +24,8 @@ data/tidal_sesion.json
 data/recordatorios.json
 data/comedor*
 data/navegador_miku/
+data/navegador_whatsapp*/
+data/whatsapp*
 data/embeddings/
 data/modo_snapshot.json
 data/proactivo_estado.json

@@ -107,6 +107,18 @@ _OPCIONES: List[Opcion] = [
     _o("telegram_chat_id", "", "claves",
        "Tu ID NUMÉRICO de usuario de Telegram (p. ej. con @userinfobot). Miku solo obedece a "
        "ese usuario.", "texto", usado_por="telegram_control"),
+    _o("whatsapp_contacto_default", "", "avisos",
+       "Número al que Miku manda por WhatsApp cuando no decís a quién (tu otro número), con código de país: "
+       "'+54 3751 123456'. Activa el plugin de WhatsApp.", usado_por="whatsapp"),
+    _o("whatsapp_contactos", {}, "avisos",
+       "Otras personas a las que Miku puede escribirles por WhatsApp: nombre -> número. Escribirle a otra "
+       "persona pide confirmación.", "mapa", 'WHATSAPP_CONTACTOS = {"mamá": "+54 3751 000000"}',
+       "whatsapp"),
+    _o("whatsapp_ventana", "minimizada", "avisos",
+       "Cómo se ve el Brave aparte de WhatsApp al enviar: 'minimizada' (recomendada), 'normal' u 'oculta'.",
+       "texto", usado_por="whatsapp", permitidos=("minimizada", "normal", "oculta")),
+    _o("whatsapp_puerto", 9225, "navegador",
+       "Puerto de depuración del Brave aparte de WhatsApp.", "entero", usado_por="whatsapp"),
     _o("telegram_contactos", {}, "avisos",
        "Personas a las que Miku puede mandarles archivos por Telegram: nombre -> ID numérico de chat "
        "(deben haber iniciado tu bot con /start). Enviar a otra persona pide confirmación.", "mapa",

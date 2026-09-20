@@ -59,6 +59,7 @@ _SINONIMOS: Dict[str, Sequence[str]] = {
     "empe": ("olvi",),
     "copie": ("port",), "copio": ("port",), "portap": ("port",), "resum": ("port",), "corre": ("port",),
     "reesc": ("port",), "expli": ("port",), "leeme": ("port",), "deshac": ("port", "deshac"),
+    "wasap": ("what",), "wsp": ("what",), "wats": ("what",), "whats": ("what",), "guasa": ("what",),
     "monit": ("moni",), "pantalla": ("pant",), "resol": ("reso",),
 }
 
