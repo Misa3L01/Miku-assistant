@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import timedelta
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from miku.plataforma import hardware, inactividad, openmeteo
@@ -278,14 +279,58 @@ class BriefingAlVolver(Regla):
                       cooldown_min=_num(ctx.cfg, "briefing_cooldown_h", 4) * 60)]
 
 
-def reglas_por_defecto(cfg: Any, contexto: Callable[[], Optional[dict]] = lambda: None) -> List[Regla]:
+class ComedorDiario(Regla):
+    """Cada día, a partir de ``comedor_hora``, avisa (o con ``comedor_auto`` hace) la inscripción al
+    comedor de mañana. Solo de lunes a jueves (mañana = día de semana) y una sola vez por día."""
+
+    nombre = "comedor"
+    intervalo = 60.0
+
+    def __init__(self, obtener_plugin: Callable[[], Any] = lambda: None,
+                 inactivo: Callable[[], float] = inactividad.segundos_inactivo) -> None:
+        self._plugin = obtener_plugin
+        self._inactivo = inactivo
+        self._ultimo_intento = ""
+
+    def evaluar(self, ctx: Contexto) -> Iterable[Aviso]:
+        cfg = ctx.cfg
+        hora = str(cfg.get("comedor_hora", "") or "").strip()
+        if not hora or not str(cfg.get("comedor_usuario", "") or "").strip():
+            return ()
+        manana = ctx.ahora.date() + timedelta(days=1)
+        if manana.weekday() > 4:                       # sábado/domingo: el comedor no abre
+            return ()
+        try:
+            hh, mm = hora.split(":")
+            desde = ctx.ahora.replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
+        except ValueError:
+            return ()
+        if ctx.ahora < desde:
+            return ()
+        plugin = self._plugin()
+        if plugin is None or plugin.ya_resuelto(manana):
+            return ()
+        if cfg.get("comedor_auto", False):
+            # Solo si estás usando la PC (no ausente) y no jugando; un intento por día.
+            if ctx.juego or self._inactivo() > 300 or self._ultimo_intento == manana.isoformat():
+                return ()
+            self._ultimo_intento = manana.isoformat()
+            plugin.inscribir_en_segundo_plano(automatico=True)
+            return [Aviso("comedor.auto", "comedor.auto", {"hora": hora}, una_vez_por_dia=True, cooldown_min=0)]
+        return [Aviso("comedor.aviso", "comedor.es_hora", {"hora": hora}, una_vez_por_dia=True, cooldown_min=0)]
+
+
+def reglas_por_defecto(cfg: Any, contexto: Callable[[], Optional[dict]] = lambda: None,
+                       plugin: Callable[[str], Any] = lambda nombre: None) -> List[Regla]:
     """Conjunto de reglas del asistente según la configuración.
 
     Args:
         contexto: ``f() -> dict`` con el contexto de runtime (scheduler...) para el resumen al volver.
+        plugin: ``f(nombre) -> plugin`` para las reglas que dependen de otro plugin (comedor).
     """
     reglas: List[Regla] = [BateriaBaja(cfg), DiscoLleno(cfg), EstadoAlJugar(), CargaSostenida(),
-                           GpuCaliente(), BriefingAlVolver(contexto)]
+                           GpuCaliente(), BriefingAlVolver(contexto),
+                           ComedorDiario(lambda: plugin("comedor"))]
     if cfg.get("proactivo_clima", True):
         reglas.append(ClimaAvisos(cfg))
     return reglas

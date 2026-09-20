@@ -65,6 +65,16 @@ CATALOGO: Dict[str, List[str]] = {
         "Ojo que la batería está en {porcentaje}%. Cargala pronto.",
     ],
     "briefing.texto": ["{texto}"],
+    "comedor.es_hora": [
+        "Ya son más de las {hora}: si querés, decime 'comedor' y te inscribo para mañana.",
+        "Ya podés inscribirte al comedor de mañana. Decime 'comedor' y me encargo.",
+        "Recordatorio del comedor: falta inscribirse para mañana. Decime 'comedor'.",
+    ],
+    "comedor.auto": [
+        "Son las {hora}: voy a inscribirte al comedor de mañana. Se abre una ventana, no la toques.",
+        "Hora del comedor: te inscribo para mañana. Se abre una ventana aparte.",
+        "Me pongo con el comedor de mañana. Dejá la ventana que se abre trabajar.",
+    ],
     "briefing.vuelta": [
         "Bienvenido de vuelta",
         "Ya volviste",
@@ -91,6 +101,8 @@ TITULOS: Dict[str, str] = {
     "pc.bateria": "Batería baja",
     "pc.disco": "Poco espacio en disco",
     "briefing.texto": "Miku",
+    "comedor.es_hora": "Comedor",
+    "comedor.auto": "Comedor",
     "briefing.vuelta": "Miku",
 }
 

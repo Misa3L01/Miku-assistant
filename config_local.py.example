@@ -284,6 +284,11 @@ LLM_API_KEY = ""
 # Navegador y música
 # ======================================================================================
 
+# Puerto de depuración del navegador aparte que Miku usa para automatizar páginas (no es
+# el de tu Brave normal).
+# (usado por: comedor)
+# NAVEGADOR_AUTO_PUERTO = 9224
+
 # Ruta a brave.exe. Miku lo lanza con el puerto de depuración para controlar las
 # pestañas.
 # (usado por: browser)
@@ -393,6 +398,39 @@ LLM_API_KEY = ""
 # confirmación.
 # (usado por: telegram_envio)
 # TELEGRAM_CONTACTOS = {"juan": "123456789"}
+
+# Tu usuario del comedor de la facultad (activa 'Miku, comedor'). La CONTRASEÑA no va
+# acá: se guarda en el Administrador de credenciales de Windows con 'python -m
+# miku.plugins.productividad.comedor guardar-clave'.
+# (usado por: comedor)
+# COMEDOR_USUARIO = ""
+
+# Hora a partir de la cual Miku te avisa (o, con COMEDOR_AUTO, te inscribe) cada día al
+# comedor del día siguiente. Vacío = sin aviso diario.
+# (usado por: comedor)
+# COMEDOR_HORA = "19:00"
+
+# Inscribirte sola a la hora de COMEDOR_HORA, sin que lo pidas (solo si estás usando la
+# PC y no jugando). Con False solo te avisa.
+# (usado por: comedor)
+# COMEDOR_AUTO = False
+
+# Mostrar la ventana del navegador mientras Miku hace el trámite (False = oculta).
+# (usado por: comedor)
+# COMEDOR_VER = True
+
+# Mandarte por Telegram la captura de la inscripción confirmada (necesita el bot de
+# Telegram).
+# (usado por: comedor)
+# COMEDOR_ENVIAR_CAPTURA = True
+
+# Página de inicio de sesión del comedor.
+# (usado por: comedor)
+# COMEDOR_URL_INICIO = "https://comedorobera.unam.edu.ar/"
+
+# Página donde aparecen las comidas para inscribirse (Autogestión > Inscripciones).
+# (usado por: comedor)
+# COMEDOR_URL_INSCRIPCIONES = "https://comedorobera.unam.edu.ar/comedorfi/1.0/aplicacion.php?tm=1&tcm=central&ai=comedorfi||103000019"
 
 # Avisos automáticos de Miku (clima, estado de la PC, batería, disco). Es el interruptor
 # general.

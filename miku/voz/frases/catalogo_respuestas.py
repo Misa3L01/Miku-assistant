@@ -363,6 +363,60 @@ CATALOGO: Dict[str, List[str]] = {
         "No logro leer las resoluciones que soporta el monitor.",
     ],
 
+    # -------------------------------------------------------------------- comedor
+    "comedor.iniciando": [
+        "Dale, me pongo con el comedor. Se va a abrir una ventana del navegador: no la toques y te aviso cuando termine.",
+        "Voy con el comedor. Se abre una ventana aparte; dejala trabajar y te cuento.",
+    ],
+    "comedor.inscripto": [
+        "Listo, quedaste inscripto al comedor para {dia}.",
+        "Ya está: te inscribí al comedor para {dia}.",
+        "Inscripción hecha para {dia}. A comer.",
+    ],
+    "comedor.ya_inscripto": [
+        "Ya estabas inscripto al comedor para {dia}, no hizo falta hacer nada.",
+        "Para {dia} ya figurás inscripto en el comedor.",
+    ],
+    "comedor.sin_comidas": [
+        "No aparece ninguna comida para {dia}, así que no había nada para inscribirse.",
+        "El comedor no tiene comidas cargadas para {dia} todavía.",
+    ],
+    "comedor.no_habilitado": [
+        "Hay comida para {dia} pero la inscripción no está habilitada ({detalle}).",
+        "No pude inscribirte para {dia}: {detalle}.",
+    ],
+    "comedor.desconocido": [
+        "Entré al comedor pero no reconocí la página o no pude confirmar la inscripción para {dia}. Revisalo a mano.",
+        "No estoy segura de haberte inscripto para {dia}: la página no se parece a lo que espero. Fijate vos.",
+    ],
+    "comedor.listo_para_inscribir": [
+        "Simulacro: para {dia} se puede inscribir ({detalle}).",
+    ],
+    "comedor.login_fallo": [
+        "No pude iniciar sesión en el comedor. Puede que la contraseña guardada esté mal: guardala de nuevo con guardar-clave.",
+        "El comedor no me dejó entrar. Revisá usuario y contraseña.",
+    ],
+    "comedor.sin_usuario": [
+        "Falta tu usuario del comedor. Agregá COMEDOR_USUARIO en config_local.py.",
+        "No tengo tu usuario del comedor: ponelo en COMEDOR_USUARIO.",
+    ],
+    "comedor.sin_clave": [
+        "No tengo guardada tu contraseña del comedor. Guardala con: python -m miku.plugins.productividad.comedor guardar-clave.",
+        "Me falta la contraseña del comedor; guardala con el comando guardar-clave.",
+    ],
+    "comedor.sin_navegador": [
+        "No pude abrir el navegador para el comedor. Revisá BRAVE_RUTA_EXE en config_local.py.",
+        "El navegador no arrancó, así que no pude hacer el trámite del comedor.",
+    ],
+    "comedor.error": [
+        "Algo falló haciendo el trámite del comedor ({detalle}). Probá de nuevo o hacelo a mano.",
+        "No pude completar lo del comedor: {detalle}.",
+    ],
+    "comedor.en_curso": [
+        "Ya estoy con el trámite del comedor, esperá un momento.",
+        "El comedor ya está en marcha; te aviso cuando termine.",
+    ],
+
     # -------------------------------------------------------------------- telegram
     "telegram.enviado": [
         "Listo, te mandé {nombre}{a} por Telegram.",

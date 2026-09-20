@@ -111,6 +111,30 @@ _OPCIONES: List[Opcion] = [
        "Personas a las que Miku puede mandarles archivos por Telegram: nombre -> ID numérico de chat "
        "(deben haber iniciado tu bot con /start). Enviar a otra persona pide confirmación.", "mapa",
        'TELEGRAM_CONTACTOS = {"juan": "123456789"}', "telegram_envio"),
+    _o("comedor_usuario", "", "avisos",
+       "Tu usuario del comedor de la facultad (activa 'Miku, comedor'). La CONTRASEÑA no va acá: se guarda "
+       "en el Administrador de credenciales de Windows con 'python -m miku.plugins.productividad.comedor "
+       "guardar-clave'.", usado_por="comedor"),
+    _o("comedor_hora", "19:00", "avisos",
+       "Hora a partir de la cual Miku te avisa (o, con COMEDOR_AUTO, te inscribe) cada día al comedor del "
+       "día siguiente. Vacío = sin aviso diario.", usado_por="comedor"),
+    _o("comedor_auto", False, "avisos",
+       "Inscribirte sola a la hora de COMEDOR_HORA, sin que lo pidas (solo si estás usando la PC y no "
+       "jugando). Con False solo te avisa.", "booleano", usado_por="comedor"),
+    _o("comedor_ver", True, "avisos",
+       "Mostrar la ventana del navegador mientras Miku hace el trámite (False = oculta).", "booleano",
+       usado_por="comedor"),
+    _o("comedor_enviar_captura", True, "avisos",
+       "Mandarte por Telegram la captura de la inscripción confirmada (necesita el bot de Telegram).",
+       "booleano", usado_por="comedor"),
+    _o("comedor_url_inicio", "https://comedorobera.unam.edu.ar/", "avisos",
+       "Página de inicio de sesión del comedor.", usado_por="comedor"),
+    _o("comedor_url_inscripciones", "https://comedorobera.unam.edu.ar/comedorfi/1.0/aplicacion.php?tm=1&tcm=central&ai=comedorfi||103000019",
+       "avisos", "Página donde aparecen las comidas para inscribirse (Autogestión > Inscripciones).",
+       usado_por="comedor"),
+    _o("navegador_auto_puerto", 9224, "navegador",
+       "Puerto de depuración del navegador aparte que Miku usa para automatizar páginas (no es el de tu "
+       "Brave normal).", "entero", usado_por="comedor"),
     _o("discord_bot_token", "", "claves",
        "Token del bot de Discord (https://discord.com/developers/applications). Necesita el "
        "intent privilegiado 'Server Members' activado.", "secreto", usado_por="discord_control"),

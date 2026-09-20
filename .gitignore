@@ -20,6 +20,8 @@ data/miku_memoria.db
 data/*.db
 data/tidal_sesion.json
 data/recordatorios.json
+data/comedor*
+data/navegador_miku/
 data/embeddings/
 data/modo_snapshot.json
 data/proactivo_estado.json

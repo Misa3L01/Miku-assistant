@@ -100,6 +100,7 @@ class Macros(Plugin):
     def initialize(self, event_bus: Any = None) -> None:
         """Carga el JSON de macros (tolerante a fallos)."""
         super().initialize(event_bus)
+        self._bus = event_bus
         self._macros = self._cargar_macros()
         # Reconstruimos la tool `ejecutar_macro` con las claves reales en su
         # descripción, para que el LLM sepa qué macros existen.
@@ -290,7 +291,16 @@ class Macros(Plugin):
         """
         if _RE_RESOLUCION.match(comando):
             return self._manejadores["resolucion"]
+        if comando.strip().lower() == "abrir_comedor":
+            return self._manejar_comedor
         return None
+
+    def _manejar_comedor(self, comando: str, macro: Dict[str, str]) -> str:
+        """La macro "comedor" delega en el plugin de inscripción (si está configurado)."""
+        for plugin in getattr(self._bus, "plugins", []) or []:
+            if getattr(plugin, "nombre", "") == "comedor":
+                return plugin.inscribir_en_segundo_plano()
+        return falla("comedor.sin_usuario")
 
     # ---------------- Manejadores concretos ----------------
     def _manejar_resolucion(self, comando: str,

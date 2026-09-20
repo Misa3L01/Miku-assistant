@@ -61,6 +61,8 @@ _CATALOGO: List[_Entrada] = [
              lambda cfg: bool(cfg.juegos_booster)),
     _Entrada("pantalla.vision", "Vision"),
     _Entrada("productividad.todoist", "Todoist"),
+    _Entrada("productividad.comedor", "Comedor",
+             lambda cfg: bool(str(cfg.get("comedor_usuario", "") or "").strip())),
     _Entrada("social.telegram_bot", "TelegramControl",
              lambda cfg: bool(cfg.telegram_bot_token)),
     _Entrada("social.telegram_envio", "TelegramEnvio",
