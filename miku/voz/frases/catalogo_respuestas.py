@@ -517,9 +517,13 @@ CATALOGO: Dict[str, List[str]] = {
         "No tengo el número por defecto de WhatsApp. Agregá WHATSAPP_CONTACTO_DEFAULT en config_local.py.",
         "Me falta WHATSAPP_CONTACTO_DEFAULT para saber a quién mandárselo.",
     ],
-    "whatsapp.sin_contacto": [
-        "No tengo a '{contacto}' entre los contactos de WhatsApp. Agregalo en WHATSAPP_CONTACTOS con su número.",
-        "No conozco a '{contacto}' en WhatsApp; sumalo a WHATSAPP_CONTACTOS.",
+    "whatsapp.no_encontrado": [
+        "No encontré ningún chat que se llame '{contacto}' en tu WhatsApp. Decime el nombre como lo tenés guardado.",
+        "No hay un chat o grupo '{contacto}' en tu WhatsApp. ¿Cómo lo tenés guardado?",
+    ],
+    "whatsapp.ambiguo": [
+        "Hay varios chats que coinciden con '{contacto}': {detalle}. No mandé nada; decime cuál, con el nombre completo.",
+        "'{contacto}' puede ser {detalle}. Para no equivocarme no envié nada: decime a cuál.",
     ],
     "whatsapp.sin_contenido": [
         "¿Qué querés que mande por WhatsApp? Decime un mensaje o un archivo.",

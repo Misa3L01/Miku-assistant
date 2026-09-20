@@ -402,8 +402,10 @@ LLM_API_KEY = ""
 # (usado por: whatsapp)
 # WHATSAPP_CONTACTO_DEFAULT = ""
 
-# Otras personas a las que Miku puede escribirles por WhatsApp: nombre -> número.
-# Escribirle a otra persona pide confirmación.
+# OPCIONAL. Personas a las que Miku escribe por su número: nombre -> número. No hace
+# falta para escribirle a alguien: Miku busca a la persona o al grupo por nombre entre
+# tus chats de WhatsApp ('mandale a Mati', 'mandá al grupo Familia'). Sirve para fijar
+# un número exacto. Escribirle a otra persona siempre pide confirmación.
 # (usado por: whatsapp)
 # WHATSAPP_CONTACTOS = {"mamá": "+54 3751 000000"}
 

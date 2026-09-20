@@ -4,6 +4,7 @@ whatsapp.py - Mandar mensajes y archivos por WhatsApp (WhatsApp Web en un Brave 
 
     "Mandame la última captura al WhatsApp"     -> al contacto por defecto (WHATSAPP_CONTACTO_DEFAULT)
     "Mandale a mamá por WhatsApp que llego tarde" -> a un contacto de WHATSAPP_CONTACTOS (pide confirmación)
+    "Mandale a Mati / al grupo Familia ..."        -> busca ese chat por nombre en tu WhatsApp (pide confirmación)
 
 Cómo funciona: igual que el comedor, usa un Brave **aparte** con su propio perfil
 (``data/navegador_whatsapp/``); tu Brave de siempre no se toca. WhatsApp Web guarda la sesión en ese
@@ -69,9 +70,53 @@ _JS_USAR_AQUI = r"""(() => {
   const boton = [...document.querySelectorAll('button, [role="button"]')]
     .find(b => /^(usar aqu[ií]|use here)$/i.test((b.innerText || '').trim()));
   if (!boton) return false; boton.click(); return true; })()"""
-# Cantidad de mensajes del chat abierto: al enviar, sube en uno. (Antes se contaban los ids "true_...",
-# pero WhatsApp ya no los usa: los mensajes nuevos llevan un id sin ese prefijo.)
-_JS_ENVIADOS = "document.querySelectorAll('#main [data-id]').length"
+# Carteles que WhatsApp pone encima de la página ("Novedades en WhatsApp Web") y tapan todo hasta apretar "Continuar".
+_JS_CERRAR_AVISOS = r"""(() => {
+  const boton = [...document.querySelectorAll('div[role="dialog"] button, div[role="dialog"] [role="button"]')]
+    .find(b => /^(continuar|entendido|aceptar|ok|continue|got it)$/i.test((b.innerText || '').trim()));
+  if (!boton) return false; boton.click(); return true; })()"""
+# La búsqueda de chats (lupa de la lista): pone el cursor en la caja y selecciona lo que hubiera escrito.
+_JS_FOCO_BUSQUEDA = ("(() => { const i = document.querySelector('#side input[role=\"textbox\"], #side input[type=\"text\"]'); "
+                     "if (!i) return false; i.focus(); i.select(); return true; })()")
+# Vacía la caja de búsqueda avisándole a la página (una caja "controlada" ignora un cambio que no dispare 'input').
+_JS_BORRAR_BUSQUEDA = r"""(() => {
+  const i = document.querySelector('#side input[role="textbox"], #side input[type="text"]'); if (!i) return false;
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(i, '');
+  i.dispatchEvent(new Event('input', {bubbles: true})); return true; })()"""
+# Los resultados vienen en secciones ("Chats", "Contactos", "Grupos en común", "Mensajes"...): una fila con un
+# título (h2) abre sección y las que siguen son los resultados. ``i`` es la posición de la fila en la lista.
+_JS_RESULTADOS = r"""(() => {
+  const g = [...document.querySelectorAll('#side [role="grid"]')].find(x => x.querySelector('h2'));
+  if (!g) return [];
+  let seccion = ''; const salida = [];
+  [...g.querySelectorAll(':scope > [role="row"]')].forEach((f, i) => {
+    const h = f.querySelector('h2');
+    if (h) { seccion = (h.innerText || '').trim(); return; }
+    // El nombre está en un span con title; la primera línea del texto puede ser "1 mensaje no leído" o la inicial del avatar.
+    const t = f.querySelector('span[dir="auto"][title]');
+    const titulo = (t && t.getAttribute('title')) || (f.innerText || '').split('\n').map(x => x.trim()).filter(Boolean)[0] || '';
+    if (titulo) salida.push({i: i, seccion: seccion, titulo: titulo});
+  });
+  return salida; })()"""
+# Dónde está (en pantalla) una fila de resultados, para hacerle un clic de mouse de verdad: WhatsApp no
+# reacciona a un ``click()`` de JavaScript en esa lista.
+_JS_CENTRO_RESULTADO = r"""(() => {
+  const g = [...document.querySelectorAll('#side [role="grid"]')].find(x => x.querySelector('h2'));
+  const f = g && g.querySelectorAll(':scope > [role="row"]')[%d];
+  if (!f) return null;
+  const r = f.getBoundingClientRect();
+  return {x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2)}; })()"""
+# Nombre del chat abierto (primera línea de la cabecera).
+_JS_TITULO_CHAT = (r"(() => { const h = document.querySelector('#main header'); return h ? ((h.innerText || '').split('\n')"
+                   r".map(t => t.trim()).filter(Boolean)[0] || '') : ''; })()")
+# Identificador del último mensaje del chat: cambia cuando entra uno nuevo. (Contar los mensajes no sirve:
+# WhatsApp descarta los viejos de la lista, así que al llegar uno nuevo la cantidad puede quedar igual.)
+_JS_ULTIMO_ID = ("(() => { const m = document.querySelectorAll('#main [data-id]'); "
+                 "return m.length ? m[m.length - 1].getAttribute('data-id') : ''; })()")
+# Verdadero cuando ningún mensaje del chat sigue "pendiente" (subiendo el archivo o sin salir todavía): recién
+# entonces se puede cerrar el navegador; si se cierra antes, el mensaje queda trabado con un signo de error.
+_JS_SIN_PENDIENTES = ("![...document.querySelectorAll('#main [data-id] title')]"
+                      ".some(t => /status-pending|msg-time|ic-close/.test(t.textContent))")
 _JS_FOCO_CAJA = ("(() => { const c = document.querySelector('footer [contenteditable=\"true\"]') || "
                  "document.querySelector('#main [contenteditable=\"true\"]'); if (!c) return false; c.focus(); return true; })()")
 # WhatsApp guarda como borrador lo que quedó escrito sin enviar: se vacía la caja antes de escribir.
@@ -137,6 +182,53 @@ def formato_legible(numero: str) -> str:
     return f"+{numero}"
 
 
+#: Secciones de la búsqueda donde hay chats a los que escribir (se ignoran "Mensajes", "Multimedia"...).
+_SECCIONES_CHATS = re.compile(r"^(chats?|contactos?|contacts?|grupos?|groups?)\b")
+#: "el grupo Familia" -> "Familia" (el nombre real del chat no suele llevar esas palabras).
+_PREFIJO_CHAT = re.compile(r"^(?:(?:el|la|al)\s+)?(?:grupo|chat)\s+(?:(?:de la|del|de)\s+)?", re.IGNORECASE)
+
+
+def _palabras(texto: Any) -> List[str]:
+    return re.findall(r"\w+", normalizar(str(texto or "")))
+
+
+def puntaje_titulo(consulta: str, titulo: str) -> int:
+    """Qué tan bien coincide el nombre de un chat con lo pedido: 3 mismo nombre, 2 el nombre empieza con
+    lo pedido ("Mati" -> "Mati Rojas"), 1 lo pedido aparece como palabras enteras ("Ana (Mati)"), 0 no
+    ("Matias" NO es "Mati")."""
+    q, t = _palabras(consulta), _palabras(titulo)
+    if not q or not t:
+        return 0
+    if q == t:
+        return 3
+    if t[:len(q)] == q:
+        return 2
+    return 1 if all(p in t for p in q) else 0
+
+
+def elegir_chat(consulta: str, filas: List[Dict[str, Any]]) -> tuple:
+    """Elige a qué chat mandar entre los resultados de la búsqueda de WhatsApp.
+
+    Devuelve ``("ok", fila)`` si hay uno solo que gane, ``("ambiguo", [filas])`` si empatan varios
+    (no se manda: se le pregunta al usuario) o ``("ninguno", [])``. Nunca adivina entre empates.
+    """
+    vistos: set = set()
+    candidatos: List[Dict[str, Any]] = []
+    for f in filas:
+        if not _SECCIONES_CHATS.match(normalizar(str(f.get("seccion", "")))):
+            continue
+        clave = " ".join(_palabras(f.get("titulo", "")))
+        if clave and clave not in vistos:                  # la misma persona sale como chat y como contacto
+            vistos.add(clave)
+            candidatos.append(f)
+    puntuados = [(puntaje_titulo(consulta, str(f.get("titulo", ""))), f) for f in candidatos]
+    mejor = max((p for p, _ in puntuados), default=0)
+    if mejor == 0:
+        return "ninguno", []
+    ganadores = [f for p, f in puntuados if p == mejor]
+    return ("ok", ganadores[0]) if len(ganadores) == 1 else ("ambiguo", ganadores)
+
+
 class WhatsApp(Plugin):
     """Manda mensajes y archivos por WhatsApp Web."""
 
@@ -156,10 +248,13 @@ class WhatsApp(Plugin):
                                                              "el nombre de un archivo (opcional)."}}}}},
         {"type": "function", "function": {
             "name": "enviar_whatsapp_a_contacto",
-            "description": "Manda un mensaje y/o archivo por WhatsApp a OTRA persona (un contacto configurado). "
-                           "Ej: 'mandale a mamá por WhatsApp que llego tarde'.",
+            "description": "Manda un mensaje y/o archivo por WhatsApp a OTRA persona o a un GRUPO, buscándolo por "
+                           "nombre entre los chats del usuario. Es la vía por defecto para escribirle a alguien si el "
+                           "usuario no dice por qué app. Ej: 'mandale a Mati que llego tarde', 'mandale a mamá por "
+                           "WhatsApp que ya voy', 'mandá al grupo Familia que confirmo'.",
             "parameters": {"type": "object", "properties": {
-                "contacto": {"type": "string", "description": "Nombre del contacto."},
+                "contacto": {"type": "string", "description": "Nombre de la persona o del grupo, tal como lo dijo el "
+                                                              "usuario y sin las palabras 'el grupo'."},
                 "mensaje": {"type": "string", "description": "Texto a enviar (opcional si hay archivo)."},
                 "archivo": {"type": "string", "description": "Archivo a enviar (opcional)."}},
                 "required": ["contacto"]}}},
@@ -175,6 +270,8 @@ class WhatsApp(Plugin):
         self._bus: Any = None
         self._lock = threading.Lock()
         self._hilo: Optional[threading.Thread] = None
+        #: Nombre real del chat al que se mandó cuando se lo buscó por nombre (para decirlo al avisar).
+        self.ultimo_chat = ""
 
     def initialize(self, event_bus: Any = None) -> None:
         super().initialize(event_bus)
@@ -251,8 +348,8 @@ class WhatsApp(Plugin):
         cfg = config_mod.config
         if not str(cfg.get("brave_ruta_exe", "") or "").strip():
             return falla("whatsapp.sin_navegador")
-        if self.destino(contacto) is None:
-            return falla("whatsapp.sin_contacto" if contacto else "whatsapp.sin_numero", contacto=contacto or "")
+        if not contacto and self.destino(None) is None:
+            return falla("whatsapp.sin_numero")
         if not mensaje and not archivo:
             return falla("whatsapp.sin_contenido")
         if archivo and self.resolver_archivo(archivo) is None:
@@ -266,13 +363,16 @@ class WhatsApp(Plugin):
 
     def _tramite_envio(self, contacto: Optional[str], mensaje: str, archivo: str) -> None:
         estado, detalle = self.enviar(contacto, mensaje, archivo)
-        self._avisar(f"whatsapp.{estado}", estado == "enviado", detalle=detalle, a=f" a {contacto}" if contacto else "")
+        a = f" a {self.ultimo_chat or contacto}" if contacto else ""
+        self._avisar(f"whatsapp.{estado}", estado == "enviado", detalle=detalle, a=a, contacto=contacto or "")
 
     def enviar(self, contacto: Optional[str], mensaje: str, archivo: str = "",
                navegador: Optional[Navegador] = None) -> tuple:
         """Manda el mensaje y/o archivo. Devuelve ``(estado, detalle)``; bloquea ~20 s."""
+        self.ultimo_chat = ""
         numero = self.destino(contacto)
-        if numero is None:
+        por_nombre = bool(contacto) and numero is None          # no está en WHATSAPP_CONTACTOS: se busca en los chats
+        if numero is None and not por_nombre:
             return "sin_numero", ""
         ruta: Optional[Path] = None
         if archivo:
@@ -283,21 +383,35 @@ class WhatsApp(Plugin):
                 return "archivo_grande", f"{ruta.name} ({ruta.stat().st_size // (1024 * 1024)} MB)"
         if not self._lock.acquire(blocking=False):
             return "en_curso", ""
-        nav = navegador or self._navegador()
+        # Para buscar por nombre el navegador va SIN ventana: con la ventana minimizada o tapada la página queda
+        # "oculta" y WhatsApp no llena la lista de resultados de la búsqueda.
+        nav = navegador or self._navegador("oculta" if por_nombre else None)
         try:
             if nav is None or not nav.abrir():
                 return "sin_navegador", ""
             pagina = nav.pagina()
             if pagina is None:
                 return "sin_navegador", ""
-            pagina.ir(f"{URL}send?phone={numero}", 30)
-            estado = self._esperar_estado(pagina, 60, (CHAT, QR, INVALIDO))
-            if estado == QR:
-                return "sin_sesion", ""
-            if estado == INVALIDO:
-                return "numero_invalido", formato_legible(numero)
-            if estado != CHAT:
-                return "no_cargo", ""
+            if por_nombre:
+                pagina.ir(URL, 30)
+                estado = self._esperar_estado(pagina, 60, (LISTA, CHAT, QR))
+                if estado == QR:
+                    return "sin_sesion", ""
+                if estado not in (LISTA, CHAT):
+                    return "no_cargo", ""
+                estado, detalle = self._abrir_chat_por_nombre(pagina, str(contacto))
+                if estado != "ok":
+                    return estado, detalle
+                self.ultimo_chat = detalle
+            else:
+                pagina.ir(f"{URL}send?phone={numero}", 30)
+                estado = self._esperar_estado(pagina, 60, (CHAT, QR, INVALIDO))
+                if estado == QR:
+                    return "sin_sesion", ""
+                if estado == INVALIDO:
+                    return "numero_invalido", formato_legible(str(numero))
+                if estado != CHAT:
+                    return "no_cargo", ""
             self._esperar_chat_quieto(pagina)
             pagina.evaluar(_JS_LIMPIAR_CAJA)
             if mensaje and not self._mandar_texto(pagina, mensaje):
@@ -316,38 +430,122 @@ class WhatsApp(Plugin):
             finally:
                 self._lock.release()
 
-    def _esperar_chat_quieto(self, pagina: Pagina, maximo: float = 10.0) -> int:
-        """Espera a que termine de cargar el historial del chat y devuelve cuántos mensajes tiene.
+    def _esperar_chat_quieto(self, pagina: Pagina, maximo: float = 10.0) -> str:
+        """Espera a que termine de cargar el historial del chat y devuelve el id de su último mensaje.
 
-        Al abrir un chat WhatsApp va agregando mensajes de a poco: si se contara enseguida, esa carga se
+        Al abrir un chat WhatsApp va agregando mensajes de a poco: si se mirara enseguida, esa carga se
         confundiría con un mensaje nuestro recién enviado.
         """
         limite = time.monotonic() + maximo
-        cantidad, desde = self._enviados(pagina), time.monotonic()
+        ultimo, desde = self._ultimo_id(pagina), time.monotonic()
         while time.monotonic() < limite and time.monotonic() - desde < _QUIETO:
             time.sleep(0.3)
-            actual = self._enviados(pagina)
-            if actual != cantidad:
-                cantidad, desde = actual, time.monotonic()
-        return cantidad
+            actual = self._ultimo_id(pagina)
+            if actual != ultimo:
+                ultimo, desde = actual, time.monotonic()
+        return ultimo
+
+    # ---------------- Buscar un chat por nombre ----------------
+    def _leer_resultados(self, pagina: Pagina, maximo: float = 8.0) -> List[Dict[str, Any]]:
+        """Espera a que la búsqueda termine de mostrar resultados (aparecen por tandas) y los devuelve."""
+        inicio = time.monotonic()
+        ultimo: List[Dict[str, Any]] = []
+        desde = time.monotonic()
+        while time.monotonic() - inicio < maximo:
+            time.sleep(0.4)
+            actual = pagina.evaluar(_JS_RESULTADOS) or []
+            if actual != ultimo:
+                ultimo, desde = actual, time.monotonic()
+            elif ultimo and time.monotonic() - desde >= _QUIETO:
+                break
+            elif not ultimo and time.monotonic() - inicio >= 4.0:
+                break                                        # no hay resultados: no esperar todo el tiempo
+        return ultimo
 
     @staticmethod
-    def _enviados(pagina: Pagina) -> int:
-        return int(pagina.evaluar(_JS_ENVIADOS) or 0)
+    def _clic(pagina: Pagina, x: int, y: int) -> None:
+        """Un clic de mouse de verdad en (x, y) de la página."""
+        for tipo in ("mouseMoved", "mousePressed", "mouseReleased"):
+            pagina.llamar("Input.dispatchMouseEvent", {
+                "type": tipo, "x": x, "y": y, "button": "none" if tipo == "mouseMoved" else "left",
+                "buttons": 1 if tipo == "mousePressed" else 0, "clickCount": 0 if tipo == "mouseMoved" else 1})
 
-    def _esperar_un_enviado_mas(self, pagina: Pagina, antes: int, segundos: float = 20.0) -> bool:
-        return pagina.esperar(f"{_JS_ENVIADOS} > {int(antes)}", segundos)
+    @staticmethod
+    def _borrar_busqueda(pagina: Pagina) -> None:
+        pagina.evaluar(_JS_BORRAR_BUSQUEDA)
+
+    def _buscar(self, pagina: Pagina, consulta: str, intentos: int = 3) -> List[Dict[str, Any]]:
+        """Escribe ``consulta`` en la lupa y devuelve los resultados. A veces la página no reacciona a la primera
+        (se estaba cargando): se borra y se vuelve a escribir."""
+        filas: List[Dict[str, Any]] = []
+        time.sleep(1.5)                       # recién cargada la lista, las filas de resultados salen vacías
+        for intento in range(intentos):
+            pagina.evaluar(_JS_CERRAR_AVISOS)
+            if not pagina.evaluar(_JS_FOCO_BUSQUEDA):
+                return []
+            pagina.llamar("Input.insertText", {"text": consulta})
+            filas = self._leer_resultados(pagina)
+            if filas:
+                break
+            self._borrar_busqueda(pagina)
+            time.sleep(1.0)
+        return filas
+
+    def _abrir_chat_por_nombre(self, pagina: Pagina, nombre: str) -> tuple:
+        """Busca ``nombre`` en la lupa de WhatsApp Web y abre el chat. ``("ok", titulo)``, ``("ambiguo", nombres)``
+        (empate: no se manda) o ``("no_encontrado", nombre)``."""
+        consultas = [nombre.strip()]
+        sin_prefijo = _PREFIJO_CHAT.sub("", nombre.strip()).strip()
+        if sin_prefijo and sin_prefijo.lower() != nombre.strip().lower():
+            consultas.append(sin_prefijo)
+        for consulta in consultas:
+            pagina.evaluar(_JS_CERRAR_AVISOS)
+            if not pagina.evaluar(_JS_FOCO_BUSQUEDA):
+                return "no_cargo", ""
+            # Con una segunda variante ("Familia" tras "el grupo Familia") no se reintenta la primera: rara vez existe.
+            intentos = 3 if consulta is consultas[-1] else 1
+            veredicto, dato = elegir_chat(consulta, self._buscar(pagina, consulta, intentos))
+            if veredicto == "ambiguo":
+                return "ambiguo", ", ".join(str(f["titulo"]) for f in dato[:4])
+            if veredicto != "ok":
+                continue
+            titulo = str(dato["titulo"])
+            centro = pagina.evaluar(_JS_CENTRO_RESULTADO % int(dato["i"]))
+            if not isinstance(centro, dict):
+                return "no_cargo", ""
+            self._clic(pagina, int(centro["x"]), int(centro["y"]))
+            limite = time.monotonic() + 15.0
+            while time.monotonic() < limite:                 # se comprueba que se abrió EL chat elegido
+                if _palabras(pagina.evaluar(_JS_TITULO_CHAT)) == _palabras(titulo):
+                    return "ok", titulo
+                time.sleep(0.4)
+            return "no_cargo", ""
+        return "no_encontrado", nombre
+
+    @staticmethod
+    def _ultimo_id(pagina: Pagina) -> str:
+        return str(pagina.evaluar(_JS_ULTIMO_ID) or "")
+
+    def _esperar_mensaje_nuevo(self, pagina: Pagina, antes: str, segundos: float = 20.0, subida: float = 30.0) -> bool:
+        """True cuando entra un mensaje nuevo al chat Y termina de enviarse (deja de estar "pendiente").
+
+        Un archivo aparece enseguida en el chat pero se sube después: cerrar el navegador antes de que
+        termine lo deja trabado sin llegar nunca.
+        """
+        if not pagina.esperar(f"{_JS_ULTIMO_ID} !== {json.dumps(antes)}", segundos):
+            return False
+        return pagina.esperar(_JS_SIN_PENDIENTES, subida)
 
     def _mandar_texto(self, pagina: Pagina, texto: str) -> bool:
-        """Escribe el texto en la caja del chat y aprieta Enter. True si aparece como mensaje enviado."""
-        antes = self._enviados(pagina)
+        """Escribe el texto en la caja del chat y lo envía. True si aparece como mensaje enviado."""
+        antes = self._ultimo_id(pagina)
         if not pagina.evaluar(_JS_FOCO_CAJA):
             return False
         pagina.llamar("Input.insertText", {"text": texto})
         time.sleep(0.4)
         if not pagina.evaluar(_JS_APRETAR_ENVIAR):        # el Enter por CDP no siempre lo toma la página
             self._apretar_enter(pagina)
-        return self._esperar_un_enviado_mas(pagina, antes)
+        return self._esperar_mensaje_nuevo(pagina, antes)
 
     @staticmethod
     def _apretar_enter(pagina: Pagina) -> None:
@@ -360,7 +558,7 @@ class WhatsApp(Plugin):
 
     def _mandar_archivo(self, pagina: Pagina, ruta: Path) -> bool:
         """Pega el archivo en el chat (como si lo copiaras y pegaras) y lo envía desde la vista previa."""
-        antes = self._enviados(pagina)
+        antes = self._ultimo_id(pagina)
         datos = base64.b64encode(ruta.read_bytes()).decode("ascii")
         pagina.evaluar("window.__mk = []; true")
         for i in range(0, len(datos), _TROZO):
@@ -374,7 +572,7 @@ class WhatsApp(Plugin):
         time.sleep(0.8)                                   # que cargue la miniatura
         if not pagina.evaluar(_JS_APRETAR_ENVIAR):
             self._apretar_enter(pagina)                   # último recurso: Enter con el foco en la descripción
-        return self._esperar_un_enviado_mas(pagina, antes, 40.0)
+        return self._esperar_mensaje_nuevo(pagina, antes, 40.0, 120.0)      # subir hasta 16 MB puede tardar
 
     # ---------------- Conectar (QR) ----------------
     def conectar_en_segundo_plano(self) -> str:
@@ -471,7 +669,7 @@ def _cli_explorar() -> int:
         estado = p._esperar_estado(pagina, 60, (CHAT, QR, INVALIDO))
         info = {"estado": estado, "url": pagina.url().split("?")[0],
                 "caja": pagina.evaluar("!!document.querySelector('footer [contenteditable=\"true\"]')"),
-                "enviados": pagina.evaluar(_JS_ENVIADOS),
+                "ultimo_id": pagina.evaluar(_JS_ULTIMO_ID),
                 "iconos": pagina.evaluar("[...new Set([...document.querySelectorAll('[data-icon]')].map(e => e.getAttribute('data-icon')))]"),
                 "aria": pagina.evaluar("[...new Set([...document.querySelectorAll('[aria-label]')].map(e => e.getAttribute('aria-label')))].slice(0, 60)")}
         destino = config_mod.BASE_DIR / "data" / "whatsapp_exploracion.json"
@@ -482,10 +680,36 @@ def _cli_explorar() -> int:
         nav.cerrar()
 
 
+def _cli_buscar() -> int:
+    """``buscar <nombre>``: abre el chat de ese nombre y dice cuál encontró. No manda nada."""
+    config_mod.cargar()
+    nombre = " ".join(sys.argv[2:]).strip()
+    if not nombre:
+        print("Uso: python -m miku.plugins.social.whatsapp buscar <nombre de la persona o del grupo>")
+        return 2
+    p = WhatsApp()
+    nav = p._navegador("oculta")                      # igual que al enviar por nombre: sin ventana
+    if nav is None or not nav.abrir():
+        print("No pude abrir el navegador (¿BRAVE_RUTA_EXE?).")
+        return 1
+    try:
+        pagina = nav.pagina()
+        pagina.ir(URL, 30)
+        if p._esperar_estado(pagina, 60, (LISTA, CHAT, QR)) == QR:
+            print("WhatsApp no está vinculado: primero `... whatsapp conectar`.")
+            return 1
+        estado, detalle = p._abrir_chat_por_nombre(pagina, nombre)
+        print({"ok": f"Abrí el chat: {detalle}", "ambiguo": f"Hay varios: {detalle}",
+               "no_encontrado": f"No encontré ningún chat que se llame '{nombre}'."}.get(estado, f"Falló ({estado})."))
+        return 0 if estado == "ok" else 1
+    finally:
+        nav.cerrar()
+
+
 if __name__ == "__main__":
-    comandos = {"conectar": _cli_conectar, "probar": _cli_probar, "explorar": _cli_explorar}
+    comandos = {"conectar": _cli_conectar, "probar": _cli_probar, "explorar": _cli_explorar, "buscar": _cli_buscar}
     elegido = comandos.get(sys.argv[1] if len(sys.argv) > 1 else "")
     if elegido is None:
-        print("Uso: python -m miku.plugins.social.whatsapp [conectar | probar | explorar]")
+        print("Uso: python -m miku.plugins.social.whatsapp [conectar | probar | explorar | buscar <nombre>]")
         sys.exit(2)
     sys.exit(elegido())

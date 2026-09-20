@@ -111,8 +111,10 @@ _OPCIONES: List[Opcion] = [
        "Número al que Miku manda por WhatsApp cuando no decís a quién (tu otro número), con código de país: "
        "'+54 3751 123456'. Activa el plugin de WhatsApp.", usado_por="whatsapp"),
     _o("whatsapp_contactos", {}, "avisos",
-       "Otras personas a las que Miku puede escribirles por WhatsApp: nombre -> número. Escribirle a otra "
-       "persona pide confirmación.", "mapa", 'WHATSAPP_CONTACTOS = {"mamá": "+54 3751 000000"}',
+       "OPCIONAL. Personas a las que Miku escribe por su número: nombre -> número. No hace falta para "
+       "escribirle a alguien: Miku busca a la persona o al grupo por nombre entre tus chats de WhatsApp "
+       "('mandale a Mati', 'mandá al grupo Familia'). Sirve para fijar un número exacto. Escribirle a "
+       "otra persona siempre pide confirmación.", "mapa", 'WHATSAPP_CONTACTOS = {"mamá": "+54 3751 000000"}',
        "whatsapp"),
     _o("whatsapp_ventana", "minimizada", "avisos",
        "Cómo se ve el Brave aparte de WhatsApp al enviar: 'minimizada' (recomendada), 'normal' u 'oculta'.",

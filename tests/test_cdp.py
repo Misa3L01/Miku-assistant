@@ -75,7 +75,7 @@ def test_ventana_normal_minimizada_y_oculta(tmp_path, monkeypatch):
     assert "--start-minimized" in args and minimizada == [1]
 
     args, minimizada = _lanzar(tmp_path, monkeypatch, visible=False)
-    assert "--headless=new" in args and "--window-size=1150,850" not in args and not minimizada
+    assert "--headless=new" in args and "--window-size=1150,850" in args and not minimizada
 
 
 def test_el_perfil_se_pasa_como_ruta_absoluta(tmp_path, monkeypatch):

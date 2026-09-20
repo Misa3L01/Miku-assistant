@@ -232,6 +232,8 @@ class Navegador:
             if self.minimizada:
                 args.insert(-1, "--start-minimized")
         else:
+            # Sin ventana el tamaño por defecto es chico y WhatsApp Web recorta la lista de mensajes.
+            args.insert(-1, "--window-size=1150,850")
             args.insert(-1, "--headless=new")
         env = dict(os.environ)
         env.pop("ELECTRON_RUN_AS_NODE", None)
