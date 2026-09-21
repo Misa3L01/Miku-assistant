@@ -90,6 +90,12 @@ LLM_API_KEY = ""
 # (usado por: voz)
 # VOICEVOX_RUN_EXE = r"D:\Programas\VOICEVOX\vv-engine\run.exe"
 
+# Sintetizar la voz por GPU. Necesita el paquete GPU del motor VOICEVOX (DirectML para
+# AMD/Intel, CUDA para NVIDIA): con el motor de CPU no cambia nada y Miku lo avisa en el
+# log. Acelera mucho las frases nuevas (las repetidas ya salen de la caché).
+# (usado por: voz)
+# VOICEVOX_GPU = False
+
 # Número del micrófono a usar. None = el predeterminado de Windows. La lista de
 # micrófonos aparece en la consola al iniciar el modo voz.
 # (usado por: voz)
@@ -143,6 +149,63 @@ LLM_API_KEY = ""
 # {salida}; el texto entra por stdin (o usá {texto}).
 # (usado por: voz)
 # TTS_COMANDO = r"piper --model C:\voces\es.onnx --output_file {salida}"
+
+# Quién detecta que dijiste 'Miku': 'auto' (el mejor disponible), 'openwakeword' (en tu
+# PC, sin transcribir; necesita WAKE_MODELO), 'local' (faster-whisper en tu PC) o 'nube'
+# (Whisper en Groq, como siempre). Los locales no mandan a internet lo que se habla en
+# la habitación.
+# Valores válidos: auto, openwakeword, local, nube
+# (usado por: voz)
+# WAKE_PROVEEDOR = "auto"
+
+# Ruta al modelo .onnx de openWakeWord entrenado para 'Miku'. openWakeWord no trae uno:
+# se entrena con su cuaderno oficial. Sin esto, 'auto' usa el siguiente motor
+# disponible.
+# (usado por: voz)
+# WAKE_MODELO = r"R:\modelos\miku.onnx"
+
+# Tamaño de faster-whisper para la palabra clave (tiny, base, small...). Corre con cada
+# frase que se oye, así que conviene el más chico.
+# (usado por: voz)
+# WAKE_MODELO_LOCAL = "tiny"
+
+# Cuán seguro tiene que estar openWakeWord (0 a 1) para dar por dicha la palabra clave.
+# Más alto = menos activaciones por error.
+# (usado por: voz)
+# WAKE_UMBRAL = 0.5
+
+# Detectar por voz cuándo terminás de hablar, en vez de esperar una pausa fija. Con esto
+# la pausa puede ser corta sin que el ruido de fondo te corte la frase.
+# (usado por: voz)
+# STT_VAD = True
+
+# Qué detector de voz usar: 'auto' (silero si está el modelo, si no energía), 'silero'
+# (red chica por ONNX: bajala con 'python -m miku.voz.entrada.vad descargar') o
+# 'energia' (sin dependencias).
+# Valores válidos: auto, silero, energia
+# (usado por: voz)
+# VAD_PROVEEDOR = "auto"
+
+# Ruta a tu propio silero_vad.onnx. Vacío = el que bajó Miku a data/vad/ o el del
+# paquete silero-vad si lo instalaste.
+# (usado por: voz)
+# VAD_MODELO = ""
+
+# Desde qué probabilidad (0 a 1) silero considera que hay voz. Más alto = más estricto
+# con el ruido.
+# (usado por: voz)
+# VAD_UMBRAL = 0.5
+
+# Miku empieza a hablar con la primera oración mientras el modelo sigue escribiendo el
+# resto. En respuestas largas es la diferencia entre oír algo enseguida o esperar en
+# silencio.
+# (usado por: cerebro)
+# LLM_STREAMING = True
+
+# Suelta un 'mmm' corto apenas te escuchó, mientras piensa la respuesta. Solo en órdenes
+# habladas.
+# (usado por: voz)
+# CONFIRMACION_SONORA = True
 
 # Segundos de silencio con los que Miku da por terminada tu frase (0.3 a 1.5). Más bajo
 # = responde antes pero puede cortarte si hacés pausas al hablar; el estándar de la
@@ -482,6 +545,11 @@ LLM_API_KEY = ""
 # Página donde aparecen las comidas para inscribirse (Autogestión > Inscripciones).
 # (usado por: comedor)
 # COMEDOR_URL_INSCRIPCIONES = "https://comedorobera.unam.edu.ar/comedorfi/1.0/aplicacion.php?tm=1&tcm=central&ai=comedorfi||103000019"
+
+# Deja en el log una línea por orden con cuánto tardó cada etapa (escuchar, transcribir,
+# pensar, hablar). Sirve para saber qué optimizar.
+# (usado por: cerebro)
+# METRICAS_LATENCIA = True
 
 # Avisos automáticos de Miku (clima, estado de la PC, batería, disco). Es el interruptor
 # general.

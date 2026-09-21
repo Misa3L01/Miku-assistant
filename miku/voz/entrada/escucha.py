@@ -6,9 +6,12 @@ bloque. Acá separamos la captura de audio (en su propio hilo) del
 procesamiento para no congelar el bucle principal.
 
 Flujo en modo "voz":
-    1. Un hilo escucha en segundo plano y transcribe cada chunk corto.
-    2. Se detecta la palabra de activación "Miku".
-    3. Se emite el evento correspondiente en el EventBus.
+    1. Un hilo captura lo que se dice (con VAD: sabe cuándo empezaste y cuándo terminaste).
+    2. Un detector decide si dijiste "Miku" (en la PC o, por defecto, transcribiendo en la nube).
+    3. Se toma la orden y se entrega al cerebro.
+
+Quién hace qué: ``vad.py`` decide dónde empieza y termina una frase, ``wake.py`` si esa frase te
+dirigía a Miku, y ``transcriptores.py`` la pasa a texto.
 
 También se puede INVOCAR a Miku sin decir la palabra (tecla F13): ``invocar()`` hace que el
 hilo de escucha salude y tome el próximo comando directamente.
@@ -16,27 +19,24 @@ hilo de escucha salude y tome el próximo comando directamente.
 from __future__ import annotations
 
 import logging
-import re
 import threading
 import time
+from collections import deque
 from typing import Any, Callable, Optional
 
 # Imports "pesados"/opcionales hechos de forma lazy dentro de los métodos
 # para acortar el arranque si no se usa modo voz (ver optimización).
 from miku.ajustes import carga as config_mod  # noqa: F401  (accede por config_mod.config)
+from miku.servicios import metricas
+from miku.voz.entrada import vad as vad_mod, wake
 from miku.voz.entrada.transcriptores import Transcriptor, crear_transcriptor
 from miku.plataforma.texto import sin_acentos
 
 logger = logging.getLogger("miku.stt")
 
-# Palabras que el STT puede deformar de "Miku". Se buscan como PALABRA COMPLETA
-# (ver ``_RE_MIKU``): por substring, "migo"/"mica"/"iku" activaban a Miku con
-# "amigo", "conmigo", "química", "económica"...
-_VARIANTES_MIKU: tuple = (
-    "miku", "mikú", "mika", "mica", "niku", "mike",
-    "miko", "mico", "meco", "meko", "mego", "mecu", "migu",
-)
-_RE_MIKU = re.compile(r"\b(?:%s)\b" % "|".join(_VARIANTES_MIKU))
+# Las variantes de "Miku" y su expresión regular viven en ``wake.py`` (las comparten los detectores).
+_VARIANTES_MIKU: tuple = wake.VARIANTES_MIKU
+_RE_MIKU = wake.RE_MIKU
 
 # Frases que Whisper "alucina" cuando recibe silencio/ruido: no son comandos.
 _ALUCINACIONES_WHISPER: tuple = (
@@ -54,6 +54,8 @@ _ESPERA_INVOCACION = 1.0
 # Segundos que se espera a que un hilo de escucha que se está deteniendo termine de verdad
 # (puede estar en medio de una captura de hasta ~18 s).
 _ESPERA_CIERRE_HILO = 20.0
+# Cuánto audio se guarda ANTES de detectar voz: sin esto se perdería el arranque de la primera palabra.
+_COLCHON_INICIO_SEG = 0.3
 
 
 def _duracion_audio(audio) -> float:
@@ -80,6 +82,10 @@ class SpeechToText:
         self._reconocedor: Any = None          # reconocedor "lazy"
         self._sr_mod: Any = None               # módulo speech_recognition (lazy)
         self._transcriptor: Optional[Transcriptor] = None   # Groq o local (lazy, ver transcriptores.py)
+        self._detector_wake: Any = None        # detector local de la palabra clave (lazy)
+        self._wake_resuelto = False
+        self._vad: Any = None                  # detector de voz (lazy)
+        self._vad_resuelto = False
 
         # Estado del escucha en segundo plano.
         self._hilo_escucha: Optional[threading.Thread] = None
@@ -176,7 +182,45 @@ class SpeechToText:
 
     def _contiene_miku(self, texto: str) -> bool:
         """Devuelve True si `texto` contiene la palabra Miku (palabra completa)."""
-        return _RE_MIKU.search((texto or "").lower()) is not None
+        return wake.contiene_miku(texto)
+
+    def _obtener_detector(self) -> Any:
+        """Detector LOCAL de la palabra clave, o None si se resuelve en la nube (ver ``wake.py``)."""
+        if not self._wake_resuelto:
+            self._wake_resuelto = True
+            try:
+                self._detector_wake = wake.crear_detector_local(self.cfg)
+                if self._detector_wake is not None:
+                    logger.info("Palabra clave detectada en la PC con '%s'.", self._detector_wake.nombre)
+            except Exception:  # noqa: BLE001
+                logger.exception("No pude preparar el detector local; uso la nube.")
+                self._detector_wake = None
+        return self._detector_wake
+
+    def _detectar_wake(self, audio) -> "wake.Deteccion":
+        """¿Ese audio te dirigía a Miku?
+
+        Con un detector local el audio NO sale de la PC. Con el de nube se transcribe con Whisper,
+        que además devuelve el texto y permite decir la orden en la misma frase ("Miku, qué hora es").
+        """
+        detector = self._obtener_detector()
+        if detector is not None:
+            return detector.detectar(audio)
+        texto = self._transcribir_wake(audio)
+        return wake.Deteccion(self._contiene_miku(texto), texto)
+
+    def _obtener_vad(self) -> Any:
+        """Detector de voz para saber cuándo terminás de hablar (None = pausa fija de siempre)."""
+        if not self._vad_resuelto:
+            self._vad_resuelto = True
+            try:
+                self._vad = vad_mod.crear_vad(self.cfg)
+                if self._vad is not None:
+                    logger.info("Fin de frase con VAD '%s'.", self._vad.nombre)
+            except Exception:  # noqa: BLE001
+                logger.exception("No pude preparar el VAD; uso la pausa fija.")
+                self._vad = None
+        return self._vad
 
     def _extraer_comando_en_linea(self, texto: str) -> str:
         """Extrae lo que el usuario dijo DESPUÉS de la wake word, si hay algo.
@@ -212,6 +256,57 @@ class SpeechToText:
         if len(resto) > 2:
             return resto
         return ""
+
+    def _capturar(self, source, timeout: float, limite: float):
+        """Graba UNA frase: con VAD si está disponible, si no con la pausa fija de la librería.
+
+        Raises:
+            sr.WaitTimeoutError: si nadie habló dentro de ``timeout``.
+        """
+        detector = self._obtener_vad()
+        if detector is None or getattr(source, "stream", None) is None:
+            return self._reconocedor.listen(source=source, timeout=timeout, phrase_time_limit=limite)
+        return self._capturar_con_vad(source, detector, timeout, limite)
+
+    def _capturar_con_vad(self, source, detector, timeout: float, limite: float):
+        """Graba desde que empezás a hablar hasta que se te nota que terminaste.
+
+        A diferencia de la pausa fija, el corte lo decide el VAD: como distingue voz de ruido, la
+        pausa puede ser corta sin que el ventilador o un golpe en el teclado corten la frase.
+        """
+        detector.reiniciar()
+        pausa_fin = self._pausa_fin()
+        frame_seg = vad_mod.MUESTRAS_FRAME / float(vad_mod.FRECUENCIA)
+        colchon = deque(maxlen=max(1, int(_COLCHON_INICIO_SEG / frame_seg)))
+        frames: list = []
+        hablando, silencio, inicio = False, 0.0, time.monotonic()
+
+        while not self._stop.is_set():
+            try:
+                frame = source.stream.read(vad_mod.MUESTRAS_FRAME)
+            except Exception as e:  # noqa: BLE001
+                raise RuntimeError(f"No pude leer del micrófono: {e}") from e
+            hay_voz = detector.es_voz(frame)
+
+            if not hablando:
+                colchon.append(frame)
+                if hay_voz:
+                    hablando = True
+                    frames.extend(colchon)      # con el colchón no se pierde el inicio de la palabra
+                    frames.append(frame)
+                elif time.monotonic() - inicio > timeout:
+                    raise self.sr.WaitTimeoutError("nadie habló")
+                continue
+
+            frames.append(frame)
+            silencio = 0.0 if hay_voz else silencio + frame_seg
+            if silencio >= pausa_fin:
+                break                           # terminó de hablar
+            if len(frames) * frame_seg >= limite:
+                logger.debug("Corté la frase en el límite de %.0f s.", limite)
+                break
+
+        return self.sr.AudioData(b"".join(frames), vad_mod.FRECUENCIA, 2)
 
     def _notificar_error(self, handler: Optional[CallbackError],
                          error: Exception) -> None:
@@ -289,14 +384,17 @@ class SpeechToText:
         """
         sr = self.sr
         indice_mic = self.cfg.microfono_index
+        # Con VAD el audio tiene que venir a 16 kHz (es lo único que acepta silero); sin VAD se deja
+        # la frecuencia nativa del micrófono, como siempre.
+        extra = {"sample_rate": vad_mod.FRECUENCIA} if self._obtener_vad() is not None else {}
         try:
-            mic = sr.Microphone(device_index=indice_mic)
+            mic = sr.Microphone(device_index=indice_mic, **extra)
             return mic, mic.__enter__()
         except Exception as e:  # noqa: BLE001
             logger.error("No se pudo abrir el micrófono [%s]: %s", indice_mic, e)
         # Intento de respaldo con el micrófono por defecto del sistema.
         try:
-            mic = sr.Microphone(device_index=None)
+            mic = sr.Microphone(device_index=None, **extra)
             source = mic.__enter__()
             logger.info("Micrófono por defecto en uso.")
             return mic, source
@@ -341,9 +439,7 @@ class SpeechToText:
                 continue
             try:
                 # timeout corto: si nadie habla, el bucle vuelve a revisar si lo invocaron.
-                audio = self._reconocedor.listen(
-                    source=source, timeout=_ESPERA_INVOCACION,
-                    phrase_time_limit=_LIMITE_FRASE_WAKE)
+                audio = self._capturar(source, _ESPERA_INVOCACION, _LIMITE_FRASE_WAKE)
             except Exception as e:  # noqa: BLE001
                 if isinstance(e, sr.WaitTimeoutError):  # pragma: no cover
                     continue
@@ -355,13 +451,15 @@ class SpeechToText:
             if _duracion_audio(audio) < _MIN_DURACION_AUDIO:
                 continue
 
-            texto_wake = self._transcribir_wake(audio).lower()
-            logger.debug("Wake escuchó: %r", texto_wake)
+            deteccion = self._detectar_wake(audio)
+            logger.debug("Wake escuchó: %r", deteccion.texto)
 
-            if not texto_wake or not self._contiene_miku(texto_wake):
+            if not deteccion.activo:
                 continue  # no era la palabra; se sigue escuchando
 
-            logger.info("Activación detectada: %r", texto_wake)
+            texto_wake = (deteccion.texto or "").lower()
+            logger.info("Activación detectada: %r", texto_wake or "(sin transcribir)")
+            metricas.nuevo_turno(texto_wake)
 
             # ¿El usuario dijo TODO JUNTO ("Miku, qué hora es")? Si después
             # de la wake word quedó contenido significativo, lo usamos como
@@ -388,6 +486,7 @@ class SpeechToText:
     def _atender_invocacion(self, source) -> None:
         """Saluda y captura un comando directo (equivale a decir "Miku" y esperar)."""
         logger.info("Invocación directa: escucho un comando sin wake word.")
+        metricas.nuevo_turno()
         if self.on_wake:
             try:
                 self.on_wake("invocacion")
@@ -411,8 +510,8 @@ class SpeechToText:
         # si no, el micrófono grabaría la voz de Miku como si fuera el comando.
         self._esperar_silencio()
         try:
-            audio = self._reconocedor.listen(source=source, timeout=6,
-                                             phrase_time_limit=12)
+            with metricas.etapa("escuchar"):
+                audio = self._capturar(source, 6, 12)
         except Exception as e:  # noqa: BLE001
             if isinstance(e, self.sr.WaitTimeoutError):
                 logger.info("No dijiste nada tras el saludo; vuelvo a esperar.")
@@ -421,7 +520,8 @@ class SpeechToText:
             self._notificar_error(None, e)
             return
 
-        comando = self.transcribir_audio(audio)
+        with metricas.etapa("stt"):
+            comando = self.transcribir_audio(audio)
         if not comando:
             logger.warning("Comando vacío tras el wake.")
             self._notificar_error(None, RuntimeError("Comando vacío."))

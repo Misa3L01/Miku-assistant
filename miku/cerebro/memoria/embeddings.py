@@ -15,6 +15,7 @@ primer uso) y todo va envuelto en try/except: nunca debe romper el arranque.
 
 API pública:
     - disponible() -> bool
+    - version_modelo() -> str  (con qué modelo se calculó un vector)
     - precalentar() -> None  (carga el modelo antes de que haga falta)
     - embeber(texto) -> Optional[list[float]]
     - similitud(a, b) -> float  (coseno; 0.0 si algo falla)
@@ -32,6 +33,8 @@ logger = logging.getLogger("miku.embeddings")
 
 # Modelo multilingüe chico de fastembed (soporta español).
 _MODELO = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+#: Versión de la librería con la que se calculó un vector, cacheada (ver ``version_modelo``).
+_version: str = ""
 
 # Instancia del modelo cacheada (se crea en el primer uso).
 _modelo = None
@@ -58,6 +61,28 @@ def _ruta_cache() -> str:
     except Exception:  # noqa: BLE001
         pass
     return str(base)
+
+
+def version_modelo() -> str:
+    """Identifica con qué se calculó un vector: ``"<modelo>@<fastembed mayor.menor>"``.
+
+    Los vectores de dos versiones distintas NO son comparables: fastembed 0.6 cambió el *pooling* de
+    este modelo, así que un recuerdo viejo y una consulta nueva dejaban de parecerse aunque hablaran
+    de lo mismo, y la búsqueda por significado empeoraba en silencio. Guardando esta marca junto al
+    vector, la memoria detecta el cambio y los recalcula sola (ver ``almacen.py``).
+
+    Solo se mira *mayor.menor*: un parche no cambia los vectores y no vale recalcular todo.
+    """
+    global _version
+    if not _version:
+        try:
+            import fastembed  # import tardío (opcional)
+            partes = str(getattr(fastembed, "__version__", "") or "0").split(".")
+            lib = ".".join(partes[:2]) if partes else "0"
+        except Exception:  # noqa: BLE001
+            lib = "0"
+        _version = f"{_MODELO}@{lib}"
+    return _version
 
 
 def _activados() -> bool:

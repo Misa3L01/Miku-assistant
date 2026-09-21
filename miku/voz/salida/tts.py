@@ -38,6 +38,7 @@ import requests
 
 from miku.ajustes import carga as config_mod
 from miku.plataforma import red
+from miku.servicios import metricas
 from miku.voz.salida import traduccion
 from miku.voz.salida.cache_audio import CacheAudio
 from miku.voz.salida.motores import MotorComando, nombre_de_idioma
@@ -358,9 +359,15 @@ class TextoAVoz:
         except Exception:  # noqa: BLE001
             startupinfo = None  # no bloquear si algo no existe (no-Windows)
 
+        comando = [str(ruta_run)]
+        if self._quiere_gpu():
+            # El ENGINE de VOICEVOX acelera la síntesis por GPU con este flag. Solo lo entienden las
+            # versiones GPU/DirectML del motor; la versión CPU lo ignora (y lo avisamos más abajo).
+            comando.append("--use_gpu")
+            logger.info("[VOICEVOX] Arrancando con GPU (--use_gpu).")
         try:
             proc = subprocess.Popen(
-                [str(ruta_run)], cwd=os.path.dirname(str(ruta_run)),
+                comando, cwd=os.path.dirname(str(ruta_run)),
                 shell=False,  # sin shell por seguridad
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -393,6 +400,35 @@ class TextoAVoz:
                        int(_ESPERA_ARRANQUE_VOICEVOX), getattr(proc, "pid", "?"), proc.poll() is None)
         return False
 
+    def _quiere_gpu(self) -> bool:
+        """True si la config pide sintetizar por GPU (``VOICEVOX_GPU``)."""
+        return bool(self.cfg.get("voicevox_gpu", False))
+
+    def _avisar_si_la_gpu_no_sirve(self) -> None:
+        """Comprueba que el motor realmente pueda usar la GPU y, si no, lo dice claro.
+
+        Pedir GPU con el motor de CPU instalado no da error: VOICEVOX sigue sintetizando en CPU y la
+        síntesis sigue igual de lenta, sin que nada lo avise. Acá se consulta qué dispositivos soporta
+        (``/supported_devices``) y se explica qué falta.
+        """
+        if not self._quiere_gpu():
+            return
+        try:
+            resp = red.get(f"{self._url_activa()}/supported_devices", timeout=3)
+            soporta = resp.json() if resp.status_code == 200 else {}
+        except Exception:  # noqa: BLE001
+            logger.debug("No pude consultar los dispositivos de VOICEVOX.", exc_info=True)
+            return
+        if soporta.get("cuda") or soporta.get("dml"):
+            logger.info("[VOICEVOX] Síntesis por GPU disponible (cuda=%s, dml=%s).",
+                        bool(soporta.get("cuda")), bool(soporta.get("dml")))
+            return
+        logger.warning(
+            "[VOICEVOX] VOICEVOX_GPU está activado pero este motor solo soporta CPU: la síntesis va a "
+            "seguir igual de lenta. Descargá el paquete GPU (DirectML para AMD/Intel, CUDA para NVIDIA) "
+            "desde las descargas de VOICEVOX y apuntá VOICEVOX_RUN_EXE a ese run.exe, o poné "
+            "VOICEVOX_GPU = False para no ver este aviso.")
+
     def _es_engine_voicevox(self, ruta_run: str) -> bool:
         """Heurística: ¿la carpeta de `run.exe` es el ENGINE (server), no el editor?
 
@@ -420,6 +456,7 @@ class TextoAVoz:
         """
         ok = self._asegurar_voicevox()
         if ok:
+            self._avisar_si_la_gpu_no_sirve()
             # Feedback directo en consola (además del log). ASCII plano para no
             # romper consolas Windows en cp1252 (evita UnicodeEncodeError).
             print("[Voz] VOICEVOX detectado OK, usando voz VOICEVOX "
@@ -586,8 +623,10 @@ class TextoAVoz:
             return
         logger.debug("Reproduciendo en %d frase(s).", len(frases))
 
-        # Pre-sintetizamos la PRIMERA frase antes de entrar al bucle.
-        actual = (frases[0], self._preparar_audio_frase(frases[0]))
+        # Pre-sintetizamos la PRIMERA frase antes de entrar al bucle. Eso es lo último que separa al
+        # usuario de oír a Miku, así que se mide como etapa final del turno.
+        with metricas.etapa(metricas.ETAPA_VOZ):
+            actual = (frases[0], self._preparar_audio_frase(frases[0]))
 
         for i in range(len(frases)):
             texto_frase, artefacto = actual

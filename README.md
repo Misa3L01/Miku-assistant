@@ -6,9 +6,9 @@ jugar (CS, Fortnite, Genshin Impact), el uso diario y Discord. Lo controlás hab
 (Telegram). Arquitectura modular: un **núcleo** (`miku/cerebro`, `voz`, `ui`, `servicios`) y
 **plugins** enchufables (`miku/plugins/`) que le publican *tools* al cerebro (un LLM en Groq).
 
-- **Voz de entrada:** wake word "Miku" (escucha continua) o la tecla de invocación (F13), transcripción con Whisper (Groq).
+- **Voz de entrada:** wake word "Miku" (escucha continua) o la tecla de invocación (F13). El fin de tu frase lo detecta un **VAD** (silero) y la palabra clave se puede resolver **en tu PC** (sin mandar a la nube todo lo que se habla).
 - **Voz de salida:** VOICEVOX local (traduce ES→JA con Groq) con subtítulos estilo anime; cae a la voz del sistema si VOICEVOX no está.
-- **Cerebro:** Groq con *function calling*, más un *fast-path* local (hora, saludos, calculadora, memoria) que no gasta API.
+- **Cerebro:** Groq con *function calling*, más un *fast-path* local (hora, saludos, calculadora, memoria) que no gasta API. Miku **empieza a hablar con la primera oración** mientras el modelo escribe el resto.
 - **Seguridad:** las acciones peligrosas (apagar la PC, expulsar a alguien de Discord) piden un "sí" explícito.
 - **Degradación elegante:** casi todo lo pesado o de terceros es opcional; si falta algo, esa función avisa y el resto sigue.
 
@@ -144,6 +144,12 @@ sacale el `#`. Las opciones principales:
 | `TTS_MOTOR`, `TTS_IDIOMA`, `TTS_COMANDO`, `SUBTITULOS` | Motor de voz alternativo (voces propias / español) y subtítulos | TTS |
 | `TTS_CACHE`, `TTS_CACHE_MAX` | Caché en `data/tts_cache/` con el audio de las frases ya dichas (las repetidas suenan al instante) | TTS |
 | `STT_PAUSA_FIN` | Segundos de silencio que cierran tu frase (0.6 por defecto; más bajo responde antes pero puede cortarte) | STT |
+| `STT_VAD`, `VAD_PROVEEDOR`, `VAD_MODELO`, `VAD_UMBRAL` | Detección de voz para saber cuándo terminaste de hablar (silero / energía) | STT |
+| `WAKE_PROVEEDOR`, `WAKE_MODELO`, `WAKE_MODELO_LOCAL`, `WAKE_UMBRAL` | Dónde se detecta "Miku": en tu PC o en la nube | STT |
+| `LLM_STREAMING` | Hablar con la primera oración mientras el LLM sigue escribiendo | parser |
+| `CONFIRMACION_SONORA` | Un "mmm" corto apenas te escucha, mientras piensa | app |
+| `VOICEVOX_GPU` | Sintetizar por GPU (necesita el paquete GPU del motor) | TTS |
+| `METRICAS_LATENCIA` | Una línea por orden en el log con lo que tardó cada etapa | cerebro |
 | `LLM_BASE_URL`, `LLM_MODELO`, `LLM_API_KEY`, `LLM_SOPORTA_TOOLS` | LLM local o de otro proveedor (compatible con OpenAI) | parser |
 | `STT_PROVEEDOR`, `STT_MODELO_LOCAL` | Transcripción en la nube (Groq) o local (faster-whisper) | STT |
 | `MICROFONO_INDEX` | Micrófono fijo (`None` = el del sistema) | STT |
@@ -200,11 +206,11 @@ miku-assistant/
     │   ├── calculadora.py        #   Calculadora local (sin LLM ni eval)
     │   └── memoria/              #   almacen.py (SQLite) · embeddings.py (fastembed, opcional)
     ├── voz/
-    │   ├── entrada/escucha.py    #   STT: wake word "Miku" + invocación por tecla, Whisper (Groq)
+    │   ├── entrada/              #   escucha.py (captura y flujo) · vad.py (cuándo terminás de hablar) · wake.py (palabra clave) · transcriptores.py
     │   ├── salida/               #   tts.py (VOICEVOX + fallback pyttsx3) · cache_audio.py (frases ya sintetizadas) · traduccion.py (Groq, compartida)
     │   └── frases/               #   tono.py (variantes de tono) · banco.py (frases con variantes que rotan) · catalogo_proactivo.py
     ├── ui/                       #   qt_hilo.py (UN hilo de Qt) · bandeja.py · subtitulos.py · selector_modo.py · consola.py (modo texto)
-    ├── servicios/                #   instancia.py (una sola Miku) · arranque.py (inicio con Windows, atajo de teclado) · eventos (registro de plugins y contexto compartido) · scheduler · notificaciones · modos · briefing · personalidad · proactivo (motor de avisos) · reglas_proactivas
+    ├── servicios/                #   instancia.py (una sola Miku) · arranque.py (inicio con Windows, atajo de teclado) · metricas.py (latencia por etapa) · eventos (registro de plugins y contexto compartido) · scheduler · notificaciones · modos · briefing · personalidad · proactivo (motor de avisos) · reglas_proactivas
     └── plugins/
         ├── base.py               #   Clase base Plugin (contrato documentado en el módulo)
         ├── registro.py           #   Catálogo de plugins con carga perezosa y aislada
@@ -238,13 +244,28 @@ Cada plugin declara en `peligrosas` qué tools exigen confirmación (`energia`: 
 
 ### Pipeline de voz e hilos
 
-- **Escucha** (hilo `escucha_voz`): captura frases cortas, descarta ruidos <0,4 s, transcribe con Whisper y busca "Miku" como **palabra completa**. Antes de escuchar espera a que Miku termine de hablar.
+- **Escucha** (hilo `escucha_voz`): el **VAD** (`miku/voz/entrada/vad.py`) marca dónde empieza y termina tu frase (silero distingue voz de ruido, así que la pausa puede ser corta sin que el ventilador la dispare); el **detector de palabra clave** (`wake.py`) decide si te dirigiste a Miku, en tu PC o en la nube. Antes de escuchar espera a que Miku termine de hablar.
 - **Habla** (hilo `tts_player`): cola de textos; cada frase se traduce/sintetiza (con *prefetch* de la siguiente) y se subtitula en sincronía. Las frases cortas ya dichas salen de una **caché en disco** (sin traducir ni sintetizar), y el saludo del wake se precalienta al arrancar. `decir()` es seguro desde cualquier hilo.
 - **Red:** las llamadas a Groq (Whisper, LLM, traducción) y a VOICEVOX van por una **sesión HTTP compartida** (`miku/plataforma/red.py`): la conexión TLS se reutiliza en vez de abrirse en cada llamada. Ante un 429/5xx pasajero del LLM se reintenta una vez.
+- **Latencia:** cada orden deja una línea en el log con el reparto (`miku/servicios/metricas.py`): `latencia | escuchar 1.2 s · stt 812 ms · llm 534 ms · tts 208 ms | hasta la voz 2.8 s`. Se apaga con `METRICAS_LATENCIA = False`.
 - **Qt** (hilo `miku_qt`): un único event loop para bandeja, subtítulos y ventanita.
 - **Otros hilos daemon:** Discord (su propio `asyncio`), Telegram, Game Booster, asistente proactivo, timers del scheduler. Cada plugin los cierra en `cerrar()`; `Asistente.cerrar()` es idempotente.
 
 ---
+
+### Qué hace Miku para responder rápido
+
+| Truco | Qué evita |
+|---|---|
+| **Streaming del LLM** (`LLM_STREAMING`) | Esperar la respuesta entera: habla con la primera oración terminada mientras el modelo sigue. Medido contra Groq: la primera palabra pasó de 1,05 s a 0,34 s. Si el modelo pide una *tool*, no habla nada por adelantado. |
+| **Caché de audio** (`TTS_CACHE`) | Traducir y sintetizar de nuevo una frase ya dicha: de 1-3,7 s a ~8 ms. |
+| **Confirmación sonora** (`CONFIRMACION_SONORA`) | El silencio mientras piensa: suelta un "mmm" corto (de la caché) apenas te escuchó. Solo en órdenes habladas, y solo cuando va a consultar al LLM. |
+| **Sesión HTTP compartida** | El *handshake* TLS en cada llamada: ~79 ms menos por llamada a Groq. |
+| **Palabra clave local** (`WAKE_PROVEEDOR`) | Mandar a la nube **cada frase** que se oye en la habitación, solo para ver si dijiste "Miku". |
+| **VAD** (`STT_VAD`) | Esperar una pausa fija larga: silero corta apenas dejás de hablar, sin confundirse con el ruido. |
+| **VOICEVOX por GPU** (`VOICEVOX_GPU`) | Sintetizar en CPU (0,5-1,2 s por frase nueva). |
+
+Para ver el reparto real de tu equipo, mirá las líneas `latencia |` en `data/miku.log`.
 
 ## Plugins disponibles
 
@@ -290,6 +311,8 @@ Cada pieza pesada de Miku se puede cambiar desde `config_local.py`, sin tocar c�
 |---|---|---|
 | **Cerebro (LLM)** | Groq | `LLM_BASE_URL = "http://localhost:11434/v1"` (Ollama) o `http://localhost:1234/v1` (LM Studio) + `LLM_MODELO = "qwen2.5:7b"`. Sin clave. Si el modelo no entiende *function calling*: `LLM_SOPORTA_TOOLS = False` (conversa pero no ejecuta acciones). Sirve cualquier servidor con el formato de OpenAI. |
 | **Oído (STT)** | Whisper en Groq | `STT_PROVEEDOR = "local"` → faster-whisper en tu PC (`pip install faster-whisper`, modelo `STT_MODELO_LOCAL = "small"`). Sin nube; el primer uso descarga el modelo. |
+| **Palabra clave** | Whisper en Groq (`auto` usa lo mejor disponible) | `WAKE_PROVEEDOR = "local"` → faster-whisper `tiny` en tu PC. `"openwakeword"` → modelo chico que detecta "Miku" **sin transcribir** (`pip install openwakeword` + `WAKE_MODELO` con un `.onnx` entrenado para "Miku": openWakeWord no trae uno). Con openWakeWord no hay texto, así que "Miku, qué hora es" pasa a ser dos pasos. |
+| **Fin de frase** | silero-vad si está el modelo, si no energía | `python -m miku.voz.entrada.vad descargar` baja el modelo (2 MB, corre sobre onnxruntime, **no** necesita torch). `VAD_PROVEEDOR = "energia"` vuelve al detector simple. |
 | **Voz (TTS)** | VOICEVOX (japonés; Miku traduce lo que dice) | `TTS_MOTOR = "sistema"` (voz de Windows en español) o `"comando"`: tu propio motor. |
 
 **Voz propia / otro idioma.** Con `TTS_MOTOR = "comando"` Miku ejecuta *tu* comando, que tiene que escribir un WAV en `{salida}` (el texto entra por stdin, o usá `{texto}`). Sirve para Piper, XTTS, GPT-SoVITS, RVC… Ejemplo con Piper en español: `TTS_COMANDO = r"piper --model C:\voces\es_AR.onnx --output_file {salida}"`, `TTS_IDIOMA = "es"`. Si `TTS_IDIOMA` no es `es` (por ejemplo `pt`), Miku traduce antes de hablar. Se ejecuta **sin shell**, con tiempo máximo, y si falla habla con la voz de Windows.
@@ -439,7 +462,7 @@ Subí el nivel de log con `LOG_LEVEL = "DEBUG"` en `config_local.py`.
 **Límites actuales (por diseño o pendientes):**
 
 - Miku siempre habla, también en modo texto (necesita VOICEVOX o la voz del sistema). Sin PyQt5 no hay bandeja ni ventana: el modo texto cae a una consola.
-- La wake word usa Whisper por API: cada frase de la escucha continua es una llamada (se filtran ruidos cortos, pero consume cuota).
+- La wake word usa Whisper por API **salvo que la pongas en local** (`WAKE_PROVEEDOR`): por defecto, cada frase de la escucha continua es una llamada (se filtran ruidos cortos, pero consume cuota).
 - La síntesis de VOICEVOX en CPU tarda ~0,5-1 s por frase nueva (las repetidas salen de la caché de audio).
 - Telegram/Discord/Todoist/Tidal/Brave dependen de servicios externos y no tienen pruebas automáticas.
 
@@ -450,5 +473,6 @@ Subí el nivel de log con `LOG_LEVEL = "DEBUG"` en `config_local.py`.
 ## Documentación adicional
 
 - [docs/empaquetado.md](docs/empaquetado.md): construir el `.exe` con PyInstaller.
+- [docs/roadmap.md](docs/roadmap.md): ideas evaluadas y todavía no implementadas, con el porqué.
 - [docs/interpolacion/LEEME.md](docs/interpolacion/LEEME.md): el `.bat` de interpolación de video.
 - `python -m miku.ajustes estado`: qué tenés configurado y qué falta (las opciones están documentadas en `miku/ajustes/esquema.py`).

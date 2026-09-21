@@ -35,6 +35,12 @@ websocket-client>=1.6.0           # Brave, TIDAL, comedor y WhatsApp por el prot
 # python-telegram-bot>=21.0       # control remoto por Telegram
 # tidalapi>=0.8.11                # "poné <canción>" en TIDAL (busca en tu cuenta)
 # fastembed>=0.3.0                # memoria por significado (embeddings ONNX, sin torch)
-# faster-whisper>=1.0.0           # STT_PROVEEDOR = "local": transcribir sin nube
+# faster-whisper>=1.0.0           # STT_PROVEEDOR/WAKE_PROVEEDOR = "local": transcribir sin nube
+# openwakeword>=0.6.0             # WAKE_PROVEEDOR = "openwakeword" (necesita un modelo .onnx de "Miku")
+#
+# Fin de frase con silero-vad: NO hace falta instalar nada (el modelo se baja con
+#   python -m miku.voz.entrada.vad descargar
+# y corre sobre onnxruntime). El paquete oficial arrastra torch, por eso no se usa:
+# silero-vad>=5.1                 # solo si preferís el paquete oficial (instala torch, ~2 GB)
 # pytesseract>=0.3.10             # OCR alternativo (necesita el binario de Tesseract con idioma "spa")
 # win10toast>=0.9                 # notificaciones nativas (sin esto se usa PowerShell)

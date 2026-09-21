@@ -38,7 +38,7 @@ except Exception:  # noqa: BLE001  (opcional: sin él la memoria busca por palab
 from miku.ajustes import carga as config_mod
 from miku.servicios.eventos import EventBus
 from miku.cerebro.parser import BrainGroq, CommandParser
-from miku.servicios import recordatorios, tecla as tecla_mod
+from miku.servicios import metricas, recordatorios, tecla as tecla_mod
 from miku.voz.frases import catalogo_respuestas
 from miku.servicios.scheduler import Scheduler
 from miku.voz.frases import tono
@@ -206,15 +206,19 @@ class Asistente:
             "scheduler": self.scheduler,
         }
 
-    def responder(self, texto_usuario: str) -> str:
+    def responder(self, texto_usuario: str, origen: str = "texto") -> str:
         """Procesa el texto del usuario, emite la respuesta y la devuelve.
 
         Si hay voz, Miku la dice (con subtítulos); si no, se imprime. El texto de la respuesta
         se devuelve para que la ventana de depuración lo muestre.
+
+        Args:
+            origen: ``"voz"`` si vino del micrófono (habilita la confirmación sonora), si no ``"texto"``.
         """
         if self.parser is None:
             return ""
         contexto = self._contexto_base()
+        contexto["origen"] = origen
         try:
             respuesta = self.parser.procesar(texto_usuario, contexto)
         except Exception:  # noqa: BLE001
@@ -235,13 +239,16 @@ class Asistente:
         except Exception:  # noqa: BLE001
             logger.debug("No pude aplicar el adorno de personalidad.")
 
-        # Emisión.
+        # Emisión. Si el LLM se fue hablando en vivo (streaming), el parser deja en ``por_decir``
+        # solo lo que falta: hablar ``respuesta`` entera repetiría lo que el usuario ya oyó.
+        a_decir = contexto["por_decir"] if "por_decir" in contexto else respuesta
         if self.voice is not None:
-            try:
-                self.voice.decir(respuesta)
-            except Exception:  # noqa: BLE001
-                logger.exception("No se pudo hablar la respuesta.")
-                print(f"[Miku] {respuesta}")
+            if a_decir:
+                try:
+                    self.voice.decir(a_decir)
+                except Exception:  # noqa: BLE001
+                    logger.exception("No se pudo hablar la respuesta.")
+                    print(f"[Miku] {a_decir}")
         else:
             print(f"\nMiku: {respuesta}")
         return respuesta
@@ -272,7 +279,8 @@ class Asistente:
     def _al_comando_voz(self, comando: str) -> None:
         """Lo que se oyó tras "Miku" (o tras la tecla de invocación): se ejecuta y se muestra si hay ventana."""
         print(f"\nVos: {comando}")
-        respuesta = self.responder(comando)
+        respuesta = self.responder(comando, origen="voz")
+        metricas.fin_turno()
         if self.consola is not None:
             self.consola.agregar("Vos (voz)", comando)
             self.consola.agregar("Miku", respuesta)

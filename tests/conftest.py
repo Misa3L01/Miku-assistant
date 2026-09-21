@@ -64,12 +64,24 @@ class MemoriaFalsa:
 
 
 class CerebroFalso:
-    """Cerebro cuyo resultado se fija desde el test (``resp``)."""
+    """Cerebro cuyo resultado se fija desde el test (``resp``).
+
+    Con ``partir_en`` simula el *streaming*: habla esas oraciones por ``al_fragmento`` antes de
+    devolver el resultado, igual que el LLM real cuando responde de a poco.
+    """
 
     def __init__(self) -> None:
         self.resp: Dict[str, Any] = {"respuesta": "", "tools_call": []}
+        self.partir_en: List[str] = []
+        self.recibio_emisor = False
 
-    def consultar(self, texto: str, contexto: Dict[str, Any], tools: List[dict]) -> Dict[str, Any]:
+    def consultar(self, texto: str, contexto: Dict[str, Any], tools: List[dict],
+                  al_fragmento: Any = None) -> Dict[str, Any]:
+        self.recibio_emisor = al_fragmento is not None
+        if al_fragmento is not None and self.partir_en:
+            for frase in self.partir_en:
+                al_fragmento(frase)
+            return {**self.resp, "dicho": " ".join(self.partir_en)}
         return self.resp
 
 

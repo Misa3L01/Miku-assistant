@@ -22,12 +22,13 @@ import threading
 import time
 from collections import deque
 from datetime import date
-from typing import Any, Deque, Dict, List, Optional, Tuple
+from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
 from miku.ajustes import carga as config_mod
 from miku.cerebro import enrutador
 from miku.plataforma import red
 from miku.plataforma.texto import sin_acentos
+from miku.servicios import metricas
 
 logger = logging.getLogger("miku.parser")
 
@@ -55,6 +56,26 @@ def obtener_cache(clave: str) -> Optional[str]:
     """Devuelve la respuesta cacheada si existe."""
     with _CACHE_LOCK:
         return _CACHE.get(clave)
+
+
+#: Fin de oración seguido de un espacio: el espacio garantiza que la oración terminó de verdad
+#: (así "3.5" o "etc." a mitad de palabra no cortan la frase).
+_FIN_DE_FRASE = re.compile(r"(?<=[.!?;…])\s+")
+
+
+def frases_completas(buffer: str) -> Tuple[List[str], str]:
+    """Parte lo que llegó del LLM en oraciones TERMINADAS y lo que queda a medias.
+
+    Es el corazón del *streaming*: mientras el modelo sigue escribiendo, todo lo que ya forma una
+    oración se puede ir hablando, y el resto espera al próximo trozo.
+
+    Returns:
+        ``(frases terminadas, resto sin terminar)``.
+    """
+    partes = _FIN_DE_FRASE.split(buffer)
+    if len(partes) == 1:
+        return [], buffer
+    return [p.strip() for p in partes[:-1] if p.strip()], partes[-1]
 
 
 def _normalizar_frase(texto: str) -> str:
@@ -107,10 +128,40 @@ class BrainGroq:
     def __init__(self, cfg: "config_mod.Config", system_prompt: str = "") -> None:
         self.cfg = cfg
         self.system_prompt = system_prompt or self._prompt_default()
+        #: Momento en que empezó la consulta en curso (para medir cuánto tardó la primera oración).
+        self._inicio_consulta = 0.0
 
     def endpoint(self) -> Dict[str, Any]:
         """Dónde y cómo hablar con el LLM según la config (ver ``endpoint_llm``)."""
         return endpoint_llm(self.cfg)
+
+    def _consultar_en_vivo(self, destino: Dict[str, Any], headers: Dict[str, str],
+                           payload: Dict[str, Any],
+                           al_fragmento: Callable[[str], None]) -> Optional[Dict[str, Any]]:
+        """Pide la respuesta en *streaming* y la va hablando. None = no se pudo (hay que reintentar entero).
+
+        Solo devuelve None si **todavía no se habló nada**: una vez que Miku empezó a hablar, un corte
+        a mitad devuelve lo que haya (repetir la consulta la haría hablar dos veces).
+        """
+        hablado: List[str] = []
+        try:
+            resp = red.post(destino["url"], headers=headers, json={**payload, "stream": True},
+                            timeout=60 if not destino["requiere_key"] else 30, stream=True)
+            if getattr(resp, "status_code", 200) != 200:
+                logger.info("El LLM rechazó el streaming (HTTP %s).", resp.status_code)
+                return None                   # el camino normal se encarga (y sabe reintentar)
+            with resp:
+                resultado = self._leer_stream(resp, al_fragmento, hablado)
+            if not resultado["respuesta"] and not resultado["tools_call"]:
+                return None                   # no llegó nada útil: mejor reintentar entero
+            return resultado
+        except Exception:  # noqa: BLE001
+            logger.exception("Falló el streaming del LLM.")
+            if hablado:
+                # Ya se habló parte: se devuelve eso en vez de reintentar (el usuario lo oiría dos veces).
+                dicho = " ".join(hablado)
+                return {"respuesta": dicho, "tools_call": [], "dicho": dicho}
+            return None
 
     def _prompt_default(self) -> str:
         """Prompt de sistema base de Miku."""
@@ -185,10 +236,86 @@ class BrainGroq:
                 resp = red.post(destino["url"], headers=headers, json=payload, timeout=timeout)
         return resp
 
-    def consultar(self, texto: str, contexto: Dict[str, Any],
-                  tools: List[dict]) -> Dict[str, Any]:
+    def _streaming_activo(self, destino: Dict[str, Any], al_fragmento: Optional[Callable[[str], None]]) -> bool:
+        """True si esta consulta se puede responder de a oraciones mientras el modelo escribe."""
+        return bool(al_fragmento) and bool(self.cfg.get("llm_streaming", True))
+
+    def _leer_stream(self, resp: Any, al_fragmento: Callable[[str], None],
+                     dicho: List[str]) -> Dict[str, Any]:
+        """Lee la respuesta del LLM a medida que llega y va entregando las oraciones terminadas.
+
+        El formato es SSE: líneas ``data: {json}`` con un *delta* cada una, hasta ``data: [DONE]``.
+        Se acumulan el texto y las tool_calls (que llegan partidas: el nombre en un trozo y los
+        argumentos de a pedazos).
+
+        Args:
+            dicho: lista donde se va anotando lo que YA se habló. La pone quien llama para poder
+                rescatarlo si la conexión se corta a mitad (repetir la consulta haría que el usuario
+                oiga dos veces lo mismo).
+
+        Returns:
+            ``respuesta`` (texto completo), ``tools_call`` y ``dicho`` (lo que ya se habló).
+        """
+        buffer, completo = "", []
+        parciales: Dict[int, Dict[str, str]] = {}
+        primera = True
+
+        def entregar(frase: str) -> None:
+            nonlocal primera
+            if not frase:
+                return
+            if primera:
+                metricas.anotar("llm.1ra_frase", time.perf_counter() - self._inicio_consulta)
+                primera = False
+            dicho.append(frase)
+            al_fragmento(frase)
+
+        for linea in resp.iter_lines():
+            if not linea or not linea.startswith(b"data:"):
+                continue
+            dato = linea[5:].strip()
+            if dato == b"[DONE]":
+                break
+            try:
+                delta = ((json.loads(dato).get("choices") or [{}])[0].get("delta") or {})
+            except (ValueError, AttributeError, IndexError):
+                continue                      # un trozo ilegible no corta la respuesta entera
+            trozo = delta.get("content") or ""
+            if trozo:
+                completo.append(trozo)
+                buffer += trozo
+                listas, buffer = frases_completas(buffer)
+                for frase in listas:
+                    entregar(frase)
+            for llamada in delta.get("tool_calls") or []:
+                acumulado = parciales.setdefault(int(llamada.get("index", 0)), {"nombre": "", "args": ""})
+                funcion = llamada.get("function") or {}
+                if funcion.get("name"):
+                    acumulado["nombre"] = funcion["name"]
+                if funcion.get("arguments"):
+                    acumulado["args"] += funcion["arguments"]
+
+        entregar(buffer.strip())              # la última oración puede venir sin punto final
+        llamadas = []
+        for indice in sorted(parciales):
+            crudo = parciales[indice]["args"]
+            try:
+                args = json.loads(crudo) if crudo.strip() else {}
+            except ValueError:
+                logger.warning("Argumentos ilegibles en la tool '%s': %r", parciales[indice]["nombre"], crudo[:80])
+                args = {}
+            llamadas.append({"nombre": parciales[indice]["nombre"], "args": args})
+        return {"respuesta": "".join(completo).strip(), "tools_call": llamadas, "dicho": " ".join(dicho)}
+
+    def consultar(self, texto: str, contexto: Dict[str, Any], tools: List[dict],
+                  al_fragmento: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
         """Hace una consulta al LLM y devuelve un dict con 'respuesta'
         (str) y 'tools_call' (lista de dicts) o 'error'.
+
+        Args:
+            al_fragmento: si se pasa, Miku **empieza a hablar** con la primera oración mientras el
+                modelo sigue escribiendo el resto (``LLM_STREAMING``). El dict devuelto trae además
+                ``dicho`` con lo que ya se habló, para que quien llama no lo repita.
         """
         # Guard: si NO hay API key configurada, informar con claridad y
         # devolver un mensaje amigable en vez de fallar con un HTTP 401.
@@ -252,6 +379,15 @@ class BrainGroq:
         headers = {"Content-Type": "application/json"}
         if destino["key"]:
             headers["Authorization"] = f"Bearer {destino['key']}"
+
+        self._inicio_consulta = time.perf_counter()
+        if self._streaming_activo(destino, al_fragmento):
+            resultado = self._consultar_en_vivo(destino, headers, payload, al_fragmento)
+            if resultado is not None:
+                if resultado.get("respuesta") and not resultado.get("tools_call") and usa_cache:
+                    cache_respuesta(cache_key, resultado["respuesta"])
+                return resultado
+            logger.info("El streaming no se pudo usar; sigo con la respuesta completa.")
 
         try:
             resp = self._enviar(destino, headers, payload)
@@ -458,13 +594,18 @@ class CommandParser:
                 ofrecidas = enrutador.seleccionar(texto, tools, int(self.cfg.get("enrutar_max_tools", 14)))
             except Exception:  # noqa: BLE001
                 logger.debug("Enrutador falló; mando todas las tools.", exc_info=True)
-        resultado = self.brain.consultar(texto, contexto_brain, ofrecidas)
+        self._confirmar_que_escuche(contexto)
+        with metricas.etapa("llm"):
+            resultado = self.brain.consultar(texto, contexto_brain, ofrecidas,
+                                             al_fragmento=self._emisor_en_vivo(contexto))
 
         if resultado.get("error"):
             return resultado["error"]
 
         respuesta_base = resultado.get("respuesta") or ""
         tool_calls = resultado.get("tools_call", []) or []
+        # Lo que el streaming ya habló: lo que se arme de acá en más es lo único que falta decir.
+        dicho = resultado.get("dicho") and respuesta_base
 
         # 4) ENCADENADO (F7): si el LLM devuelve VARIAS tool_calls en un mismo
         #    turno, se procesan TODAS en orden (no solo la primera).
@@ -505,7 +646,7 @@ class CommandParser:
             # ¿La tool pide DESAMBIGUAR (lista de opciones para elegir)?
             # En ese caso guardamos el estado pendiente y mostramos la pregunta.
             if self._es_resultado_desambiguacion(extra):
-                return self._guardar_desambiguacion(extra)
+                return self._anotar_pendiente(contexto, dicho, self._guardar_desambiguacion(extra))
 
             if isinstance(extra, str) and extra.strip():
                 extras.append(extra)
@@ -517,10 +658,57 @@ class CommandParser:
         # Si quedó una acción peligrosa esperando confirmación, se agrega su
         # pregunta al final (y el estado ya quedó guardado en el parser).
         if pregunta_peligrosa:
-            return (final + " " + pregunta_peligrosa).strip() \
-                if final else pregunta_peligrosa
+            final = (final + " " + pregunta_peligrosa).strip() if final else pregunta_peligrosa
+        return self._anotar_pendiente(contexto, dicho, final or "¡Listo!")
 
-        return final or "¡Listo!"
+    # ---------------- Hablar mientras el LLM escribe ----------------
+    def _emisor_en_vivo(self, contexto: Dict[str, Any]) -> Optional[Callable[[str], None]]:
+        """Función que habla cada oración apenas el LLM la termina (o None si no corresponde).
+
+        Con esto Miku arranca a hablar con la primera oración en vez de esperar la respuesta entera:
+        en respuestas largas es la diferencia entre oír algo enseguida o varios segundos de silencio.
+        """
+        voz = contexto.get("voice")
+        if voz is None or not self.cfg.get("llm_streaming", True):
+            return None
+
+        def decir_frase(frase: str) -> None:
+            try:
+                voz.decir(frase)
+            except Exception:  # noqa: BLE001
+                logger.exception("No pude hablar una oración del streaming.")
+
+        return decir_frase
+
+    @staticmethod
+    def _anotar_pendiente(contexto: Dict[str, Any], dicho: str, final: str) -> str:
+        """Deja en el contexto lo que FALTA hablar, si el streaming ya dijo parte de la respuesta.
+
+        ``miku/app.py`` habla eso en vez de la respuesta entera: si no, el usuario oiría dos veces lo
+        que el streaming ya dijo. Sin streaming no se toca el contexto y todo sigue como antes.
+        """
+        if dicho:
+            resto = final[len(dicho):] if final.startswith(dicho) else final
+            contexto["por_decir"] = resto.strip()
+        return final
+
+    def _confirmar_que_escuche(self, contexto: Dict[str, Any]) -> None:
+        """Suelta un "mmm" corto antes de pensar, para que se note que Miku escuchó.
+
+        Solo en órdenes habladas: en el modo texto se ve lo que escribiste y no hace falta. La frase
+        es corta y sale de la caché de audio (suena al instante), así que no demora la respuesta.
+        """
+        voz = contexto.get("voice")
+        if (voz is None or contexto.get("origen") != "voz"
+                or not self.cfg.get("confirmacion_sonora", True)):
+            return
+        try:
+            from miku.voz.frases import catalogo_respuestas
+            from miku.voz.frases.banco import frases
+            catalogo_respuestas.registrar()
+            voz.decir(frases.elegir("asistente.pensando"))
+        except Exception:  # noqa: BLE001
+            logger.debug("No pude dar la confirmación sonora.", exc_info=True)
 
     # ---------------- Manejo de confirmación ----------------
     def _tools_peligrosas(self) -> set:

@@ -124,16 +124,19 @@ class Memoria:
                 )
                 """
             )
-            # Migración incremental: agregamos la columna `embedding` (JSON del
-            # vector) si todavía no existe. Es tolerante: si ya está, no hace nada.
+            # Migración incremental: `embedding` (JSON del vector) y `embedding_modelo` (con qué
+            # modelo se calculó, para recalcularlo si cambia). Es tolerante: si ya están, no hace nada.
             try:
                 columnas = [f[1] for f in self._conn.execute(
                     "PRAGMA table_info(recuerdos)").fetchall()]
                 if "embedding" not in columnas:
                     self._conn.execute(
                         "ALTER TABLE recuerdos ADD COLUMN embedding TEXT")
+                if "embedding_modelo" not in columnas:
+                    self._conn.execute(
+                        "ALTER TABLE recuerdos ADD COLUMN embedding_modelo TEXT")
             except Exception as e:  # noqa: BLE001
-                logger.debug("No pude verificar/crear la columna embedding: %s", e)
+                logger.debug("No pude verificar/crear las columnas de embeddings: %s", e)
             self._conn.commit()
             logger.info("Memoria SQLite lista en %s (%d recuerdo(s)).",
                         self.ruta_db, self.cantidad())
@@ -153,11 +156,13 @@ class Memoria:
 
         # El embedding puede tardar (carga del modelo): se calcula FUERA del lock.
         emb_json: Optional[str] = None
+        emb_modelo: Optional[str] = None
         modulo_emb = _emb()
         if modulo_emb is not None:
             vector = modulo_emb.embeber(texto)
             if vector is not None:
                 emb_json = json.dumps(vector)
+                emb_modelo = modulo_emb.version_modelo()
 
         with self._lock:
             if self._conn is None:
@@ -172,9 +177,9 @@ class Memoria:
                     logger.debug("Recuerdo duplicado ignorado: %r", texto)
                     return texto
                 self._conn.execute(
-                    "INSERT INTO recuerdos (texto, categoria, embedding) "
-                    "VALUES (?, ?, ?)",
-                    (texto, categoria, emb_json))
+                    "INSERT INTO recuerdos (texto, categoria, embedding, embedding_modelo) "
+                    "VALUES (?, ?, ?, ?)",
+                    (texto, categoria, emb_json, emb_modelo))
                 self._conn.commit()
                 logger.info("Recuerdo guardado [%s]: %r", categoria, texto[:60])
                 return texto
@@ -230,39 +235,55 @@ class Memoria:
 
     def _buscar_like(self, consulta: str, cantidad: int,
                      solo_sin_embedding: bool) -> List[str]:
-        """Búsqueda por palabras (LIKE, OR) sobre los recuerdos. Llamar con el lock."""
+        """Búsqueda por palabras (LIKE, OR) sobre los recuerdos. Llamar con el lock.
+
+        Con ``solo_sin_embedding`` se limita a los recuerdos SIN vector vigente (los que todavía no
+        se indexaron, o los que quedaron con un modelo viejo): a esos la búsqueda por significado no
+        los encuentra, así que se los busca por palabras hasta que el backfill los ponga al día.
+        """
         palabras = _tokenizar(consulta)
         if not palabras:
             return []
         condiciones = " OR ".join("texto LIKE ? ESCAPE '\\'" for _ in palabras)
         params: list = [f"%{_escapar_like(p)}%" for p in palabras]
-        filtro = "AND embedding IS NULL " if solo_sin_embedding else ""
+        filtro = ""
+        if solo_sin_embedding:
+            filtro = "AND (embedding IS NULL OR embedding_modelo IS NOT ?) "
+            params.append(self._version_vigente())
         params.append(int(cantidad))
         cur = self._conn.execute(
             f"SELECT texto FROM recuerdos WHERE ({condiciones}) {filtro}"
             f"ORDER BY id DESC LIMIT ?", params)
         return [f[0] for f in cur.fetchall()]
 
-    def _indexar_pendientes(self, modulo_emb) -> None:
-        """Calcula el vector de recuerdos que no lo tienen (backfill por lotes).
+    def _version_vigente(self) -> Optional[str]:
+        """Con qué modelo se calculan hoy los vectores (None si no hay motor)."""
+        modulo_emb = _emb()
+        return modulo_emb.version_modelo() if modulo_emb is not None else None
 
-        Llamar con el lock. Así los recuerdos guardados antes de instalar
-        fastembed (o cuando el motor falló) terminan siendo encontrables.
+    def _indexar_pendientes(self, modulo_emb) -> None:
+        """Calcula el vector de los recuerdos que no lo tienen VIGENTE (backfill por lotes).
+
+        Llamar con el lock. Cubre dos casos: los recuerdos guardados antes de instalar fastembed (o
+        cuando el motor falló), y los que tienen un vector de un modelo anterior, que ya no es
+        comparable con las consultas de hoy. Se hace de a lotes para no colgar una búsqueda.
         """
+        version = modulo_emb.version_modelo()
         filas = self._conn.execute(
-            "SELECT id, texto FROM recuerdos WHERE embedding IS NULL "
-            "ORDER BY id DESC LIMIT ?", (_LOTE_BACKFILL,)).fetchall()
+            "SELECT id, texto FROM recuerdos WHERE embedding IS NULL OR embedding_modelo IS NOT ? "
+            "ORDER BY id DESC LIMIT ?", (version, _LOTE_BACKFILL)).fetchall()
         hechos = 0
         for rec_id, texto in filas:
             vector = modulo_emb.embeber(texto)
             if vector is None:
                 break  # el motor no responde: reintentamos en otra búsqueda
-            self._conn.execute("UPDATE recuerdos SET embedding = ? WHERE id = ?",
-                               (json.dumps(vector), rec_id))
+            self._conn.execute(
+                "UPDATE recuerdos SET embedding = ?, embedding_modelo = ? WHERE id = ?",
+                (json.dumps(vector), version, rec_id))
             hechos += 1
         if hechos:
             self._conn.commit()
-            logger.info("Memoria: indexé %d recuerdo(s) pendiente(s).", hechos)
+            logger.info("Memoria: indexé %d recuerdo(s) con %s.", hechos, version)
 
     def _buscar_semantico(self, consulta: str,
                           cantidad: int) -> Optional[List[str]]:
@@ -280,9 +301,11 @@ class Memoria:
 
         try:
             self._indexar_pendientes(modulo_emb)
+            # Solo los vectores del modelo VIGENTE: comparar contra uno viejo da parecidos falsos.
             filas = self._conn.execute(
                 "SELECT texto, embedding FROM recuerdos "
-                "WHERE embedding IS NOT NULL").fetchall()
+                "WHERE embedding IS NOT NULL AND embedding_modelo IS ?",
+                (modulo_emb.version_modelo(),)).fetchall()
         except Exception as e:  # noqa: BLE001
             logger.debug("No pude leer embeddings: %s", e)
             return None

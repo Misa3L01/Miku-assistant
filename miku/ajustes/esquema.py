@@ -170,6 +170,10 @@ _OPCIONES: List[Opcion] = [
        "Ruta a run.exe de VOICEVOX si no está en extern/VOICEVOX/vv-engine/. Miku lo "
        "arranca sola (oculto) si no está corriendo.", "ruta",
        r'r"D:\Programas\VOICEVOX\vv-engine\run.exe"', "voz"),
+    _o("voicevox_gpu", False, "voz",
+       "Sintetizar la voz por GPU. Necesita el paquete GPU del motor VOICEVOX (DirectML para AMD/Intel, "
+       "CUDA para NVIDIA): con el motor de CPU no cambia nada y Miku lo avisa en el log. Acelera mucho "
+       "las frases nuevas (las repetidas ya salen de la caché).", "booleano", usado_por="voz"),
     _o("microfono_index", None, "voz",
        "Número del micrófono a usar. None = el predeterminado de Windows. La lista de "
        "micrófonos aparece en la consola al iniciar el modo voz.", "entero", "MICROFONO_INDEX = 2",
@@ -209,6 +213,44 @@ _OPCIONES: List[Opcion] = [
        "Comando de tu motor de voz (Piper, XTTS, GPT-SoVITS…). Debe escribir un WAV en {salida}; el "
        "texto entra por stdin (o usá {texto}).", "texto",
        r'TTS_COMANDO = r"piper --model C:\voces\es.onnx --output_file {salida}"', "voz"),
+    _o("wake_proveedor", "auto", "voz",
+       "Quién detecta que dijiste 'Miku': 'auto' (el mejor disponible), 'openwakeword' (en tu PC, sin "
+       "transcribir; necesita WAKE_MODELO), 'local' (faster-whisper en tu PC) o 'nube' (Whisper en Groq, "
+       "como siempre). Los locales no mandan a internet lo que se habla en la habitación.", "texto",
+       usado_por="voz", permitidos=("auto", "openwakeword", "local", "nube")),
+    _o("wake_modelo", "", "voz",
+       "Ruta al modelo .onnx de openWakeWord entrenado para 'Miku'. openWakeWord no trae uno: se entrena "
+       "con su cuaderno oficial. Sin esto, 'auto' usa el siguiente motor disponible.", "ruta",
+       r'WAKE_MODELO = r"R:\modelos\miku.onnx"', "voz"),
+    _o("wake_modelo_local", "tiny", "voz",
+       "Tamaño de faster-whisper para la palabra clave (tiny, base, small...). Corre con cada frase que "
+       "se oye, así que conviene el más chico.", "texto", usado_por="voz"),
+    _o("wake_umbral", 0.5, "voz",
+       "Cuán seguro tiene que estar openWakeWord (0 a 1) para dar por dicha la palabra clave. Más alto = "
+       "menos activaciones por error.", "decimal", usado_por="voz"),
+    _o("stt_vad", True, "voz",
+       "Detectar por voz cuándo terminás de hablar, en vez de esperar una pausa fija. Con esto la pausa "
+       "puede ser corta sin que el ruido de fondo te corte la frase.", "booleano", usado_por="voz"),
+    _o("vad_proveedor", "auto", "voz",
+       "Qué detector de voz usar: 'auto' (silero si está el modelo, si no energía), 'silero' (red chica "
+       "por ONNX: bajala con 'python -m miku.voz.entrada.vad descargar') o 'energia' (sin dependencias).",
+       "texto", usado_por="voz", permitidos=("auto", "silero", "energia")),
+    _o("vad_modelo", "", "voz",
+       "Ruta a tu propio silero_vad.onnx. Vacío = el que bajó Miku a data/vad/ o el del paquete "
+       "silero-vad si lo instalaste.", "ruta", usado_por="voz"),
+    _o("vad_umbral", 0.5, "voz",
+       "Desde qué probabilidad (0 a 1) silero considera que hay voz. Más alto = más estricto con el ruido.",
+       "decimal", usado_por="voz"),
+    _o("llm_streaming", True, "voz",
+       "Miku empieza a hablar con la primera oración mientras el modelo sigue escribiendo el resto. En "
+       "respuestas largas es la diferencia entre oír algo enseguida o esperar en silencio.", "booleano",
+       usado_por="cerebro"),
+    _o("confirmacion_sonora", True, "voz",
+       "Suelta un 'mmm' corto apenas te escuchó, mientras piensa la respuesta. Solo en órdenes habladas.",
+       "booleano", usado_por="voz"),
+    _o("metricas_latencia", True, "avisos",
+       "Deja en el log una línea por orden con cuánto tardó cada etapa (escuchar, transcribir, pensar, "
+       "hablar). Sirve para saber qué optimizar.", "booleano", usado_por="cerebro"),
     _o("stt_pausa_fin", 0.6, "voz",
        "Segundos de silencio con los que Miku da por terminada tu frase (0.3 a 1.5). Más bajo = responde "
        "antes pero puede cortarte si hacés pausas al hablar; el estándar de la librería es 0.8.",

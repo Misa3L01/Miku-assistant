@@ -299,6 +299,13 @@ CATALOGO: Dict[str, List[str]] = {
         "Busqué {consulta} en una pestaña nueva.",
     ],
 
+    "asistente.pensando": [
+        "Mmm…",
+        "A ver…",
+        "Dale, dejame ver.",
+        "Ajá…",
+        "Un segundo.",
+    ],
     "app.arranque": [
         "Ya estoy lista.",
         "Acá estoy.",

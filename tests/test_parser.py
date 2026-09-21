@@ -181,7 +181,7 @@ def test_procesar_concurrente(parser, cerebro):
 # --------------------------------------------------------------------------- #
 def test_el_llm_recibe_los_turnos_anteriores(parser, cerebro):
     vistos = []
-    cerebro.consultar = lambda texto, ctx, tools: vistos.append(ctx.get("historial")) or {
+    cerebro.consultar = lambda texto, ctx, tools, al_fragmento=None: vistos.append(ctx.get("historial")) or {
         "respuesta": f"resp {len(vistos)}", "tools_call": []}
     parser.procesar("cómo está el clima en Rosario", {})
     parser.procesar("y mañana?", {})
@@ -192,7 +192,7 @@ def test_el_llm_recibe_los_turnos_anteriores(parser, cerebro):
 
 def test_el_historial_tiene_tope_y_vencimiento(parser, cerebro, monkeypatch):
     vistos = []
-    cerebro.consultar = lambda texto, ctx, tools: vistos.append(ctx["historial"]) or {
+    cerebro.consultar = lambda texto, ctx, tools, al_fragmento=None: vistos.append(ctx["historial"]) or {
         "respuesta": "ok", "tools_call": []}
     parser.cfg.valores["historial_turnos"] = 2
     for i in range(5):
@@ -246,7 +246,7 @@ def test_el_parser_manda_al_llm_solo_las_tools_relacionadas(parser, cerebro):
 
     parser.bus.plugins = [Muchas()]
     enviadas = []
-    cerebro.consultar = lambda texto, ctx, tools: enviadas.append([t["function"]["name"] for t in tools]) or {
+    cerebro.consultar = lambda texto, ctx, tools, al_fragmento=None: enviadas.append([t["function"]["name"] for t in tools]) or {
         "respuesta": "", "tools_call": [{"nombre": "otra_cosa_3", "args": {}}]}
     r = parser.procesar("abrí discord", {})
     assert enviadas[0] == ["abrir_programa"]
