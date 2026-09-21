@@ -114,7 +114,7 @@ def test_los_argumentos_raros_del_llm_no_rompen(clip):
 # complemento (el pedido al LLM)
 # --------------------------------------------------------------------------- #
 def test_pedir_texto_usa_groq_y_limpia_el_pensamiento(cfg, monkeypatch):
-    import requests
+    from miku.plataforma import red
     cfg.valores["groq_api_key"] = "gsk_x"
     visto = {}
 
@@ -123,7 +123,7 @@ def test_pedir_texto_usa_groq_y_limpia_el_pensamiento(cfg, monkeypatch):
         from types import SimpleNamespace
         return SimpleNamespace(json=lambda: {"choices": [{"message": {"content": "<think>hmm</think> Hola."}}]})
 
-    monkeypatch.setattr(requests, "post", post)
+    monkeypatch.setattr(red, "post", post)
     assert complemento.pedir_texto(cfg, "Traducí", "hola") == "Hola."
     assert visto["headers"]["Authorization"] == "Bearer gsk_x" and visto["json"]["messages"][1]["content"] == "hola"
     cfg.valores["llm_base_url"] = "http://localhost:11434/v1"
@@ -132,10 +132,10 @@ def test_pedir_texto_usa_groq_y_limpia_el_pensamiento(cfg, monkeypatch):
 
 
 def test_pedir_texto_sin_clave_o_con_error(cfg, monkeypatch):
-    import requests
+    from miku.plataforma import red
     assert complemento.pedir_texto(cfg, "x", "y") is None                      # sin clave de Groq
     cfg.valores["groq_api_key"] = "k"
-    monkeypatch.setattr(requests, "post", lambda *a, **k: (_ for _ in ()).throw(OSError("red")))
+    monkeypatch.setattr(red, "post", lambda *a, **k: (_ for _ in ()).throw(OSError("red")))
     assert complemento.pedir_texto(cfg, "x", "y") is None
 
 

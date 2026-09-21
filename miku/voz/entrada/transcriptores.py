@@ -18,6 +18,8 @@ import logging
 import threading
 from typing import Any, Optional, Protocol
 
+from miku.plataforma import red
+
 logger = logging.getLogger("miku.stt.transcriptores")
 
 GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
@@ -47,9 +49,8 @@ class WhisperGroq:
             logger.error("Falta la API key para STT. Configurala en GROQ_API_KEY_STT "
                          "(entorno) o en config_local.GROQ_API_KEY_STT.")
             return ""
-        import requests  # lazy
         try:
-            resp = requests.post(
+            resp = red.post(
                 GROQ_URL, headers={"Authorization": f"Bearer {clave}"},
                 files={"file": ("audio.wav", wav_bytes, "audio/wav")},
                 data={"model": modelo, "language": "es", "response_format": "json", "temperature": 0},

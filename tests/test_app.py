@@ -1,4 +1,4 @@
-"""Aplicación: modos en caliente, invocación (F22), hotkey, menú de la bandeja y ventana de depuración."""
+"""Aplicación: modos en caliente, invocación, hotkey, menú de la bandeja y ventana de depuración."""
 from __future__ import annotations
 
 import logging
@@ -82,7 +82,7 @@ def test_si_el_modo_falla_no_cambia(asistente, monkeypatch):
     assert asistente.modo is None
 
 
-# ---------------------------------------------------------------- invocación (F22)
+# ---------------------------------------------------------------- invocación
 def test_invocar_en_voz_llama_al_reconocedor(asistente):
     asistente.cambiar_modo("voz", persistir=False)
     asistente.invocar()
@@ -166,7 +166,7 @@ def test_argumentos():
     assert a.silencioso and a.invocar
 
 
-# ---------------------------------------------------------------- hotkey F22
+# ---------------------------------------------------------------- hotkey
 class TecladoFalso:
     def __init__(self):
         self.altas, self.bajas = [], []

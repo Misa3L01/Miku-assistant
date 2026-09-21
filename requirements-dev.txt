@@ -1,6 +1,6 @@
-# requirements-dev.txt - deps de desarrollo: empaquetado (PyInstaller) y tests (pytest). No son de runtime.
-# Usar junto a requirements.txt:  pip install -r requirements.txt -r requirements-dev.txt
+# requirements-dev.txt - herramientas de desarrollo (no son de runtime).
+# Se usa junto a requirements.txt:  pip install -r requirements.txt -r requirements-dev.txt
 
-pyinstaller>=6.0
-# Tests (Fase A)
-pytest>=8.0
+pytest>=8.0           # tests:      python -m pytest
+ruff>=0.6             # lint:       python -m ruff check .
+pyinstaller>=6.0      # empaquetado: pyinstaller --clean scripts/miku.spec

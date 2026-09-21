@@ -1,4 +1,4 @@
-# miku.spec - Spec base de PyInstaller (Z8). Ajustar rutas segun el entorno.
+# miku.spec - Spec base de PyInstaller. Ajustar rutas segun el entorno.
 # Build (desde la raiz):  pyinstaller --clean scripts/miku.spec   ->   dist/Miku/Miku.exe
 # NOTA: sin probar desde la reestructuracion (PyInstaller no esta instalado en este entorno).
 # Ver docs/empaquetado.md para hooks y notas.

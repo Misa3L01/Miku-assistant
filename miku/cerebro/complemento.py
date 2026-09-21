@@ -9,25 +9,14 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
-import requests
+from miku.cerebro.parser import endpoint_llm
+from miku.plataforma import red
 
 logger = logging.getLogger("miku.cerebro.complemento")
 
 _RE_PENSAMIENTO = re.compile(r"<think>.*?</think>", re.S | re.I)
-
-
-def _destino(cfg: Any) -> Dict[str, Any]:
-    """URL, clave y modelo del LLM según la config (misma lógica que ``BrainGroq.endpoint``)."""
-    base = str(cfg.get("llm_base_url", "") or "").strip().rstrip("/")
-    modelo = str(cfg.get("llm_modelo", "") or "").strip() or cfg.modelo_api_externa
-    if not base:
-        return {"url": "https://api.groq.com/openai/v1/chat/completions",
-                "key": str(cfg.groq_api_key).strip(), "modelo": modelo, "requiere_key": True}
-    url = base if base.endswith("/chat/completions") else base + "/chat/completions"
-    return {"url": url, "key": str(cfg.get("llm_api_key", "") or "").strip(), "modelo": modelo,
-            "requiere_key": False}
 
 
 def pedir_texto(cfg: Any, instruccion: str, texto: str, max_tokens: int = 700,
@@ -38,7 +27,7 @@ def pedir_texto(cfg: Any, instruccion: str, texto: str, max_tokens: int = 700,
         instruccion: Qué hacer ("Traducí al inglés...", "Resumí en 2 oraciones...").
         texto: El texto sobre el que se trabaja.
     """
-    destino = _destino(cfg)
+    destino = endpoint_llm(cfg)
     if destino["requiere_key"] and not destino["key"]:
         logger.error("Falta GROQ_API_KEY para esta tarea.")
         return None
@@ -46,7 +35,7 @@ def pedir_texto(cfg: Any, instruccion: str, texto: str, max_tokens: int = 700,
     if destino["key"]:
         cabeceras["Authorization"] = f"Bearer {destino['key']}"
     try:
-        resp = requests.post(
+        resp = red.post(
             destino["url"], headers=cabeceras, timeout=timeout,
             json={"model": destino["modelo"], "temperature": temperatura, "max_tokens": max_tokens,
                   "messages": [{"role": "system", "content": instruccion},

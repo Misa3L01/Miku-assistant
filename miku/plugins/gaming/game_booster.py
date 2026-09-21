@@ -12,7 +12,7 @@ Cómo funciona:
           ``BOOSTER_VOLUMEN_OBJETIVO`` (usa el plugin ``audio``/pycaw).
         * Avisa (toast + voz corta) si ``BOOSTER_AVISO``.
     - Al SALIR del juego (el primer plano deja de ser ese proceso durante un
-      par de chequeos), revierte con ``core.modos.salir_modo`` si hay snapshot.
+      par de chequeos), revierte con ``miku.servicios.modos.salir_modo`` si hay snapshot.
     - SIN SPAM: solo actúa en las TRANSICIONES (entrar/salir), no en cada tick.
 
 Es tolerante: si falta win32/psutil, el hilo no arranca y el plugin queda

@@ -1,5 +1,5 @@
 """
-speech_to_text.py - Reconocimiento de voz (STT) con estructura en hilos.
+escucha.py - Reconocimiento de voz (STT) con estructura en hilos.
 
 En el proyecto original la escucha se hacía con SpeechRecognition en
 bloque. Acá separamos la captura de audio (en su propio hilo) del
@@ -10,7 +10,7 @@ Flujo en modo "voz":
     2. Se detecta la palabra de activación "Miku".
     3. Se emite el evento correspondiente en el EventBus.
 
-También se puede INVOCAR a Miku sin decir la palabra (tecla F22): ``invocar()`` hace que el
+También se puede INVOCAR a Miku sin decir la palabra (tecla F13): ``invocar()`` hace que el
 hilo de escucha salude y tome el próximo comando directamente.
 """
 from __future__ import annotations
@@ -49,7 +49,7 @@ _MIN_DURACION_AUDIO = 0.4
 # Tope de duración de una frase en escucha continua (comando en la misma
 # frase que la wake word: "Miku, abrí Brave y poné Discord a la derecha").
 _LIMITE_FRASE_WAKE = 8
-# Cada cuántos segundos el bucle de escucha revisa si lo invocaron (F22) aunque nadie hable.
+# Cada cuántos segundos el bucle de escucha revisa si lo invocaron (tecla) aunque nadie hable.
 _ESPERA_INVOCACION = 1.0
 # Segundos que se espera a que un hilo de escucha que se está deteniendo termine de verdad
 # (puede estar en medio de una captura de hasta ~18 s).
@@ -85,7 +85,7 @@ class SpeechToText:
         self._hilo_escucha: Optional[threading.Thread] = None
         self._stop = threading.Event()
 
-        # Invocación directa (tecla F22 / atajo): saluda y toma el PRÓXIMO comando sin
+        # Invocación directa (tecla de invocación / atajo): saluda y toma el PRÓXIMO comando sin
         # exigir la palabra "Miku". La atiende el hilo de escucha.
         self._invocada = threading.Event()
 
@@ -111,6 +111,11 @@ class SpeechToText:
             # Guardamos tanto el módulo como el reconocedor.
             self._sr_mod = sr
             self._reconocedor = sr.Recognizer()
+            # Silencio que cierra la frase (el estándar de la librería es 0,8 s): es tiempo que se suma
+            # a CADA orden antes de mandar el audio a transcribir.
+            pausa = self._pausa_fin()
+            self._reconocedor.pause_threshold = pausa
+            self._reconocedor.non_speaking_duration = min(self._reconocedor.non_speaking_duration, pausa)
 
     @property
     def sr(self):
@@ -118,11 +123,13 @@ class SpeechToText:
         self._importar_dependencias()
         return self._sr_mod
 
-    @property
-    def reconocedor(self):
-        """Reconocedor SpeechRecognition inicializado."""
-        self._importar_dependencias()
-        return self._reconocedor
+    def _pausa_fin(self) -> float:
+        """Segundos de silencio que cierran una frase (``STT_PAUSA_FIN``, acotado a 0,3-1,5)."""
+        try:
+            valor = float(self.cfg.get("stt_pausa_fin", 0.6))
+        except (TypeError, ValueError):
+            valor = 0.6
+        return min(max(valor, 0.3), 1.5)
 
     # ---------------------------------------------------------------- #
     #                  Transcripción vía API de Groq                   #
@@ -251,7 +258,7 @@ class SpeechToText:
     def invocar(self) -> None:
         """Pide al hilo de escucha que salude y tome el próximo comando SIN la palabra "Miku".
 
-        Es lo que ocurre al apretar F22 (o al abrir Miku con su atajo): equivale a haber dicho
+        Es lo que ocurre al apretar la tecla de invocación (o al abrir Miku con su atajo): equivale a haber dicho
         "Miku" y esperar el "¿Sí? Decime.". Es seguro llamarlo desde cualquier hilo.
         """
         self._invocada.set()

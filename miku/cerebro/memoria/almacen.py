@@ -3,7 +3,7 @@ memoria.py - Memoria persistente de recuerdos (SQLite, stdlib).
 
 Backend liviano basado en **SQLite** (viene en la stdlib de Python, no suma
 dependencias). Guarda "recuerdos" del usuario y los consulta por SIGNIFICADO
-(embeddings de ``core.embeddings``, opcional) o, si no hay motor de embeddings,
+(embeddings de ``miku.cerebro.memoria.embeddings``, opcional) o, si no hay motor de embeddings,
 por coincidencia de texto (LIKE).
 
 Base de datos: ``data/miku_memoria.db`` (la carpeta data/ está gitignored).
@@ -15,7 +15,7 @@ Contrato (el mismo que ya consumía el parser):
     - olvidar_recuerdo(texto_aproximado) -> borra la fila que mejor coincida.
     - cantidad() -> COUNT(*).
 
-Hilos: la conexión SQLite se comparte entre hilos (voz, F22, Telegram),
+Hilos: la conexión SQLite se comparte entre hilos (voz, tecla de invocación, Telegram),
 así que TODOS los accesos van bajo un ``RLock``.
 
 Diseño defensivo: si SQLite falla por cualquier motivo, la clase se degrada a
@@ -197,6 +197,8 @@ class Memoria:
             if self._conn is None:
                 return ""
             try:
+                if not self._hay_recuerdos():
+                    return ""              # nada que buscar: ni embeddings (carga del modelo) ni LIKE
                 if not consulta:
                     encontrados = self._recientes(cantidad)
                 else:
@@ -214,6 +216,10 @@ class Memoria:
                 logger.error("Error buscando recuerdos: %s", e)
                 return ""
         return "\n".join(f"- {t}" for t in encontrados)
+
+    def _hay_recuerdos(self) -> bool:
+        """True si hay al menos un recuerdo guardado. Llamar con el lock."""
+        return self._conn.execute("SELECT 1 FROM recuerdos LIMIT 1").fetchone() is not None
 
     def _recientes(self, cantidad: int) -> List[str]:
         """Los recuerdos más recientes (consulta vacía). Llamar con el lock."""

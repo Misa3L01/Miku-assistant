@@ -193,7 +193,7 @@ class Archivos(Plugin):
         rutas_ord = [r for _, _, r in rankeadas]
         puntajes_ord = [p for p, _, _ in rankeadas]
 
-        # Z2 — Re-rank SEMÁNTICO (capa EXTRA, opcional): "PDF de termodinámica"
+        # Re-rank SEMÁNTICO (capa EXTRA, opcional): "PDF de termodinámica"
         # encuentra el archivo correcto aunque el nombre no coincida palabra a
         # palabra. NO reemplaza Everything: suma un bonus por similitud de
         # SIGNIFICADO entre la consulta y el nombre+ruta, y reordena. Si no hay

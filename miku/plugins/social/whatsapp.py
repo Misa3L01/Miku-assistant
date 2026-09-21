@@ -479,7 +479,7 @@ class WhatsApp(Plugin):
         (se estaba cargando): se borra y se vuelve a escribir."""
         filas: List[Dict[str, Any]] = []
         time.sleep(1.5)                       # recién cargada la lista, las filas de resultados salen vacías
-        for intento in range(intentos):
+        for _ in range(intentos):
             pagina.evaluar(_JS_CERRAR_AVISOS)
             if not pagina.evaluar(_JS_FOCO_BUSQUEDA):
                 return []

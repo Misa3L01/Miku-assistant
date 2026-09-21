@@ -1,5 +1,5 @@
 """
-web_search.py - Búsqueda y apertura de sitios web.
+web.py - Búsqueda y apertura de sitios web.
 
 Publica la tool `buscar_en_web`, que arma la URL correcta según el sitio
 pedido y la abre en el navegador por defecto con `webbrowser` (stdlib).

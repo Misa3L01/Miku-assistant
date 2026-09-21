@@ -49,9 +49,6 @@ class PluginFalso:
         self.llamadas.append((nombre, args))
         return f"hice {nombre}"
 
-    def execute(self, comando: str, contexto: Dict[str, Any]) -> None:
-        return None
-
 
 class MemoriaFalsa:
     """Memoria en una lista (sin SQLite)."""
@@ -111,3 +108,10 @@ def _snapshot_de_modos_aislado(tmp_path, monkeypatch):
     monkeypatch.setattr(modos, "RUTA_SNAPSHOT", tmp_path / "modo_snapshot.json")
     monkeypatch.setattr(modos, "_snapshot", None)
     monkeypatch.setattr(modos, "_cargado", False)
+
+
+@pytest.fixture(autouse=True)
+def _cache_de_audio_aislada(tmp_path, monkeypatch):
+    """La caché de audio del TTS vive en disco: que ningún test escriba en ``data/`` real."""
+    from miku.voz.salida import tts
+    monkeypatch.setattr(tts, "CARPETA_CACHE", tmp_path / "tts_cache")

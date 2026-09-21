@@ -6,8 +6,8 @@ import time
 from unittest import mock
 
 import pytest
-import requests
 
+from miku.plataforma import red
 from miku.cerebro import parser as cp
 
 ENERGIA = {"respuesta": "", "tools_call": [{"nombre": "control_energia", "args": {"accion": "apagar"}}]}
@@ -132,7 +132,7 @@ def test_respuesta_con_tools_no_se_cachea(cerebro_real):
                       "tool_calls": [{"function": {"name": "abrir_programa",
                                                    "arguments": '{"nombre": "discord"}'}}]})
 
-    with mock.patch.object(requests, "post", post):
+    with mock.patch.object(red, "post", post):
         cerebro_real.consultar("abrí discord", {}, TOOLS)
         segunda = cerebro_real.consultar("abrí discord", {}, TOOLS)
     assert len(llamadas) == 2 and segunda["tools_call"], "repetir una acción debe volver a ejecutarla"
@@ -145,7 +145,7 @@ def test_charla_pura_si_se_cachea(cerebro_real):
         llamadas.append(1)
         return _Resp({"content": "Todo bien", "tool_calls": []})
 
-    with mock.patch.object(requests, "post", post):
+    with mock.patch.object(red, "post", post):
         cerebro_real.consultar("cómo estás", {}, TOOLS)
         cerebro_real.consultar("cómo estás", {}, TOOLS)
         assert len(llamadas) == 1
@@ -223,7 +223,7 @@ def test_con_historial_no_se_usa_la_cache_del_llm(cerebro_real):
         return _Resp({"content": "Mañana llueve", "tool_calls": []})
 
     previo = [{"role": "user", "content": "clima"}, {"role": "assistant", "content": "sol"}]
-    with mock.patch.object(requests, "post", post):
+    with mock.patch.object(red, "post", post):
         cerebro_real.consultar("y mañana?", {"historial": previo}, TOOLS)
         cerebro_real.consultar("y mañana?", {"historial": previo}, TOOLS)
     assert len(llamadas) == 2

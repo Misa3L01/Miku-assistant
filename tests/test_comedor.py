@@ -8,7 +8,7 @@ import pytest
 
 from miku.ajustes import carga as config_mod
 from miku.plugins.productividad import comedor as mod
-from miku.plugins.productividad.comedor import Comedor, Decision, decidir, formas_de_fecha, menciona_fecha
+from miku.plugins.productividad.comedor import Comedor, decidir, formas_de_fecha, menciona_fecha
 
 MANANA = date(2026, 9, 22)                          # martes
 

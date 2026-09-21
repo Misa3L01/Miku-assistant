@@ -151,31 +151,6 @@ class Config:
         lista = self.valores.get("app_whitelist") or []
         return [str(a).lower() for a in lista]
 
-    @property
-    def ruta_everything_es(self) -> str:
-        """Ruta ABSOLUTA al es.exe de Everything.
-
-        Se resuelve siempre contra ``BASE_DIR`` (la raíz real del proyecto),
-        sin importar desde qué directorio de trabajo se ejecute ``main.py``.
-        Admite override por config_local (p. ej. una ruta absoluta) o una
-        ruta relativa como ``bin/es.exe`` → se convierte en absoluta.
-        """
-        crudo = str(self.valores.get("ruta_everything_es", "")).strip()
-        if not crudo:
-            return ""
-        # Expandimos variables de entorno (~, %VAR% del estilo de config).
-        crudo = os.path.expandvars(os.path.expanduser(crudo))
-        p = Path(crudo)
-        if not p.is_absolute():
-            # Relativa => la asumimos desde la raíz del proyecto.
-            p = Path(BASE_DIR) / p
-        return str(p.resolve())
-
-    @property
-    def discos_buscar(self) -> List[str]:
-        discos = self.valores.get("discos_buscar") or ["C", "D", "R"]
-        return [str(d) for d in discos]
-
     # ---------- Carpetas favoritas ----------
     @property
     def carpetas_favoritas(self) -> Dict[str, str]:
@@ -306,27 +281,6 @@ class Config:
         if isinstance(valor, str):
             return valor.strip().lower() in ("1", "true", "sí", "si", "yes", "on")
         return bool(valor)
-
-    @property
-    def proactivo_bateria_min(self) -> int:
-        try:
-            return int(self.valores.get("proactivo_bateria_min", 20))
-        except (TypeError, ValueError):
-            return 20
-
-    @property
-    def proactivo_disco_gb(self) -> float:
-        try:
-            return float(self.valores.get("proactivo_disco_gb", 5.0))
-        except (TypeError, ValueError):
-            return 5.0
-
-    @property
-    def proactivo_intervalo_min(self) -> int:
-        try:
-            return max(1, int(self.valores.get("proactivo_intervalo_min", 5)))
-        except (TypeError, ValueError):
-            return 5
 
     @property
     def proactivo_cooldown_min(self) -> int:
@@ -503,18 +457,10 @@ def cargar() -> Config:
 
     Es idempotente: varios plugins la llaman "por las dudas", y recargar cada
     vez releía preferences.json y pisaba cambios hechos en runtime (p. ej. la
-    personalidad cambiada por voz). Para releer a propósito usar ``recargar()``.
+    personalidad cambiada por voz). Para releer a propósito: ``config.cargar()``.
     """
     global _cargada
     if not _cargada:
         config.cargar()
         _cargada = True
-    return config
-
-
-def recargar() -> Config:
-    """Vuelve a leer preferences.json, config_local.py y el entorno."""
-    global _cargada
-    config.cargar()
-    _cargada = True
     return config

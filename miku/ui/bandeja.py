@@ -7,7 +7,7 @@ el tooltip y su menú permite invocarla, cambiar de modo (voz / texto de depurac
 inicio con Windows y el atajo de teclado, y salir. También hospeda la ventanita de selección de modo.
 
 Diseño de hilos:
-    Todo lo que toca Qt corre en el hilo compartido de ``core.qt_hilo`` (el
+    Todo lo que toca Qt corre en el hilo compartido de ``miku.ui.qt_hilo`` (el
     mismo que usan los subtítulos: Qt solo admite un event loop). Esta fachada
     se puede llamar desde cualquier hilo.
 
@@ -47,11 +47,6 @@ class _PanelBandeja:
         # Resultado de la ventanita (se devuelve de forma síncrona a quien la pidió).
         self.modo_elegido: Optional[str] = None
         self.evento_modo = threading.Event()
-
-    @property
-    def tray_creado(self) -> bool:
-        """True si el icono de la bandeja se creó."""
-        return self._tray is not None
 
     def crear_tray(self) -> bool:
         """Crea el icono y su menú (en el hilo de Qt). True si quedó creado."""

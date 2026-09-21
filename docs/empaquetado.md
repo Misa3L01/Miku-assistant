@@ -1,54 +1,47 @@
-# Empaquetado a .exe (Z8) — Miku Assistant
+# Empaquetado a .exe
 
-Objetivo: empaquetar como app de escritorio (lanzador tipo app + hotkey F22).
-El `.spec` está en `scripts/miku.spec`; deps de build en `requirements-dev.txt`.
-Requisito: Z7 estable (bandeja/ventanita/F22) — ya lo está.
-El `.exe` NO incluye VOICEVOX: el motor local se referencia por ruta aparte.
+Empaqueta Miku como app de escritorio con PyInstaller. La receta está en `scripts/miku.spec` y las
+herramientas de build en `requirements-dev.txt`. **No se prueba en cada cambio**: el resultado depende
+del entorno, así que después de construirlo seguí la lista de comprobación del final.
 
-## 1) Hooks conocidos (PyInstaller)
+El `.exe` no incluye VOICEVOX: el motor de voz se referencia por ruta aparte (`VOICEVOX_RUN_EXE`).
 
-- **PyQt5** (subtítulos, bandeja, ventanita): hook oficial / `--collect-all PyQt5`
+## Hooks conocidos
+
+- **PyQt5** (bandeja, subtítulos, ventana de depuración): hook oficial o `--collect-all PyQt5`
   (incluir `platforms/qwindows.dll`).
-- **pygame**: hook oficial OK (SDL sin consola).
-- **SpeechRecognition** + **pyaudio**: pyaudio es extensión C; incluir `.pyd`/`.dll`.
-- **discord**: `--collect-data discord` (paquetes `.json`).
+- **pygame**: hook oficial.
+- **SpeechRecognition + pyaudio**: pyaudio es una extensión C; incluir el `.pyd` / `.dll`.
+- **discord.py**: `--collect-data discord`.
 - **AppOpener**: `--collect-data AppOpener`.
-- **comtypes / pycaw**: `--collect-all comtypes` (si no, falla volumen/mute).
+- **comtypes / pycaw**: `--collect-all comtypes` (sin esto fallan el volumen y el silencio).
 - **keyboard / psutil / Pillow**: hooks oficiales.
 
-## 2) Datos y binarios
+## Datos y binarios
 
-- `bin/es.exe` → `--add-binary "bin/es.exe;bin"`.
-- `data/` y `config_local.py` NO se empaquetan (secretos/datos del usuario):
-  se dejan **junto al `.exe`**. Con el ejecutable empaquetado (`sys.frozen`),
-  `config.BASE_DIR` es la carpeta del `.exe`, y de ahí se leen
+- `bin/es.exe` (Everything) va con `--add-binary "bin/es.exe;bin"`.
+- `data/` y `config_local.py` **no** se empaquetan (secretos y datos del usuario): van **junto al `.exe`**.
+  Con el ejecutable (`sys.frozen`), `BASE_DIR` es la carpeta del `.exe` y de ahí se leen
   `config_local.py`, `data/` y `bin/`.
-- Los plugins se cargan con `importlib` (`miku/plugins/registro.py`), así que
-  PyInstaller no los detecta solo: `scripts/miku.spec` los incluye con
-  `collect_submodules("miku")`. Si agregás un plugin, no hace falta tocar el spec.
+- Los plugins se cargan con `importlib` (`miku/plugins/registro.py`), que PyInstaller no detecta solo:
+  `scripts/miku.spec` los incluye con `collect_submodules("miku")`. Agregar un plugin no exige tocar el spec.
 
-## 3) Construir
+## Construir
 
 ```bat
-pip install -r requirements-dev.txt
+pip install -r requirements.txt -r requirements-dev.txt
 pyinstaller --clean scripts/miku.spec
 ```
 
 Salida: `dist/Miku/Miku.exe`.
 
-## 4) Pruebas mínimas
+## Comprobación mínima
 
-1. Abrir el `.exe` → aparece bandeja + ventanita; elegir Modo Texto.
-2. Escribir un comando simple (fast-path, sin API) → responde.
-3. F22 → abre la ventanita de nuevo (no en modo push).
-4. "Salir" de la bandeja → cierra sin dejar icono.
+1. Abrir el `.exe`: aparece el icono de la bandeja.
+2. Cambiar a modo texto desde la bandeja y escribir un comando simple ("qué hora es"): responde sin API.
+3. Apretar la tecla de invocación (F13): Miku saluda y escucha.
+4. "Salir" en la bandeja: cierra sin dejar el icono.
 
-## 5) Visión a futuro (documentado, no implementado)
+## Pendiente
 
-- Motores de voz local/API seleccionables (hoy VOICEVOX es local).
-- Auto-actualización e instalador (Inno Setup).
-
-## 6) Alcance de esta sesión
-
-Se documentan hooks + `scripts/miku.spec` + `requirements-dev.txt`. **No** se ejecutó
-PyInstaller (depende del entorno del usuario).
+- Instalador (Inno Setup) y auto-actualización.

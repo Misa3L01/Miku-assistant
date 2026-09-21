@@ -209,6 +209,17 @@ _OPCIONES: List[Opcion] = [
        "Comando de tu motor de voz (Piper, XTTS, GPT-SoVITS…). Debe escribir un WAV en {salida}; el "
        "texto entra por stdin (o usá {texto}).", "texto",
        r'TTS_COMANDO = r"piper --model C:\voces\es.onnx --output_file {salida}"', "voz"),
+    _o("stt_pausa_fin", 0.6, "voz",
+       "Segundos de silencio con los que Miku da por terminada tu frase (0.3 a 1.5). Más bajo = responde "
+       "antes pero puede cortarte si hacés pausas al hablar; el estándar de la librería es 0.8.",
+       "decimal", usado_por="voz"),
+    _o("tts_cache", True, "voz",
+       "Guarda en data/tts_cache el audio de las frases que Miku ya dijo, así las repetidas ('¿Sí? "
+       "Decime.', 'Listo'...) suenan al instante sin traducir ni sintetizar de nuevo. Solo motor VOICEVOX.",
+       "booleano", usado_por="voz"),
+    _o("tts_cache_max", 300, "voz",
+       "Cuántas frases como máximo guarda esa caché (al pasarse borra las menos usadas).", "entero",
+       usado_por="voz"),
     _o("subtitulos", "auto", "voz",
        "Subtítulos en pantalla: 'auto' (solo cuando Miku NO habla en español), 'siempre' o "
        "'nunca'.", "texto", usado_por="voz", permitidos=("auto", "siempre", "nunca")),

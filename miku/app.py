@@ -53,6 +53,9 @@ logger = logging.getLogger("miku.main")
 
 MODOS = ("voz", "texto")
 
+#: Lo que dice Miku al oír "Miku" (o la tecla de invocación) antes de escuchar el comando.
+SALUDO_WAKE = "¿Sí? Decime."
+
 
 def validar_configuracion(cfg: "config_mod.Config") -> None:
     """Avisa por log de opciones mal escritas o inválidas y de funciones sin configurar.
@@ -162,6 +165,11 @@ class Asistente:
                 self.memoria = Memoria()
                 logger.info("Memoria persistente activa (%d recuerdo(s)).",
                             self.memoria.cantidad())
+                if self.memoria.cantidad() > 0:
+                    # Cargar el modelo de embeddings tarda segundos: que no lo pague la primera orden.
+                    from miku.cerebro.memoria import embeddings
+                    threading.Thread(target=embeddings.precalentar, name="miku_precalentar_memoria",
+                                     daemon=True).start()
             except Exception:  # noqa: BLE001
                 logger.exception("No se pudo activar la memoria; sigo sin ella.")
                 self.memoria = None
@@ -173,11 +181,8 @@ class Asistente:
                                     memoria=self.memoria)
         # Exponemos el parser en el bus para que plugins como Telegram puedan
         # ejecutar comandos remotos reutilizando EXACTAMENTE el mismo cerebro.
-        try:
-            self.bus.parser = self.parser
-            self.bus.contexto_base = self._contexto_base
-        except Exception:  # noqa: BLE001
-            logger.debug("No pude exponer el parser en el bus.")
+        self.bus.parser = self.parser
+        self.bus.contexto_base = self._contexto_base
 
         # Plugins (catálogo en miku/plugins/registro.py).
         candidatos = instanciar_plugins(self.cfg)
@@ -277,13 +282,13 @@ class Asistente:
         from miku.voz.entrada.escucha import SpeechToText  # import tardío
 
         voz = self._preparar_voz()
-        # Precalienta VOICEVOX en segundo plano: si no está corriendo (p. ej. al abrir Miku con la tecla
-        # o con Windows), arrancarlo tarda ~12 s y la primera frase no debería pagar esa espera.
-        threading.Thread(target=getattr(voz, "asegurar_voicevox_inicial", lambda: None),
+        # Precalienta VOICEVOX y el saludo del wake en segundo plano: si no está corriendo (p. ej. al abrir
+        # Miku con la tecla o con Windows), arrancarlo tarda ~12 s y la primera frase no debería pagar esa espera.
+        threading.Thread(target=getattr(voz, "precalentar", lambda *_: None), args=([SALUDO_WAKE],),
                          name="miku_precalentar_voz", daemon=True).start()
         if self.stt is None:
             stt = SpeechToText(self.cfg)
-            stt.on_wake = lambda _t: self.decir("¿Sí? Decime.")
+            stt.on_wake = lambda _t: self.decir(SALUDO_WAKE)
             stt.on_comando = self._al_comando_voz
             # Mientras Miku habla, el micrófono espera (no graba su propia voz).
             stt.esperar_silencio = voz.esperar_libre
@@ -582,8 +587,6 @@ class Asistente:
                 self.instancia.liberar()
             except Exception:  # noqa: BLE001
                 logger.debug("No pude liberar la instancia única.")
-        if self.bus:
-            self.bus.detener()
 
 
 # ===================================================================== #

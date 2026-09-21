@@ -1,4 +1,4 @@
-"""Proveedores intercambiables (Fase F): LLM local/nube, STT nube/local y motores de voz propios."""
+"""Proveedores intercambiables: LLM local/nube, STT nube/local y motores de voz propios."""
 from __future__ import annotations
 
 import sys
@@ -6,8 +6,8 @@ import types
 from unittest import mock
 
 import pytest
-import requests
 
+from miku.plataforma import red
 from miku.cerebro import parser as cp
 from miku.voz.entrada import transcriptores
 from miku.voz.entrada.escucha import SpeechToText
@@ -38,7 +38,7 @@ def _consultar(cerebro, texto="hola"):
         visto.update(url=url, headers=headers, json=json, timeout=timeout)
         return _Resp()
 
-    with mock.patch.object(requests, "post", post):
+    with mock.patch.object(red, "post", post):
         r = cerebro.consultar(texto, {}, TOOLS)
     return r, visto
 
@@ -49,7 +49,7 @@ def _consultar(cerebro, texto="hola"):
 def test_por_defecto_usa_groq_con_su_clave(cerebro, cfg):
     cfg.valores["groq_api_key"] = "gsk_x"
     r, v = _consultar(cerebro)
-    assert v["url"] == cp.BrainGroq.BASE_URL and v["headers"]["Authorization"] == "Bearer gsk_x"
+    assert v["url"] == "https://api.groq.com/openai/v1/chat/completions" and v["headers"]["Authorization"] == "Bearer gsk_x"
     assert v["json"]["model"] == cfg.modelo_api_externa and v["json"]["tools"] == TOOLS
 
 
@@ -103,7 +103,7 @@ def test_whisper_groq_transcribe_y_sin_clave_no_llama(cfg):
         return types.SimpleNamespace(json=lambda: {"text": " abrí discord "})
 
     t = transcriptores.WhisperGroq(cfg)
-    with mock.patch.object(requests, "post", post):
+    with mock.patch.object(red, "post", post):
         assert t.transcribir(b"x", "whisper-large-v3", 5) == ""          # sin clave
         assert not visto
         cfg.valores["groq_api_key"] = "gsk"
@@ -114,9 +114,9 @@ def test_whisper_groq_transcribe_y_sin_clave_no_llama(cfg):
 def test_whisper_groq_errores_devuelven_vacio(cfg):
     cfg.valores["groq_api_key"] = "gsk"
     t = transcriptores.WhisperGroq(cfg)
-    with mock.patch.object(requests, "post", lambda *a, **k: types.SimpleNamespace(json=lambda: {"error": 1})):
+    with mock.patch.object(red, "post", lambda *a, **k: types.SimpleNamespace(json=lambda: {"error": 1})):
         assert t.transcribir(b"x", "m", 5) == ""
-    with mock.patch.object(requests, "post", mock.Mock(side_effect=OSError("red"))):
+    with mock.patch.object(red, "post", mock.Mock(side_effect=OSError("red"))):
         assert t.transcribir(b"x", "m", 5) == ""
 
 

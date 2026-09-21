@@ -2,7 +2,7 @@
 consola.py - Ventana de depuración del "modo texto".
 
 Una ventanita con un registro y una línea para escribirle a Miku. Reemplaza a la consola
-``input()`` (que no existe cuando Miku arranca con ``pythonw``, p. ej. con Windows o con F22).
+``input()`` (que no existe cuando Miku arranca con ``pythonw``, p. ej. con Windows o con la tecla de invocación).
 
 Corre en el hilo de Qt compartido (``ui/qt_hilo``). Lo que se escribe se entrega a ``al_enviar`` en un
 hilo aparte, para no congelar la ventana mientras el cerebro piensa.

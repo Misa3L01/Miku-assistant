@@ -15,9 +15,9 @@ primer uso) y todo va envuelto en try/except: nunca debe romper el arranque.
 
 API pública:
     - disponible() -> bool
+    - precalentar() -> None  (carga el modelo antes de que haga falta)
     - embeber(texto) -> Optional[list[float]]
     - similitud(a, b) -> float  (coseno; 0.0 si algo falla)
-    - ruta_cache_modelos() -> str  (carpeta de caché del modelo)
 """
 from __future__ import annotations
 
@@ -58,11 +58,6 @@ def _ruta_cache() -> str:
     except Exception:  # noqa: BLE001
         pass
     return str(base)
-
-
-def ruta_cache_modelos() -> str:
-    """Expone la carpeta de caché (para diagnóstico/logs)."""
-    return _ruta_cache()
 
 
 def _activados() -> bool:
@@ -107,6 +102,16 @@ def _cargar_modelo():
                            "%d s): %s", int(_ESPERA_REINTENTO), e)
             _fallo_en = time.monotonic()
             return None
+
+
+def precalentar() -> None:
+    """Carga el modelo y hace una inferencia de prueba (para llamar en segundo plano al arrancar).
+
+    La primera consulta a la memoria pagaba cargar el modelo (segundos): así se paga fuera del camino
+    de la primera orden. Si no hay motor, no hace nada.
+    """
+    if _cargar_modelo() is not None:
+        embeber("hola")
 
 
 def disponible() -> bool:

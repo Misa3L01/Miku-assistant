@@ -1,5 +1,5 @@
 """
-command_parser.py - Parser de comandos (el "cerebro" del asistente).
+parser.py - Parser de comandos (el "cerebro" del asistente).
 
 Convierte el texto del usuario en una acción. Para no copiar el código viejo
 (aunque mucho es referencia) este módulo implementa un flujo claro:
@@ -24,10 +24,9 @@ from collections import deque
 from datetime import date
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
-import requests
-
 from miku.ajustes import carga as config_mod
 from miku.cerebro import enrutador
+from miku.plataforma import red
 from miku.plataforma.texto import sin_acentos
 
 logger = logging.getLogger("miku.parser")
@@ -70,6 +69,30 @@ def _normalizar_frase(texto: str) -> str:
 
 # ---------------- Brain (cliente de LLM) ---------------- #
 
+_GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+
+def endpoint_llm(cfg: "config_mod.Config") -> Dict[str, Any]:
+    """Dónde y cómo hablar con el LLM según la config.
+
+    Por defecto es Groq. Con ``LLM_BASE_URL`` apunta a otro servidor con el mismo formato (Ollama, LM Studio,
+    llama.cpp u otro proveedor en la nube).
+
+    Returns:
+        ``url`` (chat/completions), ``key`` (puede ser vacía en servidores locales), ``modelo``,
+        ``requiere_key`` (solo Groq), ``tools`` (si el modelo soporta herramientas) y ``nombre``.
+    """
+    base = str(cfg.get("llm_base_url", "") or "").strip().rstrip("/")
+    modelo = str(cfg.get("llm_modelo", "") or "").strip() or cfg.modelo_api_externa
+    if not base:
+        return {"url": _GROQ_CHAT_URL, "key": str(cfg.groq_api_key).strip(), "modelo": modelo,
+                "requiere_key": True, "tools": True, "nombre": "Groq"}
+    url = base if base.endswith("/chat/completions") else base + "/chat/completions"
+    return {"url": url, "key": str(cfg.get("llm_api_key", "") or "").strip(), "modelo": modelo,
+            "requiere_key": False, "tools": bool(cfg.get("llm_soporta_tools", True)),
+            "nombre": base}
+
+
 class BrainGroq:
     """Cliente mínimo de chat con tools para cualquier API compatible con OpenAI.
 
@@ -81,31 +104,13 @@ class BrainGroq:
     para poder reemplazar Groq por otro proveedor sin tocar el parser.
     """
 
-    BASE_URL = "https://api.groq.com/openai/v1/chat/completions"
-
     def __init__(self, cfg: "config_mod.Config", system_prompt: str = "") -> None:
         self.cfg = cfg
         self.system_prompt = system_prompt or self._prompt_default()
-        self._ultima_llamada: float = 0.0
-        self._lock = threading.Lock()
 
     def endpoint(self) -> Dict[str, Any]:
-        """Dónde y cómo hablar con el LLM según la config.
-
-        Returns:
-            ``url`` (chat/completions), ``key`` (puede ser vacía en servidores locales), ``modelo``,
-            ``requiere_key`` (solo Groq) y ``tools`` (si el modelo soporta herramientas).
-        """
-        cfg = self.cfg
-        base = str(cfg.get("llm_base_url", "") or "").strip().rstrip("/")
-        modelo = str(cfg.get("llm_modelo", "") or "").strip() or cfg.modelo_api_externa
-        if not base:
-            return {"url": self.BASE_URL, "key": str(cfg.groq_api_key).strip(), "modelo": modelo,
-                    "requiere_key": True, "tools": True, "nombre": "Groq"}
-        url = base if base.endswith("/chat/completions") else base + "/chat/completions"
-        return {"url": url, "key": str(cfg.get("llm_api_key", "") or "").strip(), "modelo": modelo,
-                "requiere_key": False, "tools": bool(cfg.get("llm_soporta_tools", True)),
-                "nombre": base}
+        """Dónde y cómo hablar con el LLM según la config (ver ``endpoint_llm``)."""
+        return endpoint_llm(self.cfg)
 
     def _prompt_default(self) -> str:
         """Prompt de sistema base de Miku."""
@@ -159,6 +164,26 @@ class BrainGroq:
             "- NUNCA uses markdown (asteriscos, guiones) ni emojis en tus "
             "respuestas porque se leen en voz alta."
         )
+
+    #: Códigos HTTP que valen UN reintento: límite de uso momentáneo o falla pasajera del servidor.
+    _REINTENTABLES = (429, 500, 502, 503, 504)
+    #: Espera máxima (s) que se acepta para reintentar; si el servidor pide más (límite diario), no se reintenta.
+    _ESPERA_MAX_REINTENTO = 5.0
+
+    def _enviar(self, destino: Dict[str, Any], headers: Dict[str, str], payload: Dict[str, Any]) -> Any:
+        """POST al LLM por la sesión compartida; ante 429/5xx reintenta una vez si la espera es corta."""
+        timeout = 60 if not destino["requiere_key"] else 20
+        resp = red.post(destino["url"], headers=headers, json=payload, timeout=timeout)
+        if getattr(resp, "status_code", 200) in self._REINTENTABLES:
+            try:
+                pausa = float((getattr(resp, "headers", None) or {}).get("retry-after", 1.0))
+            except (TypeError, ValueError):
+                pausa = 1.0
+            if pausa <= self._ESPERA_MAX_REINTENTO:
+                logger.info("El LLM respondió HTTP %s; reintento en %.1f s.", resp.status_code, pausa)
+                time.sleep(max(pausa, 0.2))
+                resp = red.post(destino["url"], headers=headers, json=payload, timeout=timeout)
+        return resp
 
     def consultar(self, texto: str, contexto: Dict[str, Any],
                   tools: List[dict]) -> Dict[str, Any]:
@@ -228,18 +253,13 @@ class BrainGroq:
         if destino["key"]:
             headers["Authorization"] = f"Bearer {destino['key']}"
 
-        # Protección de rate-limit básica.
-        with self._lock:
-            espera = 0.25 - (time.monotonic() - self._ultima_llamada)
-            if espera > 0:
-                time.sleep(espera)
-
         try:
-            resp = requests.post(destino["url"], headers=headers,
-                                 json=payload, timeout=60 if not destino["requiere_key"] else 20)
+            resp = self._enviar(destino, headers, payload)
             data = resp.json()
             if "choices" not in data:
                 logger.error("Error Groq: %s", data)
+                if getattr(resp, "status_code", 0) == 429:
+                    return {"error": "Llegué al límite de uso de mi cerebro por ahora. Probá de nuevo en un rato."}
                 return {"error": "Tuve un problema conectándome con mi cerebro."}
 
             mensaje = data["choices"][0]["message"]
@@ -258,9 +278,6 @@ class BrainGroq:
                     "nombre": funcion.get("name", ""),
                     "args": args,
                 })
-
-            with self._lock:
-                self._ultima_llamada = time.monotonic()
 
             # Solo se cachean respuestas de PURA conversación. Si el LLM pidió
             # alguna tool, NO se cachea: un acierto de cache devuelve
@@ -426,11 +443,6 @@ class CommandParser:
         respuesta_memoria = self._comandos_inmediatos(texto, contexto)
         if respuesta_memoria is not None:
             return respuesta_memoria
-
-        # 2b) Fast path a plugins: si un plugin declara este comando.
-        respuesta_plugin = self.bus.despachar_comando(texto, contexto)
-        if respuesta_plugin:
-            return respuesta_plugin
 
         # 3) Construir contexto de memoria para el prompt.
         contexto_brain = self._agregar_memoria(texto)

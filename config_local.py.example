@@ -144,6 +144,22 @@ LLM_API_KEY = ""
 # (usado por: voz)
 # TTS_COMANDO = r"piper --model C:\voces\es.onnx --output_file {salida}"
 
+# Segundos de silencio con los que Miku da por terminada tu frase (0.3 a 1.5). Más bajo
+# = responde antes pero puede cortarte si hacés pausas al hablar; el estándar de la
+# librería es 0.8.
+# (usado por: voz)
+# STT_PAUSA_FIN = 0.6
+
+# Guarda en data/tts_cache el audio de las frases que Miku ya dijo, así las repetidas
+# ('¿Sí? Decime.', 'Listo'...) suenan al instante sin traducir ni sintetizar de nuevo.
+# Solo motor VOICEVOX.
+# (usado por: voz)
+# TTS_CACHE = True
+
+# Cuántas frases como máximo guarda esa caché (al pasarse borra las menos usadas).
+# (usado por: voz)
+# TTS_CACHE_MAX = 300
+
 # Subtítulos en pantalla: 'auto' (solo cuando Miku NO habla en español), 'siempre' o
 # 'nunca'.
 # Valores válidos: auto, siempre, nunca

@@ -1,13 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-ventanita.py - Ventanita de seleccion de modo (Voz / Texto).
+selector_modo.py - Ventanita de selección de modo (Voz / Texto).
 
-Paso 2 del lanzador (Z7): una ventana chica con dos botones para elegir como
-usar Miku hoy:
+Una ventana chica con dos botones para elegir cómo usar Miku hoy:
     - Modo Voz   : escucha continua con wake word (luego -> bandeja).
     - Modo Texto : consola, siempre con voz.
-
-Sin F22 todavia (eso es el paso 4). Sin "texto sin voz" (eso se quita en el 3).
 
 IMPORTANTE (hilos y QApplication): Qt solo permite UNA QApplication y los
 widgets deben crearse en el hilo que la posee. Por eso este modulo NO crea la

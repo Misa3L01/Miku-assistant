@@ -1,70 +1,35 @@
 # Python
 __pycache__/
 *.py[cod]
-*.so
 venv/
 env/
-.env
+.pytest_cache/
+.ruff_cache/
 
-# Archivos de configuración (secretos)
+# Secretos y configuración local (nunca se versionan)
 config_local.py
 config_local.py.*
 !config_local.py.example
+.env
 keys.txt
 *.key
-
-# Archivos de datos
-data/preferences.json
-data/macros_config.json
-# Persistencia de la memoria
-data/miku_memoria/
-data/miku_memoria.db
-data/*.db
-data/tidal_sesion.json
-data/recordatorios.json
-data/comedor*
-data/navegador_miku/
-data/navegador_whatsapp*/
-data/whatsapp*
-data/embeddings/
-data/modo_snapshot.json
-data/proactivo_estado.json
-data/*.log*
-data/*.tmp
-# Capturas de pantalla (pueden contener información sensible)
-data/capturas/
-
-# Empaquetado / distribución (los .zip pueden incluir config_local.py y data/)
-*.zip
-build/
-dist/
-
-# VS Code
-.vscode/settings.json
-
-# Sistema
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
-logs/
-
-# Código viejo (no versionar)
-codigo_viejo/
-
-# Modelos de voz (archivos pesados)
-voice_models/
-*.pth
-*.index
-*.bin
-modelos_voz/
-
-# VOICEVOX (carpeta externa)
-extern/
-
-# Copias de seguridad de config_local.py (pueden contener secretos)
 *.bak
 
-# Caché de pytest
-.pytest_cache/
+# Todo lo que Miku genera o guarda (preferencias, memoria, sesiones de TIDAL/WhatsApp/comedor,
+# perfiles de navegador, cachés de voz y de embeddings, capturas, logs...)
+data/
+
+# VOICEVOX (motor de voz local, se instala aparte)
+extern/
+
+# Empaquetado (los .zip pueden incluir config_local.py y data/)
+build/
+dist/
+*.zip
+
+# Editor y sistema
+.vscode/
+.claude/
+.DS_Store
+Thumbs.db
+*.log

@@ -8,7 +8,7 @@ import pytest
 from miku.plugins.sistema.ventanas import Ventanas
 from miku.voz.frases import catalogo_respuestas as cat
 from miku.voz.frases.banco import Banco
-from miku.voz.frases.respuesta import Respuesta, exito, falla, hubo_falla, responder
+from miku.voz.frases.respuesta import exito, falla, hubo_falla, responder
 
 
 def test_respuesta_es_un_str_con_metadatos():

@@ -1,5 +1,5 @@
 """
-subtitles.py - Overlay de subtítulos estilo anime con PyQt5.
+subtitulos.py - Overlay de subtítulos estilo anime con PyQt5.
 
 Mientras Miku "habla", se muestra una ventana transparente y sin bordes
 (siempre encima) con el texto en español. La ventana:
@@ -11,7 +11,7 @@ Mientras Miku "habla", se muestra una ventana transparente y sin bordes
     - no captura mouse/teclado   -> WA_TransparentForMouseEvents / WindowDoesNotAcceptFocus
 
 Diseño de hilos (importante para PyQt):
-    Todo el código que toca Qt corre en el hilo compartido de ``core.qt_hilo``
+    Todo el código que toca Qt corre en el hilo compartido de ``miku.ui.qt_hilo``
     (el mismo que usa la bandeja: Qt solo admite un event loop). Para
     mostrar/ocultar se encola trabajo en ese hilo, así la "afinidad de hilos"
     queda consistente y no hay crashes.
@@ -253,7 +253,7 @@ class _PanelSubtitulos:
 class SubtitulosOverlay:
     """API pública para mostrar/ocultar subtítulos desde cualquier hilo.
 
-    Usa el hilo de Qt compartido (``core.qt_hilo``), que también posee la
+    Usa el hilo de Qt compartido (``miku.ui.qt_hilo``), que también posee la
     bandeja. ``mostrar()`` y ``ocultar()`` son seguras desde el hilo del TTS.
 
     Raises:

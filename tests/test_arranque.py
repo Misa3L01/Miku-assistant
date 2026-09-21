@@ -1,4 +1,4 @@
-"""Arranque: instancia única, invocación, inicio con Windows y atajo F22."""
+"""Arranque: instancia única, invocación, inicio con Windows y atajo de teclado."""
 from __future__ import annotations
 
 import os

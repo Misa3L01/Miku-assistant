@@ -3,7 +3,7 @@ instancia.py - Una sola Miku a la vez, y forma de "invocarla" desde otra ejecuci
 
 Cómo funciona (solo ``ctypes``, sin dependencias):
     - La primera ejecución toma un *mutex* con nombre de Windows.
-    - Si otra ejecución arranca (p. ej. por el atajo F22 o por ``run.bat``), no puede tomar el mutex:
+    - Si otra ejecución arranca (p. ej. por el atajo de teclado o por ``run.bat``), no puede tomar el mutex:
       en vez de abrir una segunda Miku, dispara un *evento* con nombre y termina.
     - La primera ejecución tiene un hilo esperando ese evento y responde con su callback
       (saludar y escuchar un comando).

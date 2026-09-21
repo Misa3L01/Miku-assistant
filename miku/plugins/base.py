@@ -12,13 +12,12 @@ Contrato de un plugin (todo salvo ``nombre`` es opcional):
     tools          Schemas OpenAI function-calling que ve el LLM.
     peligrosas     Nombres de tools que exigen CONFIRMACIÓN del usuario antes
                    de ejecutarse (apagar la PC, expulsar a alguien...).
-    initialize()   Se llama una vez al arrancar (recursos, hilos, listeners).
+    initialize()   Se llama una vez al arrancar (recursos, hilos). Recibe el ``event_bus``: el
+                   registro de plugins y el contexto compartido (``voice``, ``parser``...).
     manejar_tool() Ejecuta una tool propia; devuelve None si no es suya.
     cerrar()       Libera recursos al cerrar el asistente.
 
-``execute()``/``comandos`` son un gancho heredado de "atajo por frase" que hoy
-ningún plugin usa: los comandos llegan por el LLM (tools) o por el fast-path
-del parser.
+Los comandos llegan por el LLM (tools) o por el fast-path del parser.
 """
 from __future__ import annotations
 
@@ -42,10 +41,6 @@ class Plugin:
     #: Descripción corta para logs / ayuda.
     descripcion: str = ""
 
-    # Comandos (frases/patrones) que este plugin acepta en `execute`.
-    # Puede quedar vacío si el plugin se engancha a eventos del bus.
-    comandos: list[str] = []
-
     #: Schemas de "tools" (formato OpenAI function calling) que publica este
     #: plugin para que el cerebro (LLM) las invoque.
     tools: list[dict] = []
@@ -55,30 +50,16 @@ class Plugin:
     peligrosas: frozenset = frozenset()
 
     def __init__(self) -> None:
-        self._inicializado: bool = False
         self._event_bus: "Any | None" = None
 
     def initialize(self, event_bus: "Any | None" = None) -> None:
-        """Prepara el plugin (recursos, listeners, etc.).
+        """Prepara el plugin (recursos, hilos, etc.).
 
-        Se llama una sola vez al arrancar. Aquí se pueden suscribir a
-        eventos del bus o cargar recursos pesados.
+        Se llama una sola vez al arrancar. ``event_bus`` da acceso a los demás plugins y a lo
+        compartido (``voice``, ``parser``); acá también se cargan los recursos pesados.
         """
         self._event_bus = event_bus
-        self._inicializado = True
         logger.debug("Plugin '%s' inicializado.", self.nombre)
-
-    def execute(self, comando: str, contexto: Dict[str, Any]) -> Any:
-        """Ejecuta una orden que fue asignada a este plugin.
-
-        Args:
-            comando: El texto de la instrucción a procesar.
-            contexto: Datos compartidos (rvc, kokoro, prefs, etc.).
-
-        Returns:
-            Una respuesta (str) o None si no puede atenderlo.
-        """
-        return None
 
     def manejar_tool(self, nombre_tool: str, args: Dict[str, Any],
                      contexto: Dict[str, Any]) -> Any:
@@ -106,17 +87,11 @@ class Plugin:
         """
         return None
 
-    @property
-    def inicializado(self) -> bool:
-        """True si el plugin fue inicializado satisfactoriamente."""
-        return self._inicializado
-
 
 def registrar_plugins(plugins: list[Plugin], event_bus: "Any") -> list[Plugin]:
-    """Registra e inicializa una lista de plugins sobre un bus de eventos.
+    """Inicializa cada plugin con el bus y devuelve los que arrancaron bien.
 
-    Cada plugin que pueda inicializarse correctamente se agrega al bus.
-    Devuelve la lista de plugins que quedaron activos.
+    Un plugin que falla al inicializarse se omite (queda en el log) sin tumbar a los demás.
     """
     activos: list[Plugin] = []
     for p in plugins:

@@ -15,8 +15,7 @@ no duplicar:
       malinterpretar (¿ ¡ … comillas tipográficas) sin tocar el texto original.
 
 Diseño:
-    - ``requests`` se importa a nivel de módulo (ya es dependencia dura del
-      proyecto).
+    - Las llamadas van por ``miku.plataforma.red`` (sesión HTTP compartida: reutiliza la conexión TLS).
     - La función NO guarda cache persistente: si el caller quiere cache, le
       pasa un ``dict`` en ``cache`` y se usa con la clave = texto normalizado.
     - Toda excepción se captura y se devuelve None (el caller decide el fallback).
@@ -27,7 +26,7 @@ import logging
 import re
 from typing import Dict, Optional
 
-import requests
+from miku.plataforma import red
 
 # Tope de entradas de las caches de traducción (ver ``traducir_con_groq``).
 _CACHE_MAX = 500
@@ -99,7 +98,7 @@ def traducir_con_groq(texto: str, idioma_destino: str, api_key: str,
               f"la traducción, sin comillas, sin comentarios, sin texto "
               f"adicional: " + texto_limpio)
     try:
-        resp = requests.post(
+        resp = red.post(
             _GROQ_CHAT_URL,
             headers={"Authorization": f"Bearer {key}",
                      "Content-Type": "application/json"},

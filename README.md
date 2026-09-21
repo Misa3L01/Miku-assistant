@@ -90,7 +90,7 @@ la invoca.
 
 | Modo | Cómo se usa |
 |---|---|
-| **Modo Voz** (el normal) | Escucha continua, como "OK Google": decí **"Miku"** y esperá el "¿Sí? Decime."; o todo junto: **"Miku, qué hora es"**. También podés **apretar F13** (en este equipo es la tecla Insert remapeada, ver abajo): saluda y escucha un comando sin decir "Miku". Mientras Miku habla, el micrófono espera para no oírla. Al iniciar da un *briefing* (hora, clima, recordatorios; se desactiva con `SALUDO_AL_INICIAR = False`). |
+| **Modo Voz** (el normal) | Escucha continua, como "OK Google": decí **"Miku"** y esperá el "¿Sí? Decime."; o todo junto: **"Miku, qué hora es"**. También podés **apretar F13** (en este equipo es la tecla Insert remapeada, ver abajo): saluda y escucha un comando sin decir "Miku". Mientras Miku habla, el micrófono espera para no oírla. Al iniciar hace un saludo corto (`SALUDO_AL_INICIAR = False` lo apaga; la hora, el clima y los pendientes te los da al volver de una ausencia, ver más abajo). |
 | **Modo Texto** (depuración) | Una ventana para escribirle a Miku y ver las respuestas (habla igual). Sirve para probar sin micrófono. |
 
 **Menú del icono de la bandeja** (clic derecho): *Invocar ahora* · *Modo voz* · *Modo texto (depuración)* ·
@@ -105,8 +105,8 @@ próxima vez.
 - **Atajo de teclado para abrir Miku:** crea un acceso directo en el Menú Inicio con **la tecla de invocación (F13) como tecla de método
   abreviado**. Así esa tecla abre a Miku **aunque esté cerrada** (y no necesita el inicio con Windows). Si ya estaba abierta,
   la nueva ejecución le avisa a la primera y se cierra. Si no activás el atajo, la tecla funciona igual pero solo mientras Miku corre.
-- **Insert → F13 (este equipo):** como el teclado no tiene F13, la tecla **Insert** se remapeó a F13 a nivel de Windows (registro `Scancode Map`, con `scripts/remapear_insert_a_f13.ps1`; pide administrador y **hay que reiniciar la PC**). Así el acceso directo del Menú Inicio (F13) abre a Miku aunque esté cerrada. Para volver a la Insert normal: `powershell -ExecutionPolicy Bypass -File scriptsemapear_insert_a_f13.ps1 -Restaurar` y reiniciar.
-- **Otra tecla en vez de F13:** un teclado de notebook no tiene F13-F24. Con *Elegir tecla de invocación…* (menú de la bandeja) apretás la tecla que querés y Miku la detecta y la guarda (`TECLA_INVOCAR`; una tecla sin nombre queda como `sc:NN`). Funciona **solo con Miku abierta** (el atajo de Windows que la abre cerrada es solo de F22). Para ver qué manda una tecla: `python -m miku.servicios.tecla`. Algunas teclas de fabricante (p. ej. la de **OMEN** en HP Victus/Omen) las consume el software del fabricante (OMEN Hub) antes que los programas: si al apretarla no aparece nada, esa tecla no se puede usar y conviene elegir otra (o reasignarla en OMEN Hub).
+- **Insert → F13 (este equipo):** como el teclado no tiene F13, la tecla **Insert** se remapeó a F13 a nivel de Windows (registro `Scancode Map`, con `scripts/remapear_insert_a_f13.ps1`; pide administrador y **hay que reiniciar la PC**). Así el acceso directo del Menú Inicio (F13) abre a Miku aunque esté cerrada. Para volver a la Insert normal: `powershell -ExecutionPolicy Bypass -File scripts\remapear_insert_a_f13.ps1 -Restaurar` y reiniciar.
+- **Otra tecla en vez de F13:** un teclado de notebook no tiene F13-F24. Con *Elegir tecla de invocación…* (menú de la bandeja) apretás la tecla que querés y Miku la detecta y la guarda (`TECLA_INVOCAR`; una tecla sin nombre queda como `sc:NN`). Funciona **solo con Miku abierta** (el atajo de Windows que la abre cerrada solo admite teclas F1-F24, con o sin modificadores). Para ver qué manda una tecla: `python -m miku.servicios.tecla`. Algunas teclas de fabricante (p. ej. la de **OMEN** en HP Victus/Omen) las consume el software del fabricante (OMEN Hub) antes que los programas: si al apretarla no aparece nada, esa tecla no se puede usar y conviene elegir otra (o reasignarla en OMEN Hub).
 - Argumentos: `--silencioso` (no muestra la ventanita) y `--invocar` (al arrancar, saluda y escucha).
 - Sin consola (con `pythonw`) el log queda en `data/miku.log`.
 - Para salir: menú de la bandeja → *Salir* (o `Ctrl+C` si la abriste desde una consola).
@@ -115,9 +115,9 @@ próxima vez.
 
 ## Configuración
 
-`config.py` carga, en este orden de prioridad creciente:
+`miku/ajustes/carga.py` arma la configuración con estas capas, de menor a mayor prioridad:
 
-1. **Defaults** (`_defaults()` en `config.py`, sin datos privados).
+1. **Defaults** (los del esquema `miku/ajustes/esquema.py`, sin datos privados).
 2. `data/preferences.json` — preferencias que Miku guarda sola (modo, personalidad, carpetas favoritas).
 3. `config_local.py` — tus secretos y rutas (claves en MAYÚSCULAS, se pasan a minúsculas).
 4. **Variables de entorno** con el mismo nombre (`GROQ_API_KEY=...`), para secretos.
@@ -142,6 +142,8 @@ sacale el `#`. Las opciones principales:
 | `GROQ_API_KEY`, `GROQ_API_KEY_STT` | LLM y Whisper/traducción TTS (la de STT cae a la principal si está vacía) | parser, STT, TTS |
 | `VOICEVOX_URL`, `VOICEVOX_SPEAKER_ID`, `VOICEVOX_RUN_EXE` | Motor de voz y voz elegida | TTS |
 | `TTS_MOTOR`, `TTS_IDIOMA`, `TTS_COMANDO`, `SUBTITULOS` | Motor de voz alternativo (voces propias / español) y subtítulos | TTS |
+| `TTS_CACHE`, `TTS_CACHE_MAX` | Caché en `data/tts_cache/` con el audio de las frases ya dichas (las repetidas suenan al instante) | TTS |
+| `STT_PAUSA_FIN` | Segundos de silencio que cierran tu frase (0.6 por defecto; más bajo responde antes pero puede cortarte) | STT |
 | `LLM_BASE_URL`, `LLM_MODELO`, `LLM_API_KEY`, `LLM_SOPORTA_TOOLS` | LLM local o de otro proveedor (compatible con OpenAI) | parser |
 | `STT_PROVEEDOR`, `STT_MODELO_LOCAL` | Transcripción en la nube (Groq) o local (faster-whisper) | STT |
 | `MICROFONO_INDEX` | Micrófono fijo (`None` = el del sistema) | STT |
@@ -183,9 +185,9 @@ miku-assistant/
 ├── data/                         # (gitignored) preferences.json, macros_config.json, miku_memoria.db, capturas/
 ├── bin/es.exe                    # Everything CLI
 ├── extern/VOICEVOX/              # (gitignored) motor de voz local
-├── docs/                         # Bitácoras, plan de reestructuración, empaquetado, interpolación
+├── docs/                         # Empaquetado (.exe) e interpolación de video
 └── miku/
-    ├── plataforma/               # Helpers de Windows compartidos: texto · subprocesos · pantalla · audio · everything · openmeteo · hardware · procesos
+    ├── plataforma/               # Helpers compartidos: red (sesión HTTP con conexiones persistentes) · cdp (navegador por depuración) · texto · subprocesos · pantalla · audio · everything · openmeteo · hardware · procesos
     ├── app.py                    # Ensambla todo: Asistente, modos (voz/texto) en caliente, tecla de invocación, cierre ordenado
     ├── ajustes/                  # Configuración
     │   ├── esquema.py            #   Esquema ÚNICO de opciones (tipo, default, descripción)
@@ -199,10 +201,10 @@ miku-assistant/
     │   └── memoria/              #   almacen.py (SQLite) · embeddings.py (fastembed, opcional)
     ├── voz/
     │   ├── entrada/escucha.py    #   STT: wake word "Miku" + invocación por tecla, Whisper (Groq)
-    │   ├── salida/               #   tts.py (VOICEVOX + fallback pyttsx3) · traduccion.py (Groq, compartida)
+    │   ├── salida/               #   tts.py (VOICEVOX + fallback pyttsx3) · cache_audio.py (frases ya sintetizadas) · traduccion.py (Groq, compartida)
     │   └── frases/               #   tono.py (variantes de tono) · banco.py (frases con variantes que rotan) · catalogo_proactivo.py
     ├── ui/                       #   qt_hilo.py (UN hilo de Qt) · bandeja.py · subtitulos.py · selector_modo.py · consola.py (modo texto)
-    ├── servicios/                #   instancia.py (una sola Miku) · arranque.py (inicio con Windows, atajo de teclado) · eventos · scheduler · notificaciones · modos · briefing · personalidad · proactivo (motor de avisos) · reglas_proactivas
+    ├── servicios/                #   instancia.py (una sola Miku) · arranque.py (inicio con Windows, atajo de teclado) · eventos (registro de plugins y contexto compartido) · scheduler · notificaciones · modos · briefing · personalidad · proactivo (motor de avisos) · reglas_proactivas
     └── plugins/
         ├── base.py               #   Clase base Plugin (contrato documentado en el módulo)
         ├── registro.py           #   Catálogo de plugins con carga perezosa y aislada
@@ -237,7 +239,8 @@ Cada plugin declara en `peligrosas` qué tools exigen confirmación (`energia`: 
 ### Pipeline de voz e hilos
 
 - **Escucha** (hilo `escucha_voz`): captura frases cortas, descarta ruidos <0,4 s, transcribe con Whisper y busca "Miku" como **palabra completa**. Antes de escuchar espera a que Miku termine de hablar.
-- **Habla** (hilo `tts_player`): cola de textos; cada frase se traduce/sintetiza (con *prefetch* de la siguiente) y se subtitula en sincronía. `decir()` es seguro desde cualquier hilo.
+- **Habla** (hilo `tts_player`): cola de textos; cada frase se traduce/sintetiza (con *prefetch* de la siguiente) y se subtitula en sincronía. Las frases cortas ya dichas salen de una **caché en disco** (sin traducir ni sintetizar), y el saludo del wake se precalienta al arrancar. `decir()` es seguro desde cualquier hilo.
+- **Red:** las llamadas a Groq (Whisper, LLM, traducción) y a VOICEVOX van por una **sesión HTTP compartida** (`miku/plataforma/red.py`): la conexión TLS se reutiliza en vez de abrirse en cada llamada. Ante un 429/5xx pasajero del LLM se reintenta una vez.
 - **Qt** (hilo `miku_qt`): un único event loop para bandeja, subtítulos y ventanita.
 - **Otros hilos daemon:** Discord (su propio `asyncio`), Telegram, Game Booster, asistente proactivo, timers del scheduler. Cada plugin los cierra en `cerrar()`; `Asistente.cerrar()` es idempotente.
 
@@ -314,7 +317,7 @@ Detalles que conviene saber:
 - **`abrir_programa`** busca en: alias/AppOpener → biblioteca de **Steam** → **Epic** (`JUEGOS_EPIC`) → ejecutable por nombre con **Everything**; si hay varios candidatos, **pregunta cuál**.
 - **`buscar_archivo`** nunca lanza ejecutables (`.exe`, `.bat`, `.ps1`…): los muestra en su carpeta.
 - **`cerrar_programa`** solo cierra apps de `APP_WHITELIST` (coincidencia exacta) y nunca el Explorador.
-- **`programar_accion`** acepta minutos o una hora (`HH:MM`); los recordatorios se hablan por voz. Se cancelan al cerrar el asistente.
+- **`programar_accion`** acepta minutos o una hora (`HH:MM`); los recordatorios se hablan por voz. Los recordatorios sobreviven a cerrar Miku; los apagados y suspensiones programados no (ver *Recordatorios* más abajo).
 - **Discord:** un bot **no** puede cambiar el volumen de otro usuario (límite de la API), por eso `volumen_usuario_discord` es mute/deafen. El rol del bot debe estar por encima del usuario objetivo.
 - **TIDAL:** no tiene API pública de reproducción, y el enlace `tidal://track/<id>` **solo abre la ficha del tema, no lo reproduce**. Por eso, para **"poné X de Y"** Miku maneja la app de escritorio (que es Electron) por su **puerto de depuración**, como hace con Brave: busca el tema en tu cuenta (`pip install tidalapi`; decí *"conectá TIDAL"* una sola vez, aprobás en el navegador y la sesión queda guardada en `data/tidal_sesion.json`, que no se sube a git y **se mantiene entre reinicios**), abre `https://desktop.tidal.com/track/<id>` y aprieta el play. Necesita `TIDAL_RUTA_EXE` y `websocket-client`. Si TIDAL estaba abierto sin el puerto (`TIDAL_PUERTO_CONTROL`, 9223), **la primera vez lo cierra y lo abre de nuevo con el puerto** (~15 s); si no estaba abierto, lo abre ella. Con el puerto activo, pausa/siguiente/anterior, aleatorio y "qué suena" también van directo a TIDAL (las teclas multimedia van al último reproductor que sonó, que puede ser el navegador). Si TIDAL cambia su interfaz web y el botón deja de encontrarse, Miku lo dice en vez de fingir. Los selectores son los de TIDAL 2.43.
 - **TIDAL: qué se le puede pedir.** *"Poné Show de Ado"* (un tema); *"poné mi playlist de anime en aleatorio"* (busca primero **tus** playlists por nombre y después las públicas; "animes" encuentra "Anime"); *"poné canciones de Soda Stereo"* (una mezcla en **aleatorio** de sus temas, no un álbum entero; con *"en orden"* no se mezcla); *"poné el álbum Thriller"*; *"poné X y que siga aleatorio"* (pone el tema y deja activado el aleatorio del reproductor, así lo que sigue es al azar); *"activá / sacá el aleatorio"*.
@@ -395,8 +398,9 @@ Reglas del contrato (detalle en el docstring de `miku/plugins/base.py`):
 ## Desarrollo y tests
 
 ```bash
-pip install -r requirements-dev.txt
-python -m pytest                      # ~120 tests, unos 5 segundos
+pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest                      # más de 750 tests, ~40 segundos
+python -m ruff check .                # lint: imports/variables sin usar, nombres indefinidos, trampas comunes
 ```
 
 Los tests **no leen** tu `config_local.py` ni tu carpeta `data/`: usan una configuración de fábrica
@@ -434,17 +438,17 @@ Subí el nivel de log con `LOG_LEVEL = "DEBUG"` en `config_local.py`.
 
 **Límites actuales (por diseño o pendientes):**
 
-- Los recordatorios y acciones programadas **no sobreviven** a cerrar el asistente.
 - Miku siempre habla, también en modo texto (necesita VOICEVOX o la voz del sistema). Sin PyQt5 no hay bandeja ni ventana: el modo texto cae a una consola.
 - La wake word usa Whisper por API: cada frase de la escucha continua es una llamada (se filtran ruidos cortos, pero consume cuota).
+- La síntesis de VOICEVOX en CPU tarda ~0,5-1 s por frase nueva (las repetidas salen de la caché de audio).
 - Telegram/Discord/Todoist/Tidal/Brave dependen de servicios externos y no tienen pruebas automáticas.
 
 **Ideas pendientes:** `traducir_a_canal` de Discord, pausar Wallpaper Engine y temperatura en el Game Booster, OCR de regiones/ventanas puntuales, motores de voz alternativos y auto-actualización del `.exe`.
 
 ---
 
-## Documentación interna
+## Documentación adicional
 
-- [CONTEXTO.md](CONTEXTO.md): bitácora de decisiones y sesiones.
-- [docs/informe_auditoria.md](docs/informe_auditoria.md): auditoría técnica y lista de cambios de la última revisión.
-- `docs/informe_*.md`: bitácoras por sesión. [docs/empaquetado.md](docs/empaquetado.md): build del `.exe`.
+- [docs/empaquetado.md](docs/empaquetado.md): construir el `.exe` con PyInstaller.
+- [docs/interpolacion/LEEME.md](docs/interpolacion/LEEME.md): el `.bat` de interpolación de video.
+- `python -m miku.ajustes estado`: qué tenés configurado y qué falta (las opciones están documentadas en `miku/ajustes/esquema.py`).
