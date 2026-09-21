@@ -171,9 +171,34 @@ _OPCIONES: List[Opcion] = [
        "arranca sola (oculto) si no está corriendo.", "ruta",
        r'r"D:\Programas\VOICEVOX\vv-engine\run.exe"', "voz"),
     _o("voicevox_gpu", False, "voz",
-       "Sintetizar la voz por GPU. Necesita el paquete GPU del motor VOICEVOX (DirectML para AMD/Intel, "
-       "CUDA para NVIDIA): con el motor de CPU no cambia nada y Miku lo avisa en el log. Acelera mucho "
-       "las frases nuevas (las repetidas ya salen de la caché).", "booleano", usado_por="voz"),
+       "Sintetizar la voz por GPU (VOICEVOX o AivisSpeech). VOICEVOX necesita su paquete GPU (DirectML "
+       "para AMD/Intel, CUDA para NVIDIA); AivisSpeech usa DirectML. Con un motor de solo CPU no cambia "
+       "nada y Miku lo avisa en el log. Acelera las frases nuevas (las repetidas ya salen de la caché).",
+       "booleano", usado_por="voz"),
+    _o("aivisspeech_url", "http://127.0.0.1:10101", "voz",
+       "Dónde escucha el motor de AivisSpeech (se usa con TTS_MOTOR = 'aivisspeech'). El 10101 es su "
+       "puerto de siempre.", usado_por="voz"),
+    _o("aivisspeech_speaker_id", 0, "voz",
+       "Número de la voz (estilo) de AivisSpeech. 0 = la primera que tengas instalada. Lo más cómodo es "
+       "elegirla desde la bandeja: Configuración > Voz.", "entero", usado_por="voz"),
+    _o("aivisspeech_run_exe", "", "voz",
+       "Ruta al run.exe del motor de AivisSpeech, si no está donde lo deja el instalador (Archivos de "
+       "programa\\AivisSpeech\\AivisSpeech-Engine) ni en extern/AivisSpeech-Engine/. Miku lo arranca sola.",
+       "ruta", r'r"D:\Programas\AivisSpeech\AivisSpeech-Engine\run.exe"', "voz"),
+    _o("voz_velocidad", 1.0, "voz",
+       "Velocidad al hablar (0.5 a 2.0; 1.0 es la normal).", "decimal", usado_por="voz"),
+    _o("voz_tono", 0.0, "voz",
+       "Tono de la voz (-0.15 a 0.15; 0 es el natural). En AivisSpeech conviene dejarlo en 0: moverlo "
+       "empeora el sonido.", "decimal", usado_por="voz"),
+    _o("voz_entonacion", 1.0, "voz",
+       "Cuánto sube y baja la voz al hablar (0 a 2; 1.0 es lo normal). En AivisSpeech es la fuerza de la "
+       "emoción del estilo.", "decimal", usado_por="voz"),
+    _o("voz_volumen", 1.0, "voz",
+       "Volumen de la voz de Miku (0 a 2; 1.0 es el normal). No toca el volumen de Windows.", "decimal",
+       usado_por="voz"),
+    _o("voz_ritmo", 1.0, "voz",
+       "Solo AivisSpeech: cuánto varía la velocidad dentro de una frase (0 = parejo, 2 = muy suelto).",
+       "decimal", usado_por="voz"),
     _o("microfono_index", None, "voz",
        "Número del micrófono a usar. None = el predeterminado de Windows. La lista de "
        "micrófonos aparece en la consola al iniciar el modo voz.", "entero", "MICROFONO_INDEX = 2",
@@ -203,9 +228,10 @@ _OPCIONES: List[Opcion] = [
        "Tamaño del modelo de faster-whisper cuando STT_PROVEEDOR = 'local' (tiny, base, small, "
        "medium, large-v3).", "texto", usado_por="voz"),
     _o("tts_motor", "voicevox", "voz",
-       "Motor de voz: 'voicevox' (voz japonesa, Miku traduce lo que dice), 'sistema' (voz de "
-       "Windows, español) o 'comando' (tu propio motor: ver TTS_COMANDO).", "texto", usado_por="voz",
-       permitidos=("voicevox", "sistema", "comando")),
+       "Motor de voz: 'voicevox' o 'aivisspeech' (voces japonesas: Miku traduce lo que dice), 'sistema' "
+       "(voz de Windows, español) o 'comando' (tu propio motor: ver TTS_COMANDO). Cambiarlo requiere "
+       "reiniciar Miku.", "texto", usado_por="voz",
+       permitidos=("voicevox", "aivisspeech", "sistema", "comando")),
     _o("tts_idioma", "es", "voz",
        "Idioma que HABLA el motor 'comando' (es, en, ja, pt…). Si no es 'es', Miku traduce antes "
        "de hablar.", "texto", usado_por="voz"),

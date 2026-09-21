@@ -132,6 +132,8 @@ class Asistente:
         self.bandeja = bandeja_mod.Bandeja()
         # Ventana de depuración del modo texto (se crea la primera vez).
         self.consola = None
+        # Ventana de configuración (bandeja > Configuración…; se crea la primera vez).
+        self._configuracion: Any = None
         #: Modo actual: "voz", "texto" o None (todavía no se eligió).
         self.modo: Optional[str] = None
         self._lock_modo = threading.RLock()
@@ -454,7 +456,19 @@ class Asistente:
             "inicio_windows": inicio_windows,
             "atajo_tecla": atajo_tecla,
             "elegir_tecla": self.elegir_tecla,
+            "configuracion": self.abrir_configuracion,
         }
+
+    def abrir_configuracion(self) -> None:
+        """Abre la ventana de configuración (voz y ajustes). Se llama desde el menú de la bandeja."""
+        if self._configuracion is None:
+            from miku.ui.configuracion import VentanaConfiguracion  # import tardío (Qt)
+            try:
+                self._configuracion = VentanaConfiguracion(self.cfg, self._preparar_voz)
+            except RuntimeError as e:
+                logger.warning("No puedo abrir la configuración: %s", e)
+                return
+        self._configuracion.mostrar()
 
     def tecla_invocacion(self) -> str:
         """Tecla que invoca a Miku (``TECLA_INVOCAR``; F13 por defecto)."""

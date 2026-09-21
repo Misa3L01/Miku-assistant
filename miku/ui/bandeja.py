@@ -87,6 +87,7 @@ class _PanelBandeja:
 
         menu.addSeparator()
         _accion("Invocar ahora", "invocar")
+        _accion("Configuración…", "configuracion")
         menu.addSeparator()
         _accion("Modo voz", "modo_voz", True)
         _accion("Modo texto (depuración)", "modo_texto", True)

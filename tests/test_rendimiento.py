@@ -58,14 +58,14 @@ def test_una_frase_de_la_cache_ni_siquiera_consulta_a_voicevox(voz):
 def test_la_cache_sobrevive_entre_sesiones(cfg, voz):
     voz._preparar_audio_frase("Listo")
     otra = tts_mod.TextoAVoz(cfg)                       # "reinicio": otra instancia, misma carpeta
-    assert otra._cache_audio().obtener("Listo", f"vv{otra.speaker_id}") is not None
+    assert otra._cache_audio().obtener("Listo", otra._firma_voz()) is not None
 
 
 def test_distintas_voces_no_comparten_audio(cfg, voz):
     voz._preparar_audio_frase("Listo")
     cfg.valores["voicevox_speaker_id"] = 99
     otra = tts_mod.TextoAVoz(cfg)
-    assert otra._cache_audio().obtener("Listo", f"vv{otra.speaker_id}") is None
+    assert otra._cache_audio().obtener("Listo", otra._firma_voz()) is None
 
 
 def test_con_la_cache_apagada_siempre_sintetiza(voz, cfg):
@@ -78,7 +78,7 @@ def test_con_la_cache_apagada_siempre_sintetiza(voz, cfg):
 def test_si_voicevox_falla_no_se_guarda_nada(voz, monkeypatch):
     monkeypatch.setattr(voz, "_sintetizar_voicevox", lambda t: None)
     assert voz._preparar_audio_frase("Listo")["motor"] == "sistema"
-    assert voz._cache_audio().obtener("Listo", f"vv{voz.speaker_id}") is None
+    assert voz._cache_audio().obtener("Listo", voz._firma_voz()) is None
 
 
 def test_no_se_cachean_las_respuestas_largas(voz):

@@ -21,6 +21,14 @@ if str(RAIZ) not in sys.path:
 # Qt sin pantalla (bandeja/subtítulos se prueban "offscreen").
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+# El mismo orden que miku/app.py: onnxruntime ANTES que Qt. Si Qt ya cargó sus DLL, inicializar
+# onnxruntime da un "access violation" (pasaba cuando un test importaba la app después de abrir una
+# ventana). Así el resultado no depende del orden en que corren los tests.
+try:
+    import onnxruntime  # noqa: F401,E402
+except Exception:  # noqa: BLE001  (opcional: sin él la memoria y silero no se prueban)
+    pass
+
 from miku.ajustes import carga as config_mod  # noqa: E402
 from miku.servicios.eventos import EventBus  # noqa: E402
 from miku.cerebro.parser import CommandParser  # noqa: E402
@@ -127,3 +135,10 @@ def _cache_de_audio_aislada(tmp_path, monkeypatch):
     """La caché de audio del TTS vive en disco: que ningún test escriba en ``data/`` real."""
     from miku.voz.salida import tts
     monkeypatch.setattr(tts, "CARPETA_CACHE", tmp_path / "tts_cache")
+
+
+@pytest.fixture(autouse=True)
+def _config_local_aislado(tmp_path, monkeypatch):
+    """La ventana de configuración escribe en config_local.py: que ningún test toque el del usuario."""
+    from miku.ajustes import escritura
+    monkeypatch.setattr(escritura, "ruta_por_defecto", lambda: tmp_path / "config_local.py")

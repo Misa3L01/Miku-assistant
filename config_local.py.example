@@ -90,11 +90,51 @@ LLM_API_KEY = ""
 # (usado por: voz)
 # VOICEVOX_RUN_EXE = r"D:\Programas\VOICEVOX\vv-engine\run.exe"
 
-# Sintetizar la voz por GPU. Necesita el paquete GPU del motor VOICEVOX (DirectML para
-# AMD/Intel, CUDA para NVIDIA): con el motor de CPU no cambia nada y Miku lo avisa en el
-# log. Acelera mucho las frases nuevas (las repetidas ya salen de la caché).
+# Sintetizar la voz por GPU (VOICEVOX o AivisSpeech). VOICEVOX necesita su paquete GPU
+# (DirectML para AMD/Intel, CUDA para NVIDIA); AivisSpeech usa DirectML. Con un motor de
+# solo CPU no cambia nada y Miku lo avisa en el log. Acelera las frases nuevas (las
+# repetidas ya salen de la caché).
 # (usado por: voz)
 # VOICEVOX_GPU = False
+
+# Dónde escucha el motor de AivisSpeech (se usa con TTS_MOTOR = 'aivisspeech'). El 10101
+# es su puerto de siempre.
+# (usado por: voz)
+# AIVISSPEECH_URL = "http://127.0.0.1:10101"
+
+# Número de la voz (estilo) de AivisSpeech. 0 = la primera que tengas instalada. Lo más
+# cómodo es elegirla desde la bandeja: Configuración > Voz.
+# (usado por: voz)
+# AIVISSPEECH_SPEAKER_ID = 0
+
+# Ruta al run.exe del motor de AivisSpeech, si no está donde lo deja el instalador
+# (Archivos de programa\AivisSpeech\AivisSpeech-Engine) ni en extern/AivisSpeech-
+# Engine/. Miku lo arranca sola.
+# (usado por: voz)
+# AIVISSPEECH_RUN_EXE = r"D:\Programas\AivisSpeech\AivisSpeech-Engine\run.exe"
+
+# Velocidad al hablar (0.5 a 2.0; 1.0 es la normal).
+# (usado por: voz)
+# VOZ_VELOCIDAD = 1.0
+
+# Tono de la voz (-0.15 a 0.15; 0 es el natural). En AivisSpeech conviene dejarlo en 0:
+# moverlo empeora el sonido.
+# (usado por: voz)
+# VOZ_TONO = 0.0
+
+# Cuánto sube y baja la voz al hablar (0 a 2; 1.0 es lo normal). En AivisSpeech es la
+# fuerza de la emoción del estilo.
+# (usado por: voz)
+# VOZ_ENTONACION = 1.0
+
+# Volumen de la voz de Miku (0 a 2; 1.0 es el normal). No toca el volumen de Windows.
+# (usado por: voz)
+# VOZ_VOLUMEN = 1.0
+
+# Solo AivisSpeech: cuánto varía la velocidad dentro de una frase (0 = parejo, 2 = muy
+# suelto).
+# (usado por: voz)
+# VOZ_RITMO = 1.0
 
 # Número del micrófono a usar. None = el predeterminado de Windows. La lista de
 # micrófonos aparece en la consola al iniciar el modo voz.
@@ -134,9 +174,10 @@ LLM_API_KEY = ""
 # (usado por: voz)
 # STT_MODELO_LOCAL = "small"
 
-# Motor de voz: 'voicevox' (voz japonesa, Miku traduce lo que dice), 'sistema' (voz de
-# Windows, español) o 'comando' (tu propio motor: ver TTS_COMANDO).
-# Valores válidos: voicevox, sistema, comando
+# Motor de voz: 'voicevox' o 'aivisspeech' (voces japonesas: Miku traduce lo que dice),
+# 'sistema' (voz de Windows, español) o 'comando' (tu propio motor: ver TTS_COMANDO).
+# Cambiarlo requiere reiniciar Miku.
+# Valores válidos: voicevox, aivisspeech, sistema, comando
 # (usado por: voz)
 # TTS_MOTOR = "voicevox"
 

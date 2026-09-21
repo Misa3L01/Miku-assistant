@@ -1,5 +1,9 @@
 """
-tts.py - Síntesis de voz (TTS) usando VOICEVOX.
+tts.py - Síntesis de voz (TTS) con un motor japonés local: VOICEVOX o AivisSpeech.
+
+Los dos motores exponen la misma API HTTP (``/audio_query`` + ``/synthesis`` + ``/speakers``), así que
+este módulo los maneja igual; solo cambian el puerto, dónde está su ``run.exe`` y qué voces trae cada
+uno (ver ``MOTORES_JAPONESES``). Con ``TTS_MOTOR`` se elige cuál usar.
 
 Estrategia (cambio de arquitectura: ya NO se usa RVC/Kokoro/torch):
     1. El texto de la respuesta está en español (viene del LLM).
@@ -32,7 +36,9 @@ import re
 import subprocess
 import threading
 import time
-from typing import Optional
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 import requests
 
@@ -51,6 +57,51 @@ logger = logging.getLogger("miku.tts")
 # absoluta al ``run.exe``).
 VOICEVOX_RUN_EXE = (config_mod.BASE_DIR / "extern" / "VOICEVOX"
                     / "vv-engine" / "run.exe")
+
+@dataclass(frozen=True)
+class MotorJapones:
+    """Un motor de voz con la API de VOICEVOX.
+
+    Attributes:
+        clave: Valor de ``TTS_MOTOR`` y prefijo de sus opciones (``<clave>_url``, ``<clave>_speaker_id``,
+            ``<clave>_run_exe``).
+        nombre: Cómo se lo nombra en los mensajes.
+        url: Dirección por defecto de su servidor.
+        rutas_run: Dónde suele estar su ``run.exe`` si no se configura la ruta.
+    """
+
+    clave: str
+    nombre: str
+    url: str
+    rutas_run: Tuple[Path, ...]
+
+
+def _programas_usuario() -> Path:
+    """``%LOCALAPPDATA%\\Programs`` (donde se instalan las apps "solo para mí")."""
+    return Path(os.environ.get("LOCALAPPDATA", "")) / "Programs"
+
+
+MOTORES_JAPONESES: Dict[str, MotorJapones] = {
+    "voicevox": MotorJapones("voicevox", "VOICEVOX", "http://localhost:50021", (VOICEVOX_RUN_EXE,)),
+    # AivisSpeech (https://aivis-project.com) es un derivado de VOICEVOX con voces propias (.aivmx) y
+    # su propio puerto. El instalador pone el motor en Archivos de programa; el motor suelto (zip) se
+    # puede dejar en extern/AivisSpeech-Engine/, como VOICEVOX.
+    "aivisspeech": MotorJapones("aivisspeech", "AivisSpeech", "http://127.0.0.1:10101", (
+        Path(r"C:\Program Files\AivisSpeech\AivisSpeech-Engine\run.exe"),
+        _programas_usuario() / "AivisSpeech" / "AivisSpeech-Engine" / "run.exe",
+        config_mod.BASE_DIR / "extern" / "AivisSpeech-Engine" / "run.exe",
+    )),
+}
+
+#: Ajustes de la voz: (opción, campo del audio_query, mínimo, máximo). Se aplican solo a los campos que
+#: el motor devuelve (``voz_ritmo`` existe solo en AivisSpeech, por ejemplo) y se acotan al rango válido.
+PARAMETROS_VOZ: Tuple[Tuple[str, str, float, float], ...] = (
+    ("voz_velocidad", "speedScale", 0.5, 2.0),
+    ("voz_tono", "pitchScale", -0.15, 0.15),
+    ("voz_entonacion", "intonationScale", 0.0, 2.0),
+    ("voz_volumen", "volumeScale", 0.0, 2.0),
+    ("voz_ritmo", "tempoDynamicsScale", 0.0, 2.0),
+)
 
 # Carpeta de la caché de audio en disco (frases ya sintetizadas; ver ``cache_audio.py``).
 CARPETA_CACHE = config_mod.BASE_DIR / "data" / "tts_cache"
@@ -158,8 +209,13 @@ class TextoAVoz:
     def __init__(self, cfg: "config_mod.Config",
                  subtitulos_activos: bool = False) -> None:
         self.cfg = cfg
-        self.voicevox_url = cfg.voicevox_url.rstrip("/")
-        self.speaker_id = cfg.voicevox_speaker_id
+        # Qué motor japonés se usa (VOICEVOX o AivisSpeech). Cambiarlo requiere reiniciar Miku: el
+        # servidor, su puerto y el proceso que se lanza dependen de esto.
+        self.motor_jp = MOTORES_JAPONESES.get(self._motor_elegido(), MOTORES_JAPONESES["voicevox"])
+        url = str(cfg.get(f"{self.motor_jp.clave}_url", "") or self.motor_jp.url)
+        self.voicevox_url = url.rstrip("/")
+        #: Primer estilo disponible del motor (se usa si no se eligió una voz; ver ``speaker_id``).
+        self._estilo_por_defecto: Optional[int] = None
 
         # Lista de URLs a probar: la configurada primero y luego el fallback
         # localhost <-> 127.0.0.1 (en Windows a veces uno resuelve y el otro no).
@@ -201,9 +257,68 @@ class TextoAVoz:
         # Hasta cuándo (time.monotonic) vale el último chequeo exitoso: evita un GET /speakers por frase.
         self._voicevox_ok_hasta = 0.0
 
+        logger.info("Motor de voz: %s en %s.", self.motor_jp.nombre, self.voicevox_url)
+
         # Caché de audio en disco (se crea la primera vez que se usa; ver ``_cache_audio``).
         self._cache: Optional[CacheAudio] = None
         self._cache_resuelta = False
+
+    # ---------------- Voz elegida y ajustes (se leen en cada frase) ----------------
+    @property
+    def speaker_id(self) -> int:
+        """Voz (estilo) a usar. Se lee en cada frase: cambiarla desde la configuración vale al instante.
+
+        En AivisSpeech los números de estilo dependen de las voces que tengas instaladas, así que el
+        valor por defecto (0) significa "la primera voz disponible".
+        """
+        crudo = self.cfg.get(f"{self.motor_jp.clave}_speaker_id", 6 if self.motor_jp.clave == "voicevox" else 0)
+        try:
+            elegido = int(crudo)
+        except (TypeError, ValueError):
+            elegido = 0
+        if elegido or self.motor_jp.clave == "voicevox":
+            return elegido
+        if self._estilo_por_defecto is None:
+            voces = self.voces()
+            if voces:
+                self._estilo_por_defecto = voces[0][0]
+                logger.info("Sin voz elegida: uso '%s' (%s).", voces[0][1], voces[0][0])
+        return self._estilo_por_defecto or 0
+
+    def _parametros_voz(self) -> Dict[str, float]:
+        """Velocidad, tono, etc. como campos del audio_query, acotados a su rango válido."""
+        valores: Dict[str, float] = {}
+        for opcion, campo, minimo, maximo in PARAMETROS_VOZ:
+            por_defecto = 0.0 if campo == "pitchScale" else 1.0
+            try:
+                valor = float(self.cfg.get(opcion, por_defecto))
+            except (TypeError, ValueError):
+                valor = por_defecto
+            valores[campo] = min(max(valor, minimo), maximo)
+        return valores
+
+    def _firma_voz(self) -> str:
+        """Todo lo que cambia cómo suena una frase: la caché de audio la usa para no mezclar voces."""
+        ajustes = ",".join(f"{v:g}" for v in self._parametros_voz().values())
+        return f"{self.motor_jp.clave}:{self.speaker_id}:{ajustes}"
+
+    def voces(self) -> List[Tuple[int, str]]:
+        """Las voces del motor en uso como ``[(id del estilo, "Personaje (estilo)")]`` ([] si no responde)."""
+        try:
+            # Si todavía no se sabe cuál responde, 127.0.0.1 primero: con el motor apagado, "localhost"
+            # tarda el doble en dar el error (Windows prueba IPv6 y después IPv4).
+            base = self._voicevox_url_activa or self._urls_a_probar[0]
+            resp = red.get(f"{base}/speakers", timeout=3)
+            if resp.status_code != 200:
+                return []
+            lista: List[Tuple[int, str]] = []
+            for personaje in resp.json() or []:
+                for estilo in personaje.get("styles") or []:
+                    lista.append((int(estilo["id"]), f"{personaje.get('name', '?')} ({estilo.get('name', '?')})"))
+            return lista
+        except Exception:  # noqa: BLE001
+            logger.debug("No pude leer las voces del motor.", exc_info=True)
+            return []
 
     @staticmethod
     def _construir_urls_a_probar(url_config: str) -> list:
@@ -263,16 +378,16 @@ class TextoAVoz:
                 resp = red.get(endpoint, timeout=timeout)
                 if resp.status_code == 200:
                     self._voicevox_url_activa = url
-                    logger.info("[VOICEVOX] OK en %s (HTTP %s).",
+                    logger.info("[Voz] OK en %s (HTTP %s).",
                                 endpoint, resp.status_code)
                     return True
-                logger.info("[VOICEVOX] %s respondió HTTP %s (no 200). "
+                logger.info("[Voz] %s respondió HTTP %s (no 200). "
                             "Cuerpo: %s", endpoint, resp.status_code,
                             (resp.text or "")[:200])
             except Exception as e:  # noqa: BLE001
-                logger.info("[VOICEVOX] No pude conectar a %s: %s",
+                logger.info("[Voz] No pude conectar a %s: %s",
                             endpoint, e)
-        logger.info("[VOICEVOX] Ninguna URL respondió (probadas: %s).",
+        logger.info("[Voz] Ninguna URL respondió (probadas: %s).",
                     ", ".join(self._urls_a_probar))
         return False
 
@@ -313,12 +428,12 @@ class TextoAVoz:
 
         # Si ya está corriendo, respetamos el proceso externo del usuario.
         if self._verificar_voicevox():
-            logger.info("[VOICEVOX] Ya estaba activo en %s.", self._url_activa())
+            logger.info("[Voz] Ya estaba activo en %s.", self._url_activa())
             return True
 
         # No reintentamos arrancarlo si ya estuvimos en ese intento.
         if self._voicevox_intento_lanzado:
-            logger.info("[VOICEVOX] Ya intenté arrancarlo antes y sigue sin "
+            logger.info("[Voz] Ya intenté arrancarlo antes y sigue sin "
                         "responder.")
             return False
         self._voicevox_intento_lanzado = True
@@ -326,17 +441,18 @@ class TextoAVoz:
         ruta_run = self._buscar_run_voicevox()
         if ruta_run is None:
             logger.warning(
-                "[VOICEVOX] No responde en %s y no encontré su run.exe "
-                "(busqué en config_local.VOICEVOX_RUN_EXE y en %s). "
+                "[Voz] %s no responde en %s y no encontré su run.exe "
+                "(busqué %s_RUN_EXE en config_local.py y en %s). "
                 "Usaré pyttsx3 como fallback (voz del sistema).",
-                self.voicevox_url, VOICEVOX_RUN_EXE)
+                self.motor_jp.nombre, self.voicevox_url, self.motor_jp.clave.upper(),
+                ", ".join(str(r) for r in self.motor_jp.rutas_run))
             return False
 
-        logger.info("[VOICEVOX] Intentando arrancar el ENGINE desde: %s",
+        logger.info("[Voz] Intentando arrancar el ENGINE desde: %s",
                     ruta_run)
         if not self._es_engine_voicevox(ruta_run):
             logger.warning(
-                "[VOICEVOX] AVISO: la ruta '%s' no parece el ENGINE HTTP de "
+                "[Voz] AVISO: la ruta '%s' no parece el ENGINE HTTP de "
                 "VOICEVOX (no encontré engine_manifest.json ni "
                 "voicevox_core.dll junto a run.exe). Si lanzaste el editor con "
                 "GUI, este proceso NO expondrá el puerto 50021.", ruta_run)
@@ -364,7 +480,7 @@ class TextoAVoz:
             # El ENGINE de VOICEVOX acelera la síntesis por GPU con este flag. Solo lo entienden las
             # versiones GPU/DirectML del motor; la versión CPU lo ignora (y lo avisamos más abajo).
             comando.append("--use_gpu")
-            logger.info("[VOICEVOX] Arrancando con GPU (--use_gpu).")
+            logger.info("[Voz] Arrancando con GPU (--use_gpu).")
         try:
             proc = subprocess.Popen(
                 comando, cwd=os.path.dirname(str(ruta_run)),
@@ -374,7 +490,7 @@ class TextoAVoz:
                 creationflags=creationflags,
                 startupinfo=startupinfo)
         except Exception as e:  # noqa: BLE001
-            logger.error("[VOICEVOX] No pude lanzar run.exe (%s): %s. "
+            logger.error("[Voz] No pude lanzar run.exe (%s): %s. "
                          "Uso pyttsx3.", ruta_run, e)
             return False
 
@@ -385,17 +501,17 @@ class TextoAVoz:
         # Esperamos (con cortes) a que levante el puerto.
         # Se sondea con un corte por TIEMPO (cada sondeo puede tardar lo suyo mientras el puerto no existe) y
         # seguido: antes se esperaba 2 s entre sondeos y se perdía hasta ese tiempo tras estar listo.
-        logger.info("[VOICEVOX] Esperando a que levante el puerto (hasta ~%d s)...", int(_ESPERA_ARRANQUE_VOICEVOX))
+        logger.info("[Voz] Esperando a que levante el puerto (hasta ~%d s)...", int(_ESPERA_ARRANQUE_VOICEVOX))
         inicio = time.monotonic()
         while time.monotonic() - inicio < _ESPERA_ARRANQUE_VOICEVOX:
             time.sleep(0.5)
             if self._verificar_voicevox(timeout=1.0):
-                logger.info("[VOICEVOX] Quedó activo tras %.1f s.", time.monotonic() - inicio)
+                logger.info("[Voz] Quedó activo tras %.1f s.", time.monotonic() - inicio)
                 return True
             if proc.poll() is not None:
-                logger.warning("[VOICEVOX] El proceso terminó solo (código %s); no va a levantar.", proc.returncode)
+                logger.warning("[Voz] El proceso terminó solo (código %s); no va a levantar.", proc.returncode)
                 return False
-        logger.warning("[VOICEVOX] No respondió tras ~%d s. PID del proceso "
+        logger.warning("[Voz] No respondió tras ~%d s. PID del proceso "
                        "lanzado: %s (sigue vivo: %s). Uso pyttsx3 por ahora.",
                        int(_ESPERA_ARRANQUE_VOICEVOX), getattr(proc, "pid", "?"), proc.poll() is None)
         return False
@@ -415,19 +531,21 @@ class TextoAVoz:
             return
         try:
             resp = red.get(f"{self._url_activa()}/supported_devices", timeout=3)
-            soporta = resp.json() if resp.status_code == 200 else {}
+            if resp.status_code != 200:
+                return                          # este motor no lo informa: no se puede saber
+            soporta = resp.json() or {}
         except Exception:  # noqa: BLE001
-            logger.debug("No pude consultar los dispositivos de VOICEVOX.", exc_info=True)
+            logger.debug("No pude consultar los dispositivos del motor.", exc_info=True)
             return
         if soporta.get("cuda") or soporta.get("dml"):
-            logger.info("[VOICEVOX] Síntesis por GPU disponible (cuda=%s, dml=%s).",
+            logger.info("[Voz] Síntesis por GPU disponible (cuda=%s, dml=%s).",
                         bool(soporta.get("cuda")), bool(soporta.get("dml")))
             return
         logger.warning(
-            "[VOICEVOX] VOICEVOX_GPU está activado pero este motor solo soporta CPU: la síntesis va a "
+            "[Voz] VOICEVOX_GPU está activado pero este %s solo soporta CPU: la síntesis va a "
             "seguir igual de lenta. Descargá el paquete GPU (DirectML para AMD/Intel, CUDA para NVIDIA) "
-            "desde las descargas de VOICEVOX y apuntá VOICEVOX_RUN_EXE a ese run.exe, o poné "
-            "VOICEVOX_GPU = False para no ver este aviso.")
+            "de %s y apuntá %s_RUN_EXE a ese run.exe, o poné VOICEVOX_GPU = False para no ver este aviso.",
+            self.motor_jp.nombre, self.motor_jp.nombre, self.motor_jp.clave.upper())
 
     def _es_engine_voicevox(self, ruta_run: str) -> bool:
         """Heurística: ¿la carpeta de `run.exe` es el ENGINE (server), no el editor?
@@ -459,10 +577,10 @@ class TextoAVoz:
             self._avisar_si_la_gpu_no_sirve()
             # Feedback directo en consola (además del log). ASCII plano para no
             # romper consolas Windows en cp1252 (evita UnicodeEncodeError).
-            print("[Voz] VOICEVOX detectado OK, usando voz VOICEVOX "
+            print(f"[Voz] {self.motor_jp.nombre} detectado OK, usando esa voz "
                   f"({self._url_activa()}).")
         else:
-            print("[Voz] VOICEVOX no disponible, usando pyttsx3 "
+            print(f"[Voz] {self.motor_jp.nombre} no disponible, usando pyttsx3 "
                   "(voz del sistema).")
         return ok
 
@@ -473,7 +591,7 @@ class TextoAVoz:
         primera vez de la vida; después ya están). Así, el "¿Sí? Decime." de cada invocación suena al
         instante en vez de pagar la traducción y la síntesis.
         """
-        if not self.asegurar_voicevox_inicial() or self._motor_elegido() != "voicevox":
+        if not self.asegurar_voicevox_inicial() or self._motor_elegido() not in MOTORES_JAPONESES:
             return                      # con voz de sistema o motor propio no hay nada que precalentar
         for frase in dividir_en_frases(limpiar_texto_para_voz(" ".join(frases or []))):
             try:
@@ -511,13 +629,14 @@ class TextoAVoz:
     def _buscar_run_voicevox(self):
         """Devuelve la ruta al run.exe de VOICEVOX (o None si no se halla).
 
-        Prioridad: opción ``VOICEVOX_RUN_EXE`` de la config -> default relativo.
+        Prioridad: la opción ``<MOTOR>_RUN_EXE`` de la config -> las rutas típicas del motor.
         """
-        ruta_conf = str(self.cfg.get("voicevox_run_exe", "") or "").strip()
+        ruta_conf = str(self.cfg.get(f"{self.motor_jp.clave}_run_exe", "") or "").strip()
         if ruta_conf and os.path.exists(ruta_conf):
             return ruta_conf
-        if VOICEVOX_RUN_EXE and VOICEVOX_RUN_EXE.exists():
-            return str(VOICEVOX_RUN_EXE)
+        for ruta in self.motor_jp.rutas_run:
+            if ruta and Path(ruta).exists():
+                return str(ruta)
         return None
 
     # ---------------- API pública ----------------
@@ -665,7 +784,8 @@ class TextoAVoz:
     def _preparar_audio_frase(self, texto_es: str) -> dict:
         """Sintetiza UNA frase y devuelve un "artefacto" reproducible.
 
-        Artefacto: dict ``{"motor": "voicevox"|"sistema", "wav": bytes|None}``.
+        Artefacto: dict ``{"motor": "voicevox"|"sistema", "wav": bytes|None}``. "voicevox" es el
+        camino de los motores con la API de VOICEVOX (VOICEVOX o AivisSpeech).
 
         - VOICEVOX: traduce ES->JA y sintetiza; devuelve los bytes WAV.
         - Cualquier fallo (servidor, traducción, HTTP): cae a pyttsx3
@@ -682,7 +802,7 @@ class TextoAVoz:
             return self._preparar_con_comando(texto_es)
 
         # Frase ya sintetizada antes con esta voz: suena de inmediato, sin traducir ni consultar a VOICEVOX.
-        cache, voz = self._cache_audio(), f"vv{self.speaker_id}"
+        cache, voz = self._cache_audio(), self._firma_voz()
         if cache is not None:
             guardado = cache.obtener(texto_es, voz)
             if guardado:
@@ -691,7 +811,7 @@ class TextoAVoz:
 
         # Sin VOICEVOX disponible -> voz del sistema.
         if not self._asegurar_voicevox():
-            logger.warning("[TTS] VOICEVOX no activo -> fallback pyttsx3.")
+            logger.warning("[TTS] %s no está activo -> fallback pyttsx3.", self.motor_jp.nombre)
             return {"motor": "sistema", "wav": None, "idioma": "es"}
 
         # 1) Traducir a japonés.
@@ -705,7 +825,7 @@ class TextoAVoz:
         if not wav_bytes:
             logger.warning(
                 "[TTS] _asegurar_voicevox() dio True pero la síntesis devolvió "
-                "None (revisá los logs [VOICEVOX]: HTTP/estado/cuerpo). "
+                "None (revisá los logs [Voz]: HTTP/estado/cuerpo). "
                 "Uso pyttsx3 para esta frase.")
             return {"motor": "sistema", "wav": None, "idioma": "es"}
 
@@ -723,9 +843,9 @@ class TextoAVoz:
 
     # ---------------- Motores y subtítulos ----------------
     def _motor_elegido(self) -> str:
-        """``voicevox`` (por defecto), ``sistema`` o ``comando`` según ``tts_motor``."""
+        """``voicevox`` (por defecto), ``aivisspeech``, ``sistema`` o ``comando`` según ``tts_motor``."""
         motor = str(self.cfg.get("tts_motor", "voicevox") or "voicevox").strip().lower()
-        return motor if motor in ("voicevox", "sistema", "comando") else "voicevox"
+        return motor if motor in ("voicevox", "aivisspeech", "sistema", "comando") else "voicevox"
 
     def _preparar_con_comando(self, texto_es: str) -> dict:
         """Sintetiza con el comando externo, traduciendo antes si ``tts_idioma`` no es español."""
@@ -809,36 +929,40 @@ class TextoAVoz:
                 timeout=60,
             )
             if rq.status_code != 200:
-                logger.error("[VOICEVOX] audio_query Falló: %s -> HTTP %s. "
+                logger.error("[Voz] audio_query Falló: %s -> HTTP %s. "
                              "Cuerpo: %s", url_q, rq.status_code,
                              (rq.text or "")[:300])
                 return None
 
-            # Paso 2: synthesis con el JSON resultado.
+            # Paso 2: synthesis con el JSON resultado, con la velocidad, el tono, etc. elegidos. Solo se
+            # tocan los campos que el motor devolvió: cada uno tiene los suyos.
+            consulta = rq.json()
+            for campo, valor in self._parametros_voz().items():
+                if campo in consulta:
+                    consulta[campo] = valor
             url_s = f"{base}/synthesis"
             rs = red.post(
                 url_s,
                 params={"speaker": speaker},
-                headers={"Content-Type": "application/json"},
-                data=rq.content,
+                json=consulta,
                 timeout=90,
             )
             if rs.status_code != 200:
-                logger.error("[VOICEVOX] synthesis falló: %s -> HTTP %s. "
+                logger.error("[Voz] synthesis falló: %s -> HTTP %s. "
                              "Cuerpo: %s", url_s, rs.status_code,
                              (rs.text or "")[:300])
                 return None
 
-            logger.debug("[VOICEVOX] Síntesis OK (%d bytes) vía %s.",
+            logger.debug("[Voz] Síntesis OK (%d bytes) vía %s.",
                          len(rs.content), base)
             return rs.content
         except requests.exceptions.RequestException as e:
-            logger.error("[VOICEVOX] Error de red en la síntesis vía %s: %s",
+            logger.error("[Voz] Error de red en la síntesis vía %s: %s",
                          base, e)
             self._voicevox_ok_hasta = 0.0        # que el próximo intento vuelva a comprobar el servidor
             return None
         except Exception as e:  # noqa: BLE001
-            logger.exception("[VOICEVOX] Error inesperado en la síntesis: %s", e)
+            logger.exception("[Voz] Error inesperado en la síntesis: %s", e)
             self._voicevox_ok_hasta = 0.0
             return None
 

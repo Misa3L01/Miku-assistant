@@ -93,7 +93,7 @@ la invoca.
 | **Modo Voz** (el normal) | Escucha continua, como "OK Google": decí **"Miku"** y esperá el "¿Sí? Decime."; o todo junto: **"Miku, qué hora es"**. También podés **apretar F13** (en este equipo es la tecla Insert remapeada, ver abajo): saluda y escucha un comando sin decir "Miku". Mientras Miku habla, el micrófono espera para no oírla. Al iniciar hace un saludo corto (`SALUDO_AL_INICIAR = False` lo apaga; la hora, el clima y los pendientes te los da al volver de una ausencia, ver más abajo). |
 | **Modo Texto** (depuración) | Una ventana para escribirle a Miku y ver las respuestas (habla igual). Sirve para probar sin micrófono. |
 
-**Menú del icono de la bandeja** (clic derecho): *Invocar ahora* · *Modo voz* · *Modo texto (depuración)* ·
+**Menú del icono de la bandeja** (clic derecho): *Invocar ahora* · *Configuración…* · *Modo voz* · *Modo texto (depuración)* ·
 *Iniciar con Windows* · *Atajo de teclado para abrir Miku* · *Elegir tecla de invocación…* · *Salir*. El modo se cambia en caliente y se recuerda para la
 próxima vez.
 
@@ -122,6 +122,20 @@ próxima vez.
 3. `config_local.py` — tus secretos y rutas (claves en MAYÚSCULAS, se pasan a minúsculas).
 4. **Variables de entorno** con el mismo nombre (`GROQ_API_KEY=...`), para secretos.
 
+**Ventana de configuración** (bandeja → *Configuración…*). Sin abrir ningún archivo:
+
+- **Pestaña Voz:** motor (VOICEVOX, AivisSpeech, voz de Windows o uno propio), qué voz usar (la lista la
+  da el motor que está sonando), velocidad, tono, entonación, volumen y ritmo, y un botón **Probar voz**
+  que dice una frase con lo elegido antes de guardarlo.
+- **Pestaña Ajustes:** cada opción de sí/no y cada una de "elegí entre estas", agrupadas como en
+  `config_local.py`. El **"!"** al lado de cada una explica qué hace al pasarle el mouse.
+- **Guardar** escribe en tu `config_local.py` **solo la línea de cada opción que cambiaste** (con copia en
+  `config_local.py.bak`), así el archivo y la ventana dicen siempre lo mismo. Casi todo vale al instante;
+  lo que necesita reiniciar Miku (el motor de voz, el VAD, la palabra clave…) lo avisa.
+- Las claves, rutas y listas se siguen editando en `config_local.py`.
+- Si tenés `config_local.py` abierto en el editor, recargalo antes de guardarlo: si no, la versión vieja
+  que tenés en pantalla pisa lo que guardó la ventana.
+
 **Asistente de configuración** (`python -m miku.ajustes ...`). Todas las opciones están
 declaradas una sola vez, con su descripción, en `miku/ajustes/esquema.py`, y de ahí salen los
 valores por defecto, el `config_local.py.example` y la validación:
@@ -142,6 +156,8 @@ sacale el `#`. Las opciones principales:
 | `GROQ_API_KEY`, `GROQ_API_KEY_STT` | LLM y Whisper/traducción TTS (la de STT cae a la principal si está vacía) | parser, STT, TTS |
 | `VOICEVOX_URL`, `VOICEVOX_SPEAKER_ID`, `VOICEVOX_RUN_EXE` | Motor de voz y voz elegida | TTS |
 | `TTS_MOTOR`, `TTS_IDIOMA`, `TTS_COMANDO`, `SUBTITULOS` | Motor de voz alternativo (voces propias / español) y subtítulos | TTS |
+| `AIVISSPEECH_URL`, `AIVISSPEECH_SPEAKER_ID`, `AIVISSPEECH_RUN_EXE` | Motor AivisSpeech (con `TTS_MOTOR = "aivisspeech"`) | TTS |
+| `VOZ_VELOCIDAD`, `VOZ_TONO`, `VOZ_ENTONACION`, `VOZ_VOLUMEN`, `VOZ_RITMO` | Cómo suena la voz (también desde la ventana de configuración) | TTS |
 | `TTS_CACHE`, `TTS_CACHE_MAX` | Caché en `data/tts_cache/` con el audio de las frases ya dichas (las repetidas suenan al instante) | TTS |
 | `STT_PAUSA_FIN` | Segundos de silencio que cierran tu frase (0.6 por defecto; más bajo responde antes pero puede cortarte) | STT |
 | `STT_VAD`, `VAD_PROVEEDOR`, `VAD_MODELO`, `VAD_UMBRAL` | Detección de voz para saber cuándo terminaste de hablar (silero / energía) | STT |
@@ -209,7 +225,7 @@ miku-assistant/
     │   ├── entrada/              #   escucha.py (captura y flujo) · vad.py (cuándo terminás de hablar) · wake.py (palabra clave) · transcriptores.py
     │   ├── salida/               #   tts.py (VOICEVOX + fallback pyttsx3) · cache_audio.py (frases ya sintetizadas) · traduccion.py (Groq, compartida)
     │   └── frases/               #   tono.py (variantes de tono) · banco.py (frases con variantes que rotan) · catalogo_proactivo.py
-    ├── ui/                       #   qt_hilo.py (UN hilo de Qt) · bandeja.py · subtitulos.py · selector_modo.py · consola.py (modo texto)
+    ├── ui/                       #   qt_hilo.py (UN hilo de Qt) · bandeja.py · subtitulos.py · selector_modo.py · consola.py (modo texto) · configuracion.py (ventana de ajustes)
     ├── servicios/                #   instancia.py (una sola Miku) · arranque.py (inicio con Windows, atajo de teclado) · metricas.py (latencia por etapa) · eventos (registro de plugins y contexto compartido) · scheduler · notificaciones · modos · briefing · personalidad · proactivo (motor de avisos) · reglas_proactivas
     └── plugins/
         ├── base.py               #   Clase base Plugin (contrato documentado en el módulo)
@@ -313,7 +329,22 @@ Cada pieza pesada de Miku se puede cambiar desde `config_local.py`, sin tocar c�
 | **Oído (STT)** | Whisper en Groq | `STT_PROVEEDOR = "local"` → faster-whisper en tu PC (`pip install faster-whisper`, modelo `STT_MODELO_LOCAL = "small"`). Sin nube; el primer uso descarga el modelo. |
 | **Palabra clave** | Whisper en Groq (`auto` usa lo mejor disponible) | `WAKE_PROVEEDOR = "local"` → faster-whisper `tiny` en tu PC. `"openwakeword"` → modelo chico que detecta "Miku" **sin transcribir** (`pip install openwakeword` + `WAKE_MODELO` con un `.onnx` entrenado para "Miku": openWakeWord no trae uno). Con openWakeWord no hay texto, así que "Miku, qué hora es" pasa a ser dos pasos. |
 | **Fin de frase** | silero-vad si está el modelo, si no energía | `python -m miku.voz.entrada.vad descargar` baja el modelo (2 MB, corre sobre onnxruntime, **no** necesita torch). `VAD_PROVEEDOR = "energia"` vuelve al detector simple. |
-| **Voz (TTS)** | VOICEVOX (japonés; Miku traduce lo que dice) | `TTS_MOTOR = "sistema"` (voz de Windows en español) o `"comando"`: tu propio motor. |
+| **Voz (TTS)** | VOICEVOX (japonés; Miku traduce lo que dice) | `TTS_MOTOR = "aivisspeech"` (otras voces japonesas, ver abajo), `"sistema"` (voz de Windows en español) o `"comando"`: tu propio motor. |
+
+**AivisSpeech.** Es un motor derivado de VOICEVOX, con voces propias y su propio puerto (10101). Como la
+API es la misma, Miku lo usa igual que a VOICEVOX. Para usarlo:
+
+1. Instalá AivisSpeech desde <https://aivis-project.com> (el instalador, no el zip). Deja el motor en
+   `C:\Program Files\AivisSpeech\AivisSpeech-Engine\run.exe` y Miku lo encuentra solo. Si usás el motor
+   suelto, ponelo en `extern/AivisSpeech-Engine/` o indicá la ruta en `AIVISSPEECH_RUN_EXE`.
+2. Voces nuevas: se instalan con un clic desde AivisHub dentro de la app de AivisSpeech (quedan en
+   `%APPDATA%\AivisSpeech-Engine\Models`).
+3. Bandeja → *Configuración…* → Motor de voz: **AivisSpeech** → Guardar, y reiniciá Miku.
+4. Otra vez en *Configuración…*, elegí la voz de la lista y probala. Sin elegir, usa la primera instalada.
+
+Detalles: en AivisSpeech la **entonación** es la fuerza de la emoción del estilo, el **ritmo** es propio de
+este motor, y conviene dejar el **tono** en 0 (moverlo empeora el sonido). Con `VOICEVOX_GPU = True` usa
+DirectML. Igual que VOICEVOX, habla en japonés: Miku traduce antes lo que va a decir.
 
 **Voz propia / otro idioma.** Con `TTS_MOTOR = "comando"` Miku ejecuta *tu* comando, que tiene que escribir un WAV en `{salida}` (el texto entra por stdin, o usá `{texto}`). Sirve para Piper, XTTS, GPT-SoVITS, RVC… Ejemplo con Piper en español: `TTS_COMANDO = r"piper --model C:\voces\es_AR.onnx --output_file {salida}"`, `TTS_IDIOMA = "es"`. Si `TTS_IDIOMA` no es `es` (por ejemplo `pt`), Miku traduce antes de hablar. Se ejecuta **sin shell**, con tiempo máximo, y si falla habla con la voz de Windows.
 
