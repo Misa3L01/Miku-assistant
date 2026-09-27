@@ -33,3 +33,6 @@ dist/
 .DS_Store
 Thumbs.db
 *.log
+
+# Material de entrenamiento del wake word (grabaciones de tu voz): nunca se sube
+entrenamiento/

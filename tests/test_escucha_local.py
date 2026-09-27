@@ -313,14 +313,96 @@ def test_openwakeword_necesita_libreria_y_modelo(tmp_path):
     assert wake.DetectorOpenWakeWord.disponible(str(tmp_path / "no_existe.onnx")) is False
 
 
+class ModeloOww:
+    """openWakeWord de mentira: como el real, necesita "entrar en calor" antes de puntuar bien.
+
+    Devuelve 0 hasta haber oído ``calentar`` bloques, y después ``puntaje`` mientras siga oyendo voz
+    (bloques que no son silencio). Así se puede comprobar que la frase se rellena con silencio.
+    """
+
+    def __init__(self, puntaje=0.9, calentar=12):
+        self.puntaje, self.calentar = puntaje, calentar
+        self.bloques, self.tamanos, self.reinicios, self._oidos = 0, set(), 0, 0
+
+    def predict(self, bloque):
+        self.bloques += 1
+        self._oidos += 1
+        self.tamanos.add(len(bloque))
+        hay_voz = bool(abs(bloque).max()) if len(bloque) else False
+        return {"miku": self.puntaje if (self._oidos > self.calentar and hay_voz) else 0.0}
+
+    def reset(self):
+        self.reinicios += 1
+        self._oidos = 0
+
+
+def _audio_de(muestras):
+    """Un AudioData de mentira con esas muestras (16 kHz, int16)."""
+    np = pytest.importorskip("numpy")
+    crudo = np.asarray(muestras, dtype=np.int16).tobytes()
+    return type("A", (), {"get_raw_data": staticmethod(lambda convert_rate=None, convert_width=None: crudo)})()
+
+
+def _frase_corta(segundos=0.5):
+    """Medio segundo de "voz" (una frase como "che Miku" dura eso)."""
+    np = pytest.importorskip("numpy")
+    n = int(wake.FRECUENCIA_OWW * segundos)
+    return (np.sin(np.arange(n) / 8.0) * 8000).astype(np.int16)
+
+
 def test_openwakeword_usa_el_modelo_y_el_umbral(monkeypatch, tmp_path):
-    modelo = tmp_path / "miku.onnx"
-    modelo.write_bytes(b"x")
-    d = wake.DetectorOpenWakeWord(str(modelo), umbral=0.8)
-    monkeypatch.setattr(d, "_cargar", lambda: type("M", (), {"predict": staticmethod(lambda m: {"miku": 0.9})})())
-    assert d.detectar(_AudioCrudo()).activo is True
-    monkeypatch.setattr(d, "_cargar", lambda: type("M", (), {"predict": staticmethod(lambda m: {"miku": 0.7})})())
-    assert d.detectar(_AudioCrudo()).activo is False, "0,7 no llega al umbral de 0,8"
+    d = wake.DetectorOpenWakeWord(str(tmp_path / "miku.onnx"), umbral=0.8)
+    monkeypatch.setattr(d, "_cargar", lambda: ModeloOww(puntaje=0.9, calentar=0))
+    assert d.detectar(_audio_de(_frase_corta())).activo is True
+    monkeypatch.setattr(d, "_cargar", lambda: ModeloOww(puntaje=0.7, calentar=0))
+    assert d.detectar(_audio_de(_frase_corta())).activo is False, "0,7 no llega al umbral de 0,8"
+
+
+def test_una_frase_corta_se_rellena_con_silencio_para_que_el_modelo_entre_en_calor(monkeypatch, tmp_path):
+    """Pasó de verdad: sin relleno, con tus grabaciones reales detectaba el 13 %; con relleno, el 59 %.
+
+    openWakeWord necesita oír ~1 s antes de puntuar bien, y "che Miku" dura medio segundo.
+    """
+    d = wake.DetectorOpenWakeWord(str(tmp_path / "miku.onnx"))
+    modelo = ModeloOww(puntaje=0.9, calentar=12)      # 12 bloques = ~1 s para entrar en calor
+    monkeypatch.setattr(d, "_cargar", lambda: modelo)
+    assert d.puntaje(_frase_corta(0.5)) == pytest.approx(0.9), "con el silencio de antes, la frase se reconoce"
+    assert modelo.bloques >= (2 * wake.RELLENO_OWW_SEG * wake.FRECUENCIA_OWW) // wake.BLOQUE_OWW
+
+
+def test_sin_relleno_esa_misma_frase_no_se_reconoceria(monkeypatch, tmp_path):
+    """El control del test de arriba: confirma que el modelo de mentira reproduce el problema real."""
+    monkeypatch.setattr(wake, "RELLENO_OWW_SEG", 0)
+    d = wake.DetectorOpenWakeWord(str(tmp_path / "miku.onnx"))
+    monkeypatch.setattr(d, "_cargar", lambda: ModeloOww(puntaje=0.9, calentar=12))
+    assert d.puntaje(_frase_corta(0.5)) == 0.0
+
+
+def test_se_puntua_de_a_bloques_de_80_ms_y_se_reinicia_despues(monkeypatch, tmp_path):
+    """De un saque, openWakeWord solo puntuaría el final de la frase."""
+    d = wake.DetectorOpenWakeWord(str(tmp_path / "miku.onnx"))
+    modelo = ModeloOww(calentar=0)
+    monkeypatch.setattr(d, "_cargar", lambda: modelo)
+    d.puntaje(_frase_corta(2.0))
+    assert modelo.tamanos == {wake.BLOQUE_OWW} and modelo.reinicios == 1,         "la frase siguiente no puede arrastrar lo que quedó de esta"
+
+
+def test_los_modelos_base_se_bajan_una_vez_y_sin_los_de_ejemplo(monkeypatch, tmp_path):
+    """Con la lista vacía, openWakeWord baja además alexa, hey jarvis y el resto: no se usan."""
+    openwakeword = pytest.importorskip("openwakeword")
+    utilidades = pytest.importorskip("openwakeword.utils")
+    pedidos = []
+    monkeypatch.setattr(utilidades, "download_models", lambda model_names=None: pedidos.append(model_names))
+    carpeta = tmp_path / "models"
+    monkeypatch.setattr(wake, "carpeta_modelos_base", lambda: str(carpeta))
+    wake.DetectorOpenWakeWord._asegurar_modelos_base()
+    assert len(pedidos) == 1 and pedidos[0] and pedidos[0] != [], "se piden solo los base"
+    carpeta.mkdir()
+    for m in openwakeword.FEATURE_MODELS.values():
+        nombre = m["download_url"].rsplit("/", 1)[-1].replace(".tflite", ".onnx")
+        (carpeta / nombre).write_bytes(b"x")
+    wake.DetectorOpenWakeWord._asegurar_modelos_base()
+    assert len(pedidos) == 1, "si ya están, no se vuelven a bajar"
 
 
 def test_si_openwakeword_falla_no_activa_por_las_dudas(tmp_path):

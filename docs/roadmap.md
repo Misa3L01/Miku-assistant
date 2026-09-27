@@ -66,9 +66,10 @@ no la encuentre.
 
 ## Otras ideas más chicas
 
-- **Wake word propia para openWakeWord.** `miku/voz/entrada/wake.py` ya soporta un modelo `.onnx`,
-  pero openWakeWord no trae uno de "Miku": hay que entrenarlo con su cuaderno oficial. Con eso, la
-  palabra clave se detecta sin transcribir nada.
+- **Mejorar el modelo propio de la palabra clave.** Ya hay uno entrenado (`data/wake/miku.onnx`): con
+  grabaciones reales despierta ~65 % de las veces con "miku", "che miku" y "eu miku" (43 % con "hey
+  miku") y no se activó sola con charla normal. Más grabaciones positivas (y de más situaciones: lejos
+  del micrófono, con música) subirían ese porcentaje.
 - **Instalador y auto-actualización del `.exe`** (ver `docs/empaquetado.md`).
 - **`traducir_a_canal` de Discord**, pausar Wallpaper Engine y temperatura en el Game Booster, y OCR
   de una región o ventana puntual.

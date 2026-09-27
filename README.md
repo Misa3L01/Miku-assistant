@@ -331,6 +331,14 @@ Cada pieza pesada de Miku se puede cambiar desde `config_local.py`, sin tocar c�
 | **Fin de frase** | silero-vad si está el modelo, si no energía | `python -m miku.voz.entrada.vad descargar` baja el modelo (2 MB, corre sobre onnxruntime, **no** necesita torch). `VAD_PROVEEDOR = "energia"` vuelve al detector simple. |
 | **Voz (TTS)** | VOICEVOX (japonés; Miku traduce lo que dice) | `TTS_MOTOR = "aivisspeech"` (otras voces japonesas, ver abajo), `"sistema"` (voz de Windows en español) o `"comando"`: tu propio motor. |
 
+**Tu propio modelo de openWakeWord.** Si entrenaste uno para "Miku" (el entrenamiento da un `.onnx` y un
+`.tflite`: se usa el `.onnx`), ponelo en `data/wake/miku.onnx` (no se sube a GitHub), y en `config_local.py`
+poné `WAKE_PROVEEDOR = "openwakeword"` y `WAKE_MODELO` con esa ruta; hace falta `pip install openwakeword`.
+La primera vez Miku baja sola los dos modelos base de openWakeWord (unos 2,5 MB). Cada frase se rellena con
+un segundo de silencio antes y después: sin eso, una frase corta como "che Miku" casi nunca se reconoce
+(con grabaciones reales pasó del 13 % al 59 %). `WAKE_UMBRAL` ajusta cuán seguro tiene que estar.
+Si tenés el material de entrenamiento en `entrenamiento/`, tampoco se sube (son grabaciones de tu voz).
+
 **AivisSpeech.** Es un motor derivado de VOICEVOX, con voces propias y su propio puerto (10101). Como la
 API es la misma, Miku lo usa igual que a VOICEVOX. Para usarlo:
 

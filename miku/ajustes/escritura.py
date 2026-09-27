@@ -33,6 +33,16 @@ logger = logging.getLogger("miku.ajustes.escritura")
 _ENCABEZADO = "# ---------- Cambiado desde la ventana de configuración ----------"
 
 
+def _formatear(valor: Any) -> str:
+    """El valor como código Python. Las rutas de Windows van como ``r"C:\\..."`` (se leen igual que
+    en el Explorador); con comillas normales habría que duplicar cada barra y es fácil equivocarse a mano.
+    """
+    if (isinstance(valor, str) and "\\" in valor and '"' not in valor
+            and not valor.endswith("\\") and "\n" not in valor):
+        return f'r"{valor}"'
+    return _formatear_valor(valor)
+
+
 def _lineas_activas(codigo: str) -> Dict[str, Tuple[int, int]]:
     """``{NOMBRE: (primera línea, última línea)}`` de cada asignación activa (base 0, inclusive)."""
     try:
@@ -61,7 +71,7 @@ def aplicar_cambios(codigo: str, cambios: Dict[str, Any]) -> str:
     pendientes = sorted(cambios.items(), key=lambda kv: -activas.get(kv[0].upper(), (-1, -1))[0])
     for clave, valor in pendientes:
         nombre = clave.upper()
-        nueva = f"{nombre} = {_formatear_valor(valor)}"
+        nueva = f"{nombre} = {_formatear(valor)}"
         if nombre in activas:
             inicio, fin = activas[nombre]
             lineas[inicio:fin + 1] = [nueva]

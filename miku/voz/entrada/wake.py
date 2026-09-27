@@ -39,6 +39,14 @@ RE_MIKU = re.compile(r"\b(?:%s)\b" % "|".join(VARIANTES_MIKU))
 
 #: Puntaje (0 a 1) desde el cual openWakeWord da por dicha la palabra clave.
 UMBRAL_OWW = 0.5
+#: openWakeWord trabaja de a bloques de 80 ms (1280 muestras a 16 kHz) y puntúa cada uno con lo que
+#: viene oyendo. Hay que darle la frase en bloques: de un saque solo puntuaría el final.
+BLOQUE_OWW = 1280
+FRECUENCIA_OWW = 16000
+#: Segundos de silencio que se agregan antes y después de la frase. openWakeWord mira ~1,3 s de audio
+#: y una frase como "che Miku" dura medio segundo: sin este relleno el modelo arranca "en frío" y casi
+#: nunca la reconoce. Es lo mismo que hace su ``predict_clip`` (comprobado con grabaciones reales).
+RELLENO_OWW_SEG = 1
 
 
 class Deteccion(NamedTuple):
@@ -84,6 +92,14 @@ class DetectorTranscripcion:
         return Deteccion(contiene_miku(texto), texto)
 
 
+def carpeta_modelos_base() -> str:
+    """Dónde guarda openWakeWord sus modelos comunes (la carpeta ``resources/models`` de la librería)."""
+    import os
+
+    import openwakeword
+    return os.path.join(os.path.dirname(openwakeword.__file__), "resources", "models")
+
+
 class DetectorOpenWakeWord:
     """openWakeWord: detecta la palabra clave sin transcribir (rápido y 100 % local).
 
@@ -107,23 +123,64 @@ class DetectorOpenWakeWord:
         return bool(ruta_modelo) and os.path.exists(ruta_modelo) and \
             importlib.util.find_spec("openwakeword") is not None
 
+    @staticmethod
+    def _asegurar_modelos_base() -> None:
+        """Baja una sola vez los modelos comunes de openWakeWord (sin ellos no puede leer el audio).
+
+        Son dos archivos chicos que convierten el audio antes de tu modelo, iguales para toda palabra
+        clave. Se piden por nombre a propósito: con la lista vacía bajaría además todos los modelos de
+        ejemplo (alexa, hey jarvis...), que no se usan.
+        """
+        import os
+
+        import openwakeword
+        import openwakeword.utils
+        carpeta = carpeta_modelos_base()
+        archivos = [os.path.basename(m["download_url"]).replace(".tflite", ".onnx")
+                    for m in openwakeword.FEATURE_MODELS.values()]
+        if all(os.path.exists(os.path.join(carpeta, a)) for a in archivos):
+            return
+        logger.info("Bajando los modelos base de openWakeWord (una sola vez)...")
+        openwakeword.utils.download_models(model_names=["solo-los-base"])
+
     def _cargar(self) -> Any:
         if self._modelo is None:
             from openwakeword.model import Model  # type: ignore  # import tardío (opcional)
+            self._asegurar_modelos_base()
             self._modelo = Model(wakeword_models=[self.ruta_modelo], inference_framework="onnx")
             logger.info("openWakeWord listo con %s.", self.ruta_modelo)
         return self._modelo
 
+    def puntaje(self, muestras: Any) -> float:
+        """Qué tan seguro está el modelo (0 a 1) de que en esas muestras (16 kHz, int16) se dijo la
+        palabra clave.
+
+        La frase se rellena con silencio (ver ``RELLENO_OWW_SEG``) y se puntúa bloque por bloque,
+        quedándose con el mejor: de un saque, openWakeWord devolvería solo el puntaje del final.
+        """
+        import numpy as np  # viene con onnxruntime
+        relleno = np.zeros(FRECUENCIA_OWW * RELLENO_OWW_SEG, dtype=np.int16)
+        muestras = np.concatenate([relleno, np.asarray(muestras, dtype=np.int16), relleno])
+        modelo = self._cargar()
+        mejor = 0.0
+        try:
+            for i in range(0, len(muestras) - BLOQUE_OWW + 1, BLOQUE_OWW):
+                puntajes = modelo.predict(muestras[i:i + BLOQUE_OWW])
+                mejor = max(mejor, max(puntajes.values(), default=0.0))
+        finally:
+            modelo.reset()                      # la frase siguiente empieza sin arrastrar esta
+        return float(mejor)
+
     def detectar(self, audio: Any) -> Deteccion:
+        """¿En esa frase se dijo la palabra clave?"""
         try:
             import numpy as np  # viene con onnxruntime
-            crudo = audio.get_raw_data(convert_rate=16000, convert_width=2)
-            muestras = np.frombuffer(crudo, dtype=np.int16)
-            puntajes = self._cargar().predict(muestras)
-            mejor = max(puntajes.values()) if puntajes else 0.0
+            crudo = audio.get_raw_data(convert_rate=FRECUENCIA_OWW, convert_width=2)
+            mejor = self.puntaje(np.frombuffer(crudo, dtype=np.int16))
             if mejor >= self.umbral:
                 logger.info("openWakeWord detectó la palabra clave (%.2f).", mejor)
                 return Deteccion(True)
+            logger.debug("openWakeWord: %.2f (por debajo de %.2f).", mejor, self.umbral)
             return Deteccion(False)
         except Exception:  # noqa: BLE001
             logger.exception("Falló openWakeWord; esta vez no detecto nada.")

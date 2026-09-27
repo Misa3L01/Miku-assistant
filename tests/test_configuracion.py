@@ -69,6 +69,20 @@ def test_textos_con_comillas_barras_y_acentos_quedan_bien_escritos():
     assert _valores(escritura.aplicar_cambios(ORIGINAL, {"ruta_rara": raro}))["RUTA_RARA"] == raro
 
 
+def test_las_rutas_de_windows_se_escriben_legibles():
+    """Con comillas normales la ruta queda con barras dobles y es fácil romperla editándola a mano."""
+    ruta = r"R:\miku-assistant\data\wake\miku.onnx"
+    nuevo = escritura.aplicar_cambios(ORIGINAL, {"wake_modelo": ruta})
+    assert r'WAKE_MODELO = r"R:\miku-assistant\data\wake\miku.onnx"' in nuevo
+    assert _valores(nuevo)["WAKE_MODELO"] == ruta
+    # Lo que no se puede escribir crudo sigue con comillas normales, y se lee igual: una ruta que termina
+    # en barra, una con comillas y una con un salto de línea.
+    for raro in ("C:\\carpeta\\", 'C:\\a "b"', "C:\\a\nb"):
+        linea = escritura._formatear(raro)
+        assert not linea.startswith("r"), linea
+        assert _valores(escritura.aplicar_cambios(ORIGINAL, {"x": raro}))["X"] == raro
+
+
 def test_si_el_archivo_ya_estaba_roto_no_se_toca():
     with pytest.raises(ValueError):
         escritura.aplicar_cambios("STT_VAD = (\n", {"stt_vad": False})
