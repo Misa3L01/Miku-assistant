@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from typing import Any, NamedTuple, Optional, Protocol
 
 logger = logging.getLogger("miku.stt.wake")
@@ -39,6 +40,9 @@ RE_MIKU = re.compile(r"\b(?:%s)\b" % "|".join(VARIANTES_MIKU))
 
 #: Puntaje (0 a 1) desde el cual openWakeWord da por dicha la palabra clave.
 UMBRAL_OWW = 0.5
+#: Desde este puntaje, una frase que NO alcanzó el umbral se anota en el log (un "casi"): así se ve en
+#: uso real si el modelo anda cerca y conviene bajar el umbral, o si directamente no la reconoce.
+CASI_OWW = 0.1
 #: openWakeWord trabaja de a bloques de 80 ms (1280 muestras a 16 kHz) y puntúa cada uno con lo que
 #: viene oyendo. Hay que darle la frase en bloques: de un saque solo puntuaría el final.
 BLOQUE_OWW = 1280
@@ -114,6 +118,7 @@ class DetectorOpenWakeWord:
         self.ruta_modelo = ruta_modelo
         self.umbral = umbral
         self._modelo: Any = None
+        self._lock = threading.Lock()           # se puede cargar desde dos hilos a la vez
 
     @staticmethod
     def disponible(ruta_modelo: str) -> bool:
@@ -144,12 +149,13 @@ class DetectorOpenWakeWord:
         openwakeword.utils.download_models(model_names=["solo-los-base"])
 
     def _cargar(self) -> Any:
-        if self._modelo is None:
-            from openwakeword.model import Model  # type: ignore  # import tardío (opcional)
-            self._asegurar_modelos_base()
-            self._modelo = Model(wakeword_models=[self.ruta_modelo], inference_framework="onnx")
-            logger.info("openWakeWord listo con %s.", self.ruta_modelo)
-        return self._modelo
+        with self._lock:
+            if self._modelo is None:
+                from openwakeword.model import Model  # type: ignore  # import tardío (opcional)
+                self._asegurar_modelos_base()
+                self._modelo = Model(wakeword_models=[self.ruta_modelo], inference_framework="onnx")
+                logger.info("openWakeWord listo con %s.", self.ruta_modelo)
+            return self._modelo
 
     def puntaje(self, muestras: Any) -> float:
         """Qué tan seguro está el modelo (0 a 1) de que en esas muestras (16 kHz, int16) se dijo la
@@ -180,7 +186,8 @@ class DetectorOpenWakeWord:
             if mejor >= self.umbral:
                 logger.info("openWakeWord detectó la palabra clave (%.2f).", mejor)
                 return Deteccion(True)
-            logger.debug("openWakeWord: %.2f (por debajo de %.2f).", mejor, self.umbral)
+            nivel = logging.INFO if mejor >= CASI_OWW else logging.DEBUG
+            logger.log(nivel, "openWakeWord: %.2f, no alcanza el umbral %.2f.", mejor, self.umbral)
             return Deteccion(False)
         except Exception:  # noqa: BLE001
             logger.exception("Falló openWakeWord; esta vez no detecto nada.")

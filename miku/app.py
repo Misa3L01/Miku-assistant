@@ -304,6 +304,8 @@ class Asistente:
             stt.esperar_silencio = voz.esperar_libre
             stt.on_error = lambda e: logger.error("Error de voz: %s", e)
             self.stt = stt
+            # El VAD y el detector de la palabra clave se cargan ya, no con lo primero que digas.
+            threading.Thread(target=stt.precalentar, name="miku_precalentar_escucha", daemon=True).start()
         try:
             self.stt.iniciar_escucha_continua()
         except Exception:  # noqa: BLE001

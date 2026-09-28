@@ -4,6 +4,7 @@ from __future__ import annotations
 import array
 import logging
 import math
+import time
 
 import pytest
 
@@ -517,3 +518,147 @@ def test_un_turno_vacio_no_ensucia_el_log(caplog):
     with caplog.at_level(logging.INFO, logger="miku.metricas"):
         metricas.fin_turno()
     assert "latencia" not in caplog.text
+
+
+# --------------------------------------------------------------------------- #
+# Captura: el comienzo de la frase no se duplica
+# --------------------------------------------------------------------------- #
+def test_el_fragmento_que_dispara_la_voz_no_se_duplica(stt):
+    """Antes se agregaba dos veces: 32 ms repetidos justo al empezar "che miku"."""
+    guion = [False] * 3 + [True] * 5 + [False] * 11
+    distintos = [bytes([i + 1]) * vad_mod.BYTES_FRAME for i in range(len(guion))]
+    audio = stt._capturar_con_vad(FuenteFalsa(distintos), VadDeGuion(guion), timeout=5, limite=30)
+    trozos = [audio.frame_data[i:i + vad_mod.BYTES_FRAME]
+              for i in range(0, len(audio.frame_data), vad_mod.BYTES_FRAME)]
+    assert len(trozos) == len(set(trozos)), "ningún fragmento aparece dos veces"
+    assert trozos[0] == distintos[0] and distintos[3] in trozos, "con el colchón, desde antes de hablar"
+
+
+# --------------------------------------------------------------------------- #
+# Precalentar: los modelos se cargan al arrancar, una sola vez
+# --------------------------------------------------------------------------- #
+class _Cargable:
+    def __init__(self, nombre):
+        self.nombre, self.cargas = nombre, 0
+
+    def _cargar(self):
+        self.cargas += 1
+
+
+def test_precalentar_deja_listos_el_vad_y_el_detector(stt, monkeypatch):
+    vad, detector = _Cargable("silero"), _Cargable("openwakeword")
+    monkeypatch.setattr(vad_mod, "crear_vad", lambda cfg: vad)
+    monkeypatch.setattr(wake, "crear_detector_local", lambda cfg: detector)
+    stt.precalentar()
+    assert vad.cargas == 1 and detector.cargas == 1
+    assert stt._obtener_detector() is detector, "después se usa el mismo, ya cargado"
+
+
+def test_precalentar_y_escuchar_a_la_vez_no_arman_dos_detectores(stt, monkeypatch):
+    import threading as th
+    creados = []
+
+    def crear(cfg):
+        time.sleep(0.05)                                   # que los dos hilos se crucen
+        creados.append(1)
+        return _Cargable("openwakeword")
+
+    monkeypatch.setattr(wake, "crear_detector_local", crear)
+    hilos = [th.Thread(target=stt._obtener_detector) for _ in range(4)]
+    [h.start() for h in hilos]
+    [h.join() for h in hilos]
+    assert creados == [1]
+
+
+def test_si_precalentar_falla_no_rompe_nada(stt, monkeypatch):
+    def roto():
+        raise RuntimeError("modelo roto")
+
+    detector = _Cargable("openwakeword")
+    detector._cargar = roto
+    monkeypatch.setattr(wake, "crear_detector_local", lambda cfg: detector)
+    stt.precalentar()                                      # no lanza
+
+
+def test_openwakeword_carga_el_modelo_una_sola_vez_aunque_lo_pidan_dos_hilos(monkeypatch, tmp_path):
+    pytest.importorskip("openwakeword")
+    import threading as th
+    import openwakeword.model as oww_model
+    creados = []
+
+    class Modelo:
+        def __init__(self, **kw):
+            time.sleep(0.05)
+            creados.append(1)
+
+    monkeypatch.setattr(oww_model, "Model", Modelo)
+    d = wake.DetectorOpenWakeWord(str(tmp_path / "miku.onnx"))
+    monkeypatch.setattr(d, "_asegurar_modelos_base", lambda: None)
+    hilos = [th.Thread(target=d._cargar) for _ in range(4)]
+    [h.start() for h in hilos]
+    [h.join() for h in hilos]
+    assert creados == [1]
+
+
+# --------------------------------------------------------------------------- #
+# Los "casi" quedan en el log (para entender qué pasa en uso real)
+# --------------------------------------------------------------------------- #
+def test_una_frase_que_casi_llega_queda_en_el_log(monkeypatch, tmp_path, caplog):
+    d = wake.DetectorOpenWakeWord(str(tmp_path / "miku.onnx"), umbral=0.5)
+    monkeypatch.setattr(d, "puntaje", lambda m: 0.32)
+    with caplog.at_level(logging.INFO, logger="miku.stt.wake"):
+        assert d.detectar(_audio_de(_frase_corta())).activo is False
+    assert "0.32" in caplog.text and "no alcanza" in caplog.text
+
+
+def test_el_ruido_comun_no_llena_el_log(monkeypatch, tmp_path, caplog):
+    d = wake.DetectorOpenWakeWord(str(tmp_path / "miku.onnx"), umbral=0.5)
+    monkeypatch.setattr(d, "puntaje", lambda m: 0.02)
+    with caplog.at_level(logging.INFO, logger="miku.stt.wake"):
+        d.detectar(_audio_de(_frase_corta()))
+    assert "no alcanza" not in caplog.text
+
+
+# --------------------------------------------------------------------------- #
+# Herramienta de diagnóstico
+# --------------------------------------------------------------------------- #
+def test_diagnostico_mide_el_volumen_en_dbfs():
+    np = pytest.importorskip("numpy")
+    from miku.voz.entrada import diagnostico_wake as diag
+    assert diag.dbfs(np.array([0, 32767, -5], dtype=np.int16)) == pytest.approx(0.0, abs=0.01)
+    assert diag.dbfs(np.array([0, 1510], dtype=np.int16)) == pytest.approx(-26.7, abs=0.1)
+    assert diag.dbfs(np.zeros(10, dtype=np.int16)) == -90.0
+
+
+def test_diagnostico_guarda_una_copia_de_todo_lo_que_oye():
+    from miku.voz.entrada import diagnostico_wake as diag
+
+    class Stream:
+        def read(self, n):
+            return b"\x01" * (n * 2)
+
+    espejo = diag._Espejo(Stream())
+    espejo.read(4)
+    espejo.read(2)
+    assert b"".join(espejo.copia) == b"\x01" * 12
+
+
+def test_diagnostico_compara_con_el_volumen_del_entrenamiento(tmp_path, monkeypatch):
+    np = pytest.importorskip("numpy")
+    from miku.ajustes import carga as config_mod
+    from miku.voz.entrada import diagnostico_wake as diag
+    monkeypatch.setattr(config_mod, "BASE_DIR", tmp_path)
+    assert diag.nivel_entrenamiento() is None, "sin grabaciones no inventa nada"
+    carpeta = tmp_path / "entrenamiento" / "grabaciones" / "real_clips"
+    diag._guardar_wav(carpeta / "che_miku_001.wav", np.array([0, 1510, -200], dtype=np.int16).tobytes(), 16000, 2)
+    assert diag.nivel_entrenamiento() == pytest.approx(-26.7, abs=0.1)
+
+
+def test_diagnostico_avisa_si_no_esta_usando_openwakeword(cfg, monkeypatch, capsys):
+    from miku.ajustes import carga as config_mod
+    from miku.voz.entrada import diagnostico_wake as diag
+    cfg.valores["wake_proveedor"] = "nube"
+    monkeypatch.setattr(config_mod, "config", cfg)
+    monkeypatch.setattr(config_mod, "cargar", lambda: cfg)
+    assert diag.main([]) == 1
+    assert "WAKE_PROVEEDOR" in capsys.readouterr().out

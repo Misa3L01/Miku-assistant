@@ -86,6 +86,8 @@ class SpeechToText:
         self._wake_resuelto = False
         self._vad: Any = None                  # detector de voz (lazy)
         self._vad_resuelto = False
+        # El hilo que escucha y el que precalienta (``precalentar``) pueden pedirlos a la vez.
+        self._lock_recursos = threading.Lock()
 
         # Estado del escucha en segundo plano.
         self._hilo_escucha: Optional[threading.Thread] = None
@@ -186,6 +188,10 @@ class SpeechToText:
 
     def _obtener_detector(self) -> Any:
         """Detector LOCAL de la palabra clave, o None si se resuelve en la nube (ver ``wake.py``)."""
+        with self._lock_recursos:
+            return self._obtener_detector_sin_lock()
+
+    def _obtener_detector_sin_lock(self) -> Any:
         if not self._wake_resuelto:
             self._wake_resuelto = True
             try:
@@ -196,6 +202,21 @@ class SpeechToText:
                 logger.exception("No pude preparar el detector local; uso la nube.")
                 self._detector_wake = None
         return self._detector_wake
+
+    def precalentar(self) -> None:
+        """Deja listos el VAD y el detector de la palabra clave (para llamar en segundo plano al arrancar).
+
+        Si no, se cargaban con la primera frase que oías: con openWakeWord eso llevó 16 s en un arranque
+        real (con VOICEVOX arrancando a la vez), y todo lo que dijiste mientras tanto se perdió.
+        """
+        for obtener in (self._obtener_vad, self._obtener_detector):
+            try:
+                recurso = obtener()
+                cargar = getattr(recurso, "_cargar", None)
+                if callable(cargar):
+                    cargar()
+            except Exception:  # noqa: BLE001
+                logger.debug("No pude precalentar %s.", obtener.__name__, exc_info=True)
 
     def _detectar_wake(self, audio) -> "wake.Deteccion":
         """¿Ese audio te dirigía a Miku?
@@ -211,6 +232,10 @@ class SpeechToText:
 
     def _obtener_vad(self) -> Any:
         """Detector de voz para saber cuándo terminás de hablar (None = pausa fija de siempre)."""
+        with self._lock_recursos:
+            return self._obtener_vad_sin_lock()
+
+    def _obtener_vad_sin_lock(self) -> Any:
         if not self._vad_resuelto:
             self._vad_resuelto = True
             try:
@@ -292,8 +317,9 @@ class SpeechToText:
                 colchon.append(frame)
                 if hay_voz:
                     hablando = True
-                    frames.extend(colchon)      # con el colchón no se pierde el inicio de la palabra
-                    frames.append(frame)
+                    # El colchón ya incluye este fragmento: con él no se pierde el inicio de la palabra
+                    # (y agregarlo aparte lo duplicaba: 32 ms repetidos justo al empezar a hablar).
+                    frames.extend(colchon)
                 elif time.monotonic() - inicio > timeout:
                     raise self.sr.WaitTimeoutError("nadie habló")
                 continue
