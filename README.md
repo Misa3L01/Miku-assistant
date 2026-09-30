@@ -486,6 +486,7 @@ seguridad y la configuración. Si cambiás `miku/ajustes/esquema.py`, regenerá 
 | "No tengo mi clave de acceso configurada" | Falta `GROQ_API_KEY` en `config_local.py` o el entorno |
 | Habla con voz robótica | VOICEVOX no responde (mirá los logs `[VOICEVOX]`); se reintenta a los 30 s |
 | No oye / "no se pudo abrir el micrófono" | Probá `MICROFONO_INDEX` (la lista aparece al iniciar el modo voz) |
+| No te toma la palabra clave (openWakeWord) | Subí la **ganancia del micrófono** (Windows: Sistema → Sonido → tu micrófono → Volumen de entrada; al máximo anduvo al instante) y probá con `python -m miku.voz.entrada.diagnostico_wake`, que muestra el puntaje de cada frase |
 | Se activa sola con conversaciones | Bajá el ruido ambiente; la wake word ya exige la palabra "Miku" completa |
 | Sin bandeja ni subtítulos | Falta PyQt5 (`pip install PyQt5`) |
 | "El bot de Discord todavía no está conectado" | Tarda unos segundos en conectar; revisá el token y el intent *Server Members* |
