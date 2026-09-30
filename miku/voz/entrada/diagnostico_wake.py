@@ -97,8 +97,6 @@ class _Espejo:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    import numpy as np
-
     from miku.voz.entrada.escucha import SpeechToText
 
     parser = argparse.ArgumentParser(description="Probar la palabra clave con tu micrófono.")
@@ -123,6 +121,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("La palabra clave no está usando openWakeWord. Revisá WAKE_PROVEEDOR y WAKE_MODELO en "
               "config_local.py.")
         return 1
+    import numpy as np  # viene con onnxruntime, que openWakeWord necesita; recién ahora hace falta
+
     vad = stt._obtener_vad()
     print(f"Micrófono : {nombre_microfono(cfg.microfono_index)}")
     print(f"Modelo    : {detector.ruta_modelo}  (umbral {detector.umbral:.2f})")
