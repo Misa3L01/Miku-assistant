@@ -34,6 +34,24 @@ from miku.servicios.eventos import EventBus  # noqa: E402
 from miku.cerebro.parser import CommandParser  # noqa: E402
 
 
+def pytest_runtest_logreport(report) -> None:
+    """En GitHub Actions, cada test que falla se publica como anotación (con el error).
+
+    Así el fallo se ve en la página del commit sin tener que abrir el log del CI.
+    """
+    if os.environ.get("GITHUB_ACTIONS") != "true" or not report.failed:
+        return
+    ruta, linea, _ = report.location
+    mensaje, titulo = report.longreprtext[-1500:], report.nodeid
+    for crudo, escapado in (("%", "%25"), ("\r", "%0D"), ("\n", "%0A")):
+        mensaje, titulo = mensaje.replace(crudo, escapado), titulo.replace(crudo, escapado)
+    titulo, ruta = titulo.replace(":", "%3A").replace(",", "%2C"), ruta.replace("\\", "/")
+    # Empieza en línea nueva: GitHub solo la reconoce al principio de la línea (pytest -q deja ahí
+    # los puntitos del progreso).
+    sys.__stdout__.write(f"\n::error file={ruta},line={(linea or 0) + 1},title={titulo}::{mensaje}\n")
+    sys.__stdout__.flush()
+
+
 @pytest.fixture
 def cfg() -> "config_mod.Config":
     """Config de fábrica (defaults), sin claves y sin leer archivos del usuario."""
