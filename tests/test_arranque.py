@@ -89,6 +89,24 @@ def test_inicio_con_windows_activar_y_desactivar():
         arranque.desactivar_inicio_windows(nombre_run)
 
 
+def test_inicio_con_windows_crea_la_clave_run_si_no_existe(monkeypatch):
+    """En un perfil de Windows recién creado la clave Run puede no existir (pasa en el CI)."""
+    import winreg
+    base = rf"Software\MikuTest{uuid.uuid4().hex[:8]}"
+    monkeypatch.setattr(arranque, "_CLAVE_RUN", base + r"\Run")
+    try:
+        assert arranque.inicio_windows_activo("Miku") is False
+        assert arranque.desactivar_inicio_windows("Miku") is True, "sin clave no hay nada que borrar"
+        assert arranque.activar_inicio_windows("Miku") is True
+        assert arranque.inicio_windows_activo("Miku") is True
+    finally:
+        for clave in (base + r"\Run", base):
+            try:
+                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, clave)
+            except OSError:
+                pass
+
+
 def test_el_comando_de_inicio_es_silencioso_y_usa_rutas_entrecomilladas():
     partes = arranque.argumentos_de_arranque(["--silencioso"])
     linea = arranque._como_linea(partes)

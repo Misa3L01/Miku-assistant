@@ -85,7 +85,9 @@ def activar_inicio_windows(nombre: str = NOMBRE_RUN) -> bool:
     try:
         import winreg
         comando = _como_linea(argumentos_de_arranque(["--silencioso"]))
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _CLAVE_RUN, 0, winreg.KEY_SET_VALUE) as clave:
+        # CreateKeyEx y no OpenKey: en un perfil de Windows recién creado la clave Run puede no
+        # existir todavía (pasa en el CI de GitHub), y OpenKey no la crea.
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, _CLAVE_RUN, 0, winreg.KEY_SET_VALUE) as clave:
             winreg.SetValueEx(clave, nombre, 0, winreg.REG_SZ, comando)
         logger.info("Inicio con Windows activado.")
         return True
@@ -105,6 +107,8 @@ def desactivar_inicio_windows(nombre: str = NOMBRE_RUN) -> bool:
                 pass
         logger.info("Inicio con Windows desactivado.")
         return True
+    except FileNotFoundError:
+        return True                             # sin clave Run no hay nada que borrar
     except OSError:
         logger.exception("No pude desactivar el inicio con Windows.")
         return False
