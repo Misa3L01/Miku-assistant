@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./extern/**)",
+      "Read(./data/**)",
+      "Read(./venv/**)",
+      "Read(./bin/**)",
+      "Read(./entrenamiento/**)",
+      "Read(./config_local.py)",
+      "Read(./config_local.py.*)",
+      "Read(./**/*.onnx)",
+      "Read(./**/*.tflite)",
+      "Read(./**/*.aivmx)",
+      "Read(./**/*.wav)",
+      "Read(./**/*.log)"
+    ]
+  }
+}
