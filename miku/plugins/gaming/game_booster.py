@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from typing import Any, List, Optional
 
 from miku.ajustes import carga as config_mod
@@ -32,9 +33,9 @@ logger = logging.getLogger("miku.plugins.game_booster")
 
 # Cada cuántos segundos revisamos el primer plano.
 _INTERVALO = 3.0
-# Cuántos chequeos seguidos "sin juego" para considerar que salió (evita
-# parpadeos por alt-tab).
-_CHEQUEOS_SALIDA = 2
+# Segundos que tiene que pasar SIN el juego en primer plano para considerar que salió (la opción
+# ``BOOSTER_ESPERA_SALIDA`` los cambia). Evita avisos y volumen restaurado por un alt-tab corto.
+_ESPERA_SALIDA = 10.0
 
 
 class GameBooster(Plugin):
@@ -51,9 +52,9 @@ class GameBooster(Plugin):
         super().__init__()
         self._hilo: Optional[threading.Thread] = None
         self._detener = threading.Event()
-        # Estado del booster: proceso activo y contador de "no juego".
+        # Estado del booster: proceso activo y desde cuándo (time.monotonic) no está en primer plano.
         self._juego_activo: Optional[str] = None
-        self._contador_salida = 0
+        self._fuera_desde: Optional[float] = None
         # True SOLO si el snapshot lo creamos NOSOTROS (si ya había uno de una
         # macro, es de ella y no lo revertimos).
         self._snapshot_activo = False
@@ -116,18 +117,27 @@ class GameBooster(Plugin):
 
             juegos = set(config_mod.config.juegos_booster)
             if proceso and proceso in juegos:
-                # Hay juego en primer plano.
-                self._contador_salida = 0
+                # Hay juego en primer plano: si volviste a tiempo, se cancela la salida.
+                self._fuera_desde = None
                 if self._juego_activo != proceso:
                     self._activar(proceso)
-            else:
-                # No hay juego: si había uno, contamos para salir.
-                if self._juego_activo is not None:
-                    self._contador_salida += 1
-                    if self._contador_salida >= _CHEQUEOS_SALIDA:
-                        self._desactivar()
+            elif self._juego_activo is not None:
+                # No hay juego: se sale recién tras ``_espera_salida`` segundos seguidos fuera.
+                ahora = time.monotonic()
+                if self._fuera_desde is None:
+                    self._fuera_desde = ahora
+                if ahora - self._fuera_desde >= self._espera_salida():
+                    self._desactivar()
 
             self._detener.wait(_INTERVALO)
+
+    @staticmethod
+    def _espera_salida() -> float:
+        """Segundos fuera del juego antes de salir del modo gaming (``BOOSTER_ESPERA_SALIDA``)."""
+        try:
+            return max(0.0, float(config_mod.config.get("booster_espera_salida", _ESPERA_SALIDA)))
+        except (TypeError, ValueError):
+            return _ESPERA_SALIDA
 
     # ---------------- Activación / desactivación ---------------- #
     def _activar(self, proceso: str) -> None:
@@ -165,7 +175,7 @@ class GameBooster(Plugin):
         with self._lock:
             proceso = self._juego_activo
             self._juego_activo = None
-            self._contador_salida = 0
+            self._fuera_desde = None
             logger.info("GameBooster: fin de juego '%s'.", proceso)
 
             # Volumen por app: el snapshot solo guarda el master.

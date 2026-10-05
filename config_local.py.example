@@ -489,6 +489,12 @@ LLM_API_KEY = ""
 # (usado por: game_booster)
 # BOOSTER_VOLUMEN_OBJETIVO = 20
 
+# Segundos seguidos fuera del juego antes de restaurar el volumen y avisar que salió.
+# Con un alt-tab más corto que esto no pasa nada. La entrada al juego sigue siendo
+# inmediata.
+# (usado por: game_booster)
+# BOOSTER_ESPERA_SALIDA = 10.0
+
 # Avisar (notificación + voz) al entrar y salir del modo gaming.
 # (usado por: game_booster)
 # BOOSTER_AVISO = True
