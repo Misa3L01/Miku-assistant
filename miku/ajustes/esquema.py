@@ -180,10 +180,12 @@ _OPCIONES: List[Opcion] = [
        "puerto de siempre.", usado_por="voz"),
     _o("aivisspeech_speaker_id", 0, "voz",
        "Número de la voz (estilo) de AivisSpeech. 0 = la primera que tengas instalada. Lo más cómodo es "
-       "elegirla desde la bandeja: Configuración > Voz.", "entero", usado_por="voz"),
+       "elegirla desde la bandeja: Configuración > Voz (ahí también se agregan voces .aivmx).", "entero",
+       usado_por="voz"),
     _o("aivisspeech_run_exe", "", "voz",
-       "Ruta al run.exe del motor de AivisSpeech, si no está donde lo deja el instalador (Archivos de "
-       "programa\\AivisSpeech\\AivisSpeech-Engine) ni en extern/AivisSpeech-Engine/. Miku lo arranca sola.",
+       "Ruta al run.exe del motor de AivisSpeech, si no está en extern/AivisSpeech/AivisSpeech-Engine/ (la "
+       "app entera dentro de extern/), en extern/AivisSpeech-Engine/ ni donde lo deja el instalador "
+       "(Archivos de programa\\AivisSpeech\\AivisSpeech-Engine). Miku lo arranca sola.",
        "ruta", r'r"D:\Programas\AivisSpeech\AivisSpeech-Engine\run.exe"', "voz"),
     _o("voz_velocidad", 1.0, "voz",
        "Velocidad al hablar (0.5 a 2.0; 1.0 es la normal).", "decimal", usado_por="voz"),
@@ -228,9 +230,10 @@ _OPCIONES: List[Opcion] = [
        "Tamaño del modelo de faster-whisper cuando STT_PROVEEDOR = 'local' (tiny, base, small, "
        "medium, large-v3).", "texto", usado_por="voz"),
     _o("tts_motor", "voicevox", "voz",
-       "Motor de voz: 'voicevox' o 'aivisspeech' (voces japonesas: Miku traduce lo que dice), 'sistema' "
-       "(voz de Windows, español) o 'comando' (tu propio motor: ver TTS_COMANDO). Cambiarlo requiere "
-       "reiniciar Miku.", "texto", usado_por="voz",
+       "Motor de voz con el que arranca Miku: 'voicevox' o 'aivisspeech' (voces japonesas: Miku traduce lo "
+       "que dice), 'sistema' (voz de Windows, español) o 'comando' (tu propio motor: ver TTS_COMANDO). "
+       "Desde la bandeja (Configuración > Voz) se cambia sin reiniciar: Miku cierra el motor anterior si "
+       "lo había abierto ella y arranca el nuevo.", "texto", usado_por="voz",
        permitidos=("voicevox", "aivisspeech", "sistema", "comando")),
     _o("tts_idioma", "es", "voz",
        "Idioma que HABLA el motor 'comando' (es, en, ja, pt…). Si no es 'es', Miku traduce antes "
@@ -418,6 +421,10 @@ _OPCIONES: List[Opcion] = [
        "Apps a las que baja el volumen el modo gaming.", "lista", usado_por="game_booster"),
     _o("booster_volumen_objetivo", 20, "juegos",
        "Volumen (0-100) al que se bajan esas apps mientras jugás.", "entero",
+       usado_por="game_booster"),
+    _o("booster_espera_salida", 10.0, "juegos",
+       "Segundos seguidos fuera del juego antes de restaurar el volumen y avisar que salió. Con un alt-tab "
+       "más corto que esto no pasa nada. La entrada al juego sigue siendo inmediata.", "decimal",
        usado_por="game_booster"),
     _o("booster_aviso", True, "juegos",
        "Avisar (notificación + voz) al entrar y salir del modo gaming.", "booleano",

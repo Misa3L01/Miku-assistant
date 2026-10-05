@@ -103,13 +103,15 @@ LLM_API_KEY = ""
 # AIVISSPEECH_URL = "http://127.0.0.1:10101"
 
 # Número de la voz (estilo) de AivisSpeech. 0 = la primera que tengas instalada. Lo más
-# cómodo es elegirla desde la bandeja: Configuración > Voz.
+# cómodo es elegirla desde la bandeja: Configuración > Voz (ahí también se agregan voces
+# .aivmx).
 # (usado por: voz)
 # AIVISSPEECH_SPEAKER_ID = 0
 
-# Ruta al run.exe del motor de AivisSpeech, si no está donde lo deja el instalador
-# (Archivos de programa\AivisSpeech\AivisSpeech-Engine) ni en extern/AivisSpeech-
-# Engine/. Miku lo arranca sola.
+# Ruta al run.exe del motor de AivisSpeech, si no está en
+# extern/AivisSpeech/AivisSpeech-Engine/ (la app entera dentro de extern/), en
+# extern/AivisSpeech-Engine/ ni donde lo deja el instalador (Archivos de
+# programa\AivisSpeech\AivisSpeech-Engine). Miku lo arranca sola.
 # (usado por: voz)
 # AIVISSPEECH_RUN_EXE = r"D:\Programas\AivisSpeech\AivisSpeech-Engine\run.exe"
 
@@ -174,9 +176,10 @@ LLM_API_KEY = ""
 # (usado por: voz)
 # STT_MODELO_LOCAL = "small"
 
-# Motor de voz: 'voicevox' o 'aivisspeech' (voces japonesas: Miku traduce lo que dice),
-# 'sistema' (voz de Windows, español) o 'comando' (tu propio motor: ver TTS_COMANDO).
-# Cambiarlo requiere reiniciar Miku.
+# Motor de voz con el que arranca Miku: 'voicevox' o 'aivisspeech' (voces japonesas:
+# Miku traduce lo que dice), 'sistema' (voz de Windows, español) o 'comando' (tu propio
+# motor: ver TTS_COMANDO). Desde la bandeja (Configuración > Voz) se cambia sin
+# reiniciar: Miku cierra el motor anterior si lo había abierto ella y arranca el nuevo.
 # Valores válidos: voicevox, aivisspeech, sistema, comando
 # (usado por: voz)
 # TTS_MOTOR = "voicevox"

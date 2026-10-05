@@ -126,12 +126,14 @@ próxima vez.
 
 - **Pestaña Voz:** motor (VOICEVOX, AivisSpeech, voz de Windows o uno propio), qué voz usar (la lista la
   da el motor que está sonando), velocidad, tono, entonación, volumen y ritmo, y un botón **Probar voz**
-  que dice una frase con lo elegido antes de guardarlo.
+  que dice una frase con lo elegido antes de guardarlo. Al **guardar otro motor, Miku pasa a ese sin
+  reiniciar** (y es con el que arranca la próxima vez). Con AivisSpeech, **Agregar voz (.aivmx)…**
+  instala un modelo de voz descargado y lo deja elegido en la lista.
 - **Pestaña Ajustes:** cada opción de sí/no y cada una de "elegí entre estas", agrupadas como en
   `config_local.py`. El **"!"** al lado de cada una explica qué hace al pasarle el mouse.
 - **Guardar** escribe en tu `config_local.py` **solo la línea de cada opción que cambiaste** (con copia en
   `config_local.py.bak`), así el archivo y la ventana dicen siempre lo mismo. Casi todo vale al instante;
-  lo que necesita reiniciar Miku (el motor de voz, el VAD, la palabra clave…) lo avisa.
+  lo que necesita reiniciar Miku (el VAD, la palabra clave…) lo avisa.
 - Las claves, rutas y listas se siguen editando en `config_local.py`.
 - Si tenés `config_local.py` abierto en el editor, recargalo antes de guardarlo: si no, la versión vieja
   que tenés en pantalla pisa lo que guardó la ventana.
@@ -342,17 +344,31 @@ Si tenés el material de entrenamiento en `entrenamiento/`, tampoco se sube (son
 **AivisSpeech.** Es un motor derivado de VOICEVOX, con voces propias y su propio puerto (10101). Como la
 API es la misma, Miku lo usa igual que a VOICEVOX. Para usarlo:
 
-1. Instalá AivisSpeech desde <https://aivis-project.com> (el instalador, no el zip). Deja el motor en
-   `C:\Program Files\AivisSpeech\AivisSpeech-Engine\run.exe` y Miku lo encuentra solo. Si usás el motor
-   suelto, ponelo en `extern/AivisSpeech-Engine/` o indicá la ruta en `AIVISSPEECH_RUN_EXE`.
-2. Voces nuevas: se instalan con un clic desde AivisHub dentro de la app de AivisSpeech (quedan en
-   `%APPDATA%\AivisSpeech-Engine\Models`).
-3. Bandeja → *Configuración…* → Motor de voz: **AivisSpeech** → Guardar, y reiniciá Miku.
-4. Otra vez en *Configuración…*, elegí la voz de la lista y probala. Sin elegir, usa la primera instalada.
+1. Bajá AivisSpeech de <https://aivis-project.com> y dejalo en `extern/AivisSpeech/` (la app entera, como
+   VOICEVOX en `extern/VOICEVOX/`): Miku busca el motor en `extern/AivisSpeech/AivisSpeech-Engine/run.exe`.
+   También lo encuentra en `extern/AivisSpeech-Engine/` (solo el motor) o donde lo deja el instalador
+   (`C:\Program Files\AivisSpeech\AivisSpeech-Engine\run.exe`); si no, indicá la ruta en
+   `AIVISSPEECH_RUN_EXE`. `extern/` no se sube a GitHub.
+2. Bandeja → *Configuración…* → Motor de voz: **AivisSpeech** → Guardar. Miku lo arranca en ese momento,
+   sin reiniciar, y desde ahí es con el que arranca siempre.
+3. Elegí la voz en la lista y probala con **Probar voz**. Sin elegir, usa la primera instalada.
+4. Voces nuevas: bajá el modelo (`.aivmx`, por ejemplo de AivisHub) y en *Configuración…* tocá **Agregar voz
+   (.aivmx)…**. AivisSpeech guarda su propia copia (en `%APPDATA%\AivisSpeech-Engine\Models`), así que el
+   archivo original se puede borrar o guardar en `data/voces/`. Los `.aivmx` nunca se suben a GitHub
+   (están en `.gitignore`, aunque los dejes en la raíz del proyecto).
+
+**Tiempos.** AivisSpeech tarda unos 30 s en arrancar (revisa sus voces y carga un modelo de idioma) y Miku
+lo espera hasta 90 s. **La primera vez de la vida** además baja ese modelo de idioma y dos voces de
+regalo (*まお* y *コハク*), cerca de 1 GB: tarda un minuto o más. Al arrancar, Miku deja cargada la voz
+elegida (unos 10 s, en segundo plano) para que la primera respuesta no tenga que esperarla.
 
 Detalles: en AivisSpeech la **entonación** es la fuerza de la emoción del estilo, el **ritmo** es propio de
 este motor, y conviene dejar el **tono** en 0 (moverlo empeora el sonido). Con `VOICEVOX_GPU = True` usa
-DirectML. Igual que VOICEVOX, habla en japonés: Miku traduce antes lo que va a decir.
+DirectML (la placa de video). Igual que VOICEVOX, habla en japonés: Miku traduce antes lo que va a decir.
+Cada `.aivmx` trae su licencia adentro; muchas voces de AivisHub usan la *ACML 1.0*, que permite el uso
+personal y comercial, deja opcional nombrar la voz y prohíbe hacerla pasar por la persona real u oficial,
+usarla para atacar o engañar y para campañas políticas o religiosas. Para un asistente personal no hay
+problema.
 
 **Voz propia / otro idioma.** Con `TTS_MOTOR = "comando"` Miku ejecuta *tu* comando, que tiene que escribir un WAV en `{salida}` (el texto entra por stdin, o usá `{texto}`). Sirve para Piper, XTTS, GPT-SoVITS, RVC… Ejemplo con Piper en español: `TTS_COMANDO = r"piper --model C:\voces\es_AR.onnx --output_file {salida}"`, `TTS_IDIOMA = "es"`. Si `TTS_IDIOMA` no es `es` (por ejemplo `pt`), Miku traduce antes de hablar. Se ejecuta **sin shell**, con tiempo máximo, y si falla habla con la voz de Windows.
 
@@ -516,3 +532,11 @@ Subí el nivel de log con `LOG_LEVEL = "DEBUG"` en `config_local.py`.
 - [docs/roadmap.md](docs/roadmap.md): ideas evaluadas y todavía no implementadas, con el porqué.
 - [docs/interpolacion/LEEME.md](docs/interpolacion/LEEME.md): el `.bat` de interpolación de video.
 - `python -m miku.ajustes estado`: qué tenés configurado y qué falta (las opciones están documentadas en `miku/ajustes/esquema.py`).
+
+---
+
+## Licencia
+
+© 2026 Misa3L01. **Todos los derechos reservados.** El código se puede ver, pero no usar, copiar,
+modificar ni distribuir sin permiso del autor. Detalle en [LICENSE](LICENSE). VOICEVOX, AivisSpeech, sus
+voces y las bibliotecas que usa Miku tienen sus propias licencias.

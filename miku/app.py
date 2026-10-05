@@ -268,14 +268,14 @@ class Asistente:
 
     # ---------------- Voz ----------------
     def _preparar_voz(self, subtitulos: bool = True) -> Any:
-        """Crea (lazy) el motor de voz VOICEVOX y lo expone en el bus."""
+        """Crea (lazy) el motor de voz (VOICEVOX, AivisSpeech...) y lo expone en el bus."""
         if self.voice is None:
             from miku.voz.salida.tts import TextoAVoz  # import tardío
             voz = TextoAVoz(self.cfg, subtitulos_activos=subtitulos)
             self.voice = voz
             # Los plugins con avisos propios (proactivo, game_booster) leen la voz de ``bus.voice``.
             self.bus.voice = voz
-            logger.info("Voz (VOICEVOX) preparada. Subtítulos: %s", subtitulos)
+            logger.info("Voz preparada (%s). Subtítulos: %s", voz.motor_jp.nombre, subtitulos)
         return self.voice
 
     def _al_comando_voz(self, comando: str) -> None:

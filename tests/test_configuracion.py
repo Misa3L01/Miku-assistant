@@ -135,7 +135,7 @@ def test_lo_guardado_lo_lee_miku_al_arrancar(tmp_path, cfg):
 # --------------------------------------------------------------------------- #
 class _Http:
     def __init__(self, codigo=200, datos=None):
-        self.status_code, self._datos = codigo, datos
+        self.status_code, self._datos, self.text = codigo, datos, ""
 
     def json(self):
         return self._datos
@@ -179,9 +179,11 @@ def test_encuentra_el_run_exe_de_aivisspeech(cfg, tmp_path, monkeypatch):
 
 
 def test_las_rutas_tipicas_incluyen_el_instalador_y_extern():
-    rutas = [str(r) for r in tts_mod.MOTORES_JAPONESES["aivisspeech"].rutas_run]
-    assert any("Program Files" in r and "AivisSpeech-Engine" in r for r in rutas)
-    assert any(r.replace("\\", "/").endswith("extern/AivisSpeech-Engine/run.exe") for r in rutas)
+    rutas = [str(r).replace("\\", "/") for r in tts_mod.MOTORES_JAPONESES["aivisspeech"].rutas_run]
+    assert rutas[0].endswith("extern/AivisSpeech/AivisSpeech-Engine/run.exe"), \
+        "primero la app entera en extern/AivisSpeech/, como VOICEVOX"
+    assert any(r.endswith("extern/AivisSpeech-Engine/run.exe") for r in rutas), "o solo el motor"
+    assert any("Program Files" in r and "AivisSpeech-Engine" in r for r in rutas), "o el instalador"
 
 
 def test_lista_las_voces_del_motor(cfg, monkeypatch):
@@ -271,6 +273,149 @@ def test_si_el_motor_no_informa_sus_dispositivos_no_se_avisa_nada(cfg, monkeypat
 
 
 # --------------------------------------------------------------------------- #
+# Cambiar de motor sin reiniciar, y la voz lista desde el arranque
+# --------------------------------------------------------------------------- #
+class _ProcesoMotor:
+    def __init__(self):
+        self.terminado = False
+
+    def poll(self):
+        return 0 if self.terminado else None
+
+    def terminate(self):
+        self.terminado = True
+
+    def wait(self, timeout=None):
+        return 0
+
+
+def test_cambiar_de_motor_sin_reiniciar(cfg):
+    v = tts_mod.TextoAVoz(cfg)
+    proceso = _ProcesoMotor()
+    v._proceso_voicevox, v._voicevox_lo_lanzamos = proceso, True          # VOICEVOX lo abrió Miku
+    v._voicevox_url_activa, v._voicevox_ok_hasta = "http://127.0.0.1:50021", time.monotonic() + 60
+    cfg.valores.update(tts_motor="aivisspeech", aivisspeech_speaker_id=1325133120)
+    assert v.cambiar_motor("aivisspeech") is True
+    assert proceso.terminado, "el motor que había abierto Miku se cierra"
+    assert v.motor_jp.nombre == "AivisSpeech" and v._url_activa() == "http://127.0.0.1:10101"
+    assert v._voicevox_ok_hasta == 0.0, "al nuevo se le pregunta de cero si responde"
+    assert v._motor_pendiente.is_set(), "y lo que lo necesite espera aparte, sin trabar la fila"
+    assert v.speaker_id == 1325133120, "y usa la voz elegida para ese motor"
+    assert v.cambiar_motor("aivisspeech") is False and v.cambiar_motor("sistema") is False
+
+
+def test_un_motor_que_abriste_vos_no_se_cierra_al_cambiar(cfg):
+    v = tts_mod.TextoAVoz(cfg)
+    proceso = _ProcesoMotor()
+    v._proceso_voicevox, v._voicevox_lo_lanzamos = proceso, False
+    assert v.cambiar_motor("aivisspeech") and not proceso.terminado
+
+
+def test_la_proxima_frase_usa_el_motor_elegido_en_la_ventana(cfg, monkeypatch):
+    v = tts_mod.TextoAVoz(cfg)
+    monkeypatch.setattr(v, "_asegurar_voicevox", lambda: True)
+    monkeypatch.setattr(v, "_traducir_a_japones", lambda t: "テスト")
+    urls = []
+    monkeypatch.setattr(v, "_sintetizar_voicevox", lambda t: urls.append(v._url_activa()) or b"RIFF")
+    cfg.valores["tts_motor"] = "aivisspeech"                 # lo que hace "Guardar" en la ventana
+    v._preparar_audio_frase("Hola")
+    assert urls == ["http://127.0.0.1:10101"]
+
+
+def test_al_arrancar_la_voz_queda_cargada_una_sola_vez(cfg, monkeypatch):
+    """Sin esto, la primera respuesta pagaría la carga de la voz (~12 s en AivisSpeech con GPU)."""
+    cfg.valores.update(tts_motor="aivisspeech", aivisspeech_speaker_id=1325133120)
+    v = tts_mod.TextoAVoz(cfg)
+    monkeypatch.setattr(v, "asegurar_voicevox_inicial", lambda: True)
+    sintetizadas = []
+    monkeypatch.setattr(v, "_sintetizar_voicevox", lambda t: sintetizadas.append((t, v.speaker_id)) or b"RIFF")
+    v.precalentar()
+    v.precalentar()
+    assert sintetizadas == [(tts_mod.FRASE_CALENTAR, 1325133120)]
+    cfg.valores["aivisspeech_speaker_id"] = 888753760
+    v.precalentar()
+    assert sintetizadas[-1] == (tts_mod.FRASE_CALENTAR, 888753760), "otra voz se carga de nuevo"
+
+
+def test_si_la_voz_no_carga_se_reintenta_la_proxima_vez(cfg, monkeypatch):
+    v = tts_mod.TextoAVoz(cfg)
+    intentos = []
+    monkeypatch.setattr(v, "_sintetizar_voicevox", lambda t: intentos.append(t))
+    v._cargar_voz()
+    v._cargar_voz()
+    assert len(intentos) == 2
+
+
+# --------------------------------------------------------------------------- #
+# Instalar voces (.aivmx) en AivisSpeech
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def aivis(cfg, monkeypatch):
+    """TTS con AivisSpeech "andando" y una voz ya instalada."""
+    cfg.valores["tts_motor"] = "aivisspeech"
+    v = tts_mod.TextoAVoz(cfg)
+    monkeypatch.setattr(v, "_asegurar_voicevox", lambda: True)
+    v.instaladas = [VOCES[0]]
+    monkeypatch.setattr(red, "get", lambda url, **k: _Http(200, list(v.instaladas)))
+    return v
+
+
+def test_instalar_un_modelo_de_aivisspeech(aivis, monkeypatch, tmp_path):
+    enviado = {}
+
+    def post(url, **kw):
+        nombre, archivo, _ = kw["files"]["file"]
+        enviado.update(url=url, nombre=nombre, datos=archivo.read())
+        aivis.instaladas.append(VOCES[1])
+        return _Http(204)
+
+    monkeypatch.setattr(red, "post", post)
+    modelo = tmp_path / "花音.aivmx"
+    modelo.write_bytes(b"ONNX...")
+    assert aivis.instalar_voz(str(modelo)) == [(1325133120, "花音 (ノーマル)")], "devuelve solo las nuevas"
+    assert enviado == {"url": "http://127.0.0.1:10101/aivm_models/install", "nombre": "花音.aivmx",
+                       "datos": b"ONNX..."}
+
+
+def test_instalar_un_modelo_que_ya_estaba_no_trae_voces_nuevas(aivis, monkeypatch, tmp_path):
+    monkeypatch.setattr(red, "post", lambda url, **k: _Http(204))
+    modelo = tmp_path / "まお.aivmx"
+    modelo.write_bytes(b"ONNX...")
+    assert aivis.instalar_voz(str(modelo)) == []
+
+
+def test_si_aivisspeech_rechaza_el_archivo_dice_por_que(aivis, monkeypatch, tmp_path):
+    detalle = "形式が正しくありません。(This file is not an AIVMX (ONNX) file.)"
+    monkeypatch.setattr(red, "post", lambda url, **k: _Http(422, {"detail": detalle}))
+    roto = tmp_path / "roto.aivmx"
+    roto.write_bytes(b"no")
+    with pytest.raises(RuntimeError, match=r"not an AIVMX \(ONNX\) file"):
+        aivis.instalar_voz(str(roto))
+
+
+@pytest.mark.parametrize("detalle,motivo", [
+    ("指定された AIVMX ファイルの形式が正しくありません。(Failed to decode AIVM metadata. This file is not an "
+     "AIVMX (ONNX) file.)", "Failed to decode AIVM metadata. This file is not an AIVMX (ONNX) file."),
+    ("Model not found (abc)", "Model not found (abc)"),
+    ("音声合成モデルが見つかりません。", "音声合成モデルが見つかりません。"),
+    ("", "HTTP 422"),
+])
+def test_el_motivo_de_un_error_del_motor_se_muestra_en_ingles_si_lo_trae(detalle, motivo):
+    assert tts_mod._motivo_del_error(_Http(422, {"detail": detalle})) == motivo
+
+
+def test_con_voicevox_no_se_instalan_modelos_aivmx(cfg, tmp_path):
+    with pytest.raises(RuntimeError, match="AivisSpeech"):
+        tts_mod.TextoAVoz(cfg).instalar_voz(str(tmp_path / "x.aivmx"))
+
+
+def test_si_aivisspeech_no_responde_no_se_intenta_instalar(aivis, monkeypatch, tmp_path):
+    monkeypatch.setattr(aivis, "_asegurar_voicevox", lambda: False)
+    with pytest.raises(RuntimeError, match="no responde"):
+        aivis.instalar_voz(str(tmp_path / "x.aivmx"))
+
+
+# --------------------------------------------------------------------------- #
 # Qué muestra la ventana
 # --------------------------------------------------------------------------- #
 def test_aparecen_todas_las_opciones_de_si_o_no_salvo_las_que_maneja_miku():
@@ -307,12 +452,25 @@ class VozFalsa:
     def __init__(self, voces=None):
         self._voces = voces if voces is not None else [(2, "四国めたん (ノーマル)"), (6, "四国めたん (ツンツン)")]
         self.dichas = []
+        self.precalentadas = 0
+        self.a_instalar = []            # las voces que trae el próximo modelo que se instale
+        self.instalados = []
 
     def voces(self):
         return self._voces
 
     def decir(self, texto):
         self.dichas.append(texto)
+
+    def precalentar(self, frases=None):
+        self.precalentadas += 1
+
+    def instalar_voz(self, ruta):
+        if ruta.endswith("roto.aivmx"):
+            raise RuntimeError("AivisSpeech no aceptó el archivo: This file is not an AIVMX (ONNX) file.")
+        self.instalados.append(ruta)
+        self._voces = self._voces + self.a_instalar
+        return list(self.a_instalar)
 
 
 @pytest.fixture
@@ -413,16 +571,70 @@ def test_probar_voz_aplica_sin_guardar_y_cancelar_lo_deshace(ventana, cfg):
     assert en_qt(ventana, lambda: panel.controles["voz_velocidad"].value()) == 100
 
 
-def test_cambiar_de_motor_avisa_que_hay_que_reiniciar(ventana):
+def test_cambiar_de_motor_vale_sin_reiniciar(ventana):
     panel = ventana._panel
     en_qt(ventana, lambda: panel.controles["tts_motor"].setCurrentIndex(
         panel.controles["tts_motor"].findData("aivisspeech")))
     nota = en_qt(ventana, lambda: panel._nota_voz.text())
-    assert "AivisSpeech" in nota and "reiniciá" in nota
+    assert "AivisSpeech" in nota and "sin reiniciar" in nota
     assert en_qt(ventana, lambda: panel._combo_voz.isEnabled()) is False, \
         "no se muestran voces de VOICEVOX como si fueran de AivisSpeech"
     assert en_qt(ventana, panel.guardar) == {"tts_motor": "aivisspeech"}
-    assert en_qt(ventana, panel._motor_en_uso) == "voicevox", "sigue sonando el de antes hasta reiniciar"
+    assert en_qt(ventana, panel._motor_en_uso) == "aivisspeech", "ya suena el nuevo"
+    assert _esperar(lambda: ventana.voz.precalentadas == 1), "se lo arranca ya, en segundo plano"
+    assert _esperar(lambda: en_qt(ventana, lambda: panel._combo_voz.isEnabled())), "y aparecen sus voces"
+    estado = en_qt(ventana, lambda: panel._estado.text())
+    assert "Pasando a AivisSpeech" in estado and "Reiniciá" not in estado
+    assert en_qt(ventana, panel.cambios) == {}, "la primera voz (la que suena sin elegir) no cuenta como cambio"
+
+
+def test_pasar_a_la_voz_de_windows_no_arranca_nada(ventana):
+    panel = ventana._panel
+    en_qt(ventana, lambda: panel.controles["tts_motor"].setCurrentIndex(
+        panel.controles["tts_motor"].findData("sistema")))
+    en_qt(ventana, panel.guardar)
+    assert "ya habla con Voz de Windows" in en_qt(ventana, lambda: panel._estado.text())
+    time.sleep(0.2)
+    assert ventana.voz.precalentadas == 0
+
+
+def test_agregar_voz_solo_con_aivisspeech(ventana):
+    assert en_qt(ventana, lambda: ventana._panel._boton_agregar.isEnabled()) is False, "con VOICEVOX no hay .aivmx"
+
+
+@pytest.fixture
+def ventana_aivis(cfg):
+    pytest.importorskip("PyQt5")
+    from miku.ui.configuracion import VentanaConfiguracion
+    cfg.valores.update(tts_motor="aivisspeech", aivisspeech_speaker_id=888753760)
+    voz = VozFalsa(voces=[(888753760, "まお (ノーマル)")])
+    v = VentanaConfiguracion(cfg, lambda: voz)
+    v.mostrar()
+    v.voz = voz
+    _esperar(lambda: en_qt(v, lambda: v._panel._combo_voz.currentData()) is not None)
+    yield v
+    en_qt(v, lambda: v._panel.ventana.hide())
+
+
+def test_instalar_una_voz_la_deja_elegida_para_guardar(ventana_aivis):
+    v, panel = ventana_aivis, ventana_aivis._panel
+    assert en_qt(v, lambda: panel._boton_agregar.isEnabled()) is True
+    v.voz.a_instalar = [(1325133120, "花音 (ノーマル)")]
+    en_qt(v, lambda: panel.instalar_voz("C:/Descargas/花音.aivmx"))
+    assert _esperar(lambda: en_qt(v, lambda: panel._combo_voz.currentData()) == 1325133120)
+    assert v.voz.instalados == ["C:/Descargas/花音.aivmx"]
+    assert "花音 (ノーマル)" in en_qt(v, lambda: panel._estado.text())
+    assert en_qt(v, panel.cambios) == {"aivisspeech_speaker_id": 1325133120}, "queda elegida para Guardar"
+    assert en_qt(v, lambda: panel._boton_agregar.isEnabled()) is True
+
+
+def test_si_no_se_puede_instalar_una_voz_lo_dice(ventana_aivis):
+    v, panel = ventana_aivis, ventana_aivis._panel
+    en_qt(v, lambda: panel.instalar_voz("C:/Descargas/roto.aivmx"))
+    assert _esperar(lambda: "No pude instalar roto.aivmx" in en_qt(v, lambda: panel._estado.text()))
+    assert "not an AIVMX" in en_qt(v, lambda: panel._estado.text())
+    assert en_qt(v, panel.cambios) == {}
+    assert en_qt(v, lambda: panel._boton_agregar.isEnabled()) is True, "se puede probar con otro archivo"
 
 
 def test_si_el_motor_no_responde_lo_dice(cfg):

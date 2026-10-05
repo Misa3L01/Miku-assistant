@@ -3,7 +3,8 @@ tts.py - Síntesis de voz (TTS) con un motor japonés local: VOICEVOX o AivisSpe
 
 Los dos motores exponen la misma API HTTP (``/audio_query`` + ``/synthesis`` + ``/speakers``), así que
 este módulo los maneja igual; solo cambian el puerto, dónde está su ``run.exe`` y qué voces trae cada
-uno (ver ``MOTORES_JAPONESES``). Con ``TTS_MOTOR`` se elige cuál usar.
+uno (ver ``MOTORES_JAPONESES``). Con ``TTS_MOTOR`` se elige cuál usar, y desde la ventana de
+configuración se cambia sin reiniciar Miku (ver ``cambiar_motor``).
 
 Estrategia (cambio de arquitectura: ya NO se usa RVC/Kokoro/torch):
     1. El texto de la respuesta está en español (viene del LLM).
@@ -58,6 +59,13 @@ logger = logging.getLogger("miku.tts")
 VOICEVOX_RUN_EXE = (config_mod.BASE_DIR / "extern" / "VOICEVOX"
                     / "vv-engine" / "run.exe")
 
+# Segundos que se le da a un motor recién lanzado para levantar el puerto. VOICEVOX en frío tarda ~15 s.
+_ESPERA_ARRANQUE_VOICEVOX = 30.0
+# AivisSpeech tarda más: revisa sus voces y carga un modelo de idioma (BERT) antes de abrir el puerto
+# (~27 s medidos con GPU). La primera vez de la vida además baja ese modelo y dos voces (~1 GB).
+_ESPERA_ARRANQUE_AIVISSPEECH = 90.0
+
+
 @dataclass(frozen=True)
 class MotorJapones:
     """Un motor de voz con la API de VOICEVOX.
@@ -67,13 +75,15 @@ class MotorJapones:
             ``<clave>_run_exe``).
         nombre: Cómo se lo nombra en los mensajes.
         url: Dirección por defecto de su servidor.
-        rutas_run: Dónde suele estar su ``run.exe`` si no se configura la ruta.
+        rutas_run: Dónde suele estar su ``run.exe`` si no se configura la ruta (en orden de preferencia).
+        espera_arranque: Segundos que se espera a que levante después de lanzarlo.
     """
 
     clave: str
     nombre: str
     url: str
     rutas_run: Tuple[Path, ...]
+    espera_arranque: float = _ESPERA_ARRANQUE_VOICEVOX
 
 
 def _programas_usuario() -> Path:
@@ -84,14 +94,18 @@ def _programas_usuario() -> Path:
 MOTORES_JAPONESES: Dict[str, MotorJapones] = {
     "voicevox": MotorJapones("voicevox", "VOICEVOX", "http://localhost:50021", (VOICEVOX_RUN_EXE,)),
     # AivisSpeech (https://aivis-project.com) es un derivado de VOICEVOX con voces propias (.aivmx) y
-    # su propio puerto. El instalador pone el motor en Archivos de programa; el motor suelto (zip) se
-    # puede dejar en extern/AivisSpeech-Engine/, como VOICEVOX.
+    # su propio puerto. Primero se busca lo que dejaste en extern/ (la app entera, como VOICEVOX, o solo
+    # el motor) y después donde lo deja el instalador.
     "aivisspeech": MotorJapones("aivisspeech", "AivisSpeech", "http://127.0.0.1:10101", (
+        config_mod.BASE_DIR / "extern" / "AivisSpeech" / "AivisSpeech-Engine" / "run.exe",
+        config_mod.BASE_DIR / "extern" / "AivisSpeech-Engine" / "run.exe",
         Path(r"C:\Program Files\AivisSpeech\AivisSpeech-Engine\run.exe"),
         _programas_usuario() / "AivisSpeech" / "AivisSpeech-Engine" / "run.exe",
-        config_mod.BASE_DIR / "extern" / "AivisSpeech-Engine" / "run.exe",
-    )),
+    ), _ESPERA_ARRANQUE_AIVISSPEECH),
 }
+
+#: Frase con la que se "calienta" la voz al arrancar (ver ``_cargar_voz``). No se guarda en la caché.
+FRASE_CALENTAR = "はい。"
 
 #: Ajustes de la voz: (opción, campo del audio_query, mínimo, máximo). Se aplican solo a los campos que
 #: el motor devuelve (``voz_ritmo`` existe solo en AivisSpeech, por ejemplo) y se acotan al rango válido.
@@ -108,8 +122,6 @@ CARPETA_CACHE = config_mod.BASE_DIR / "data" / "tts_cache"
 
 # Segundos que se da por bueno un chequeo de VOICEVOX antes de volver a preguntarle.
 _VALIDEZ_CHEQUEO_VOICEVOX = 60.0
-# Segundos que se le da a un VOICEVOX recién lanzado para levantar el puerto (en frío tarda ~15 s).
-_ESPERA_ARRANQUE_VOICEVOX = 30.0
 
 # Cache de traducciones (clave = texto EXACTO a traducir -> japonés).
 # Vive a nivel de módulo para sobrevivir entre instancias y aprovechar que las
@@ -197,6 +209,25 @@ def dividir_en_frases(texto: str) -> list:
     return [f for f in resultado if f]
 
 
+def _motivo_del_error(resp: requests.Response) -> str:
+    """El motivo que da el motor en una respuesta de error, corto y legible.
+
+    AivisSpeech lo escribe en japonés con el detalle técnico en inglés entre paréntesis al final
+    ("形式が正しくありません。(... is not an AIVMX (ONNX) file.)"): si está, se usa esa parte.
+    """
+    try:
+        detalle = str(resp.json().get("detail") or "").strip()
+    except Exception:  # noqa: BLE001  (no es JSON, o no trae "detail")
+        detalle = (resp.text or "").strip()
+    if detalle.endswith(")"):
+        for i, letra in enumerate(detalle):
+            # El paréntesis que abre la parte en inglés: antes hay japonés y de ahí al final, solo inglés.
+            if letra == "(" and not detalle[:i].isascii() and detalle[i + 1:-1].isascii():
+                detalle = detalle[i + 1:-1]
+                break
+    return detalle.strip()[:200] or f"HTTP {resp.status_code}"
+
+
 class TextoAVoz:
     """Motor TTS basado en VOICEVOX reproducido en un hilo dedicado.
 
@@ -209,17 +240,6 @@ class TextoAVoz:
     def __init__(self, cfg: "config_mod.Config",
                  subtitulos_activos: bool = False) -> None:
         self.cfg = cfg
-        # Qué motor japonés se usa (VOICEVOX o AivisSpeech). Cambiarlo requiere reiniciar Miku: el
-        # servidor, su puerto y el proceso que se lanza dependen de esto.
-        self.motor_jp = MOTORES_JAPONESES.get(self._motor_elegido(), MOTORES_JAPONESES["voicevox"])
-        url = str(cfg.get(f"{self.motor_jp.clave}_url", "") or self.motor_jp.url)
-        self.voicevox_url = url.rstrip("/")
-        #: Primer estilo disponible del motor (se usa si no se eligió una voz; ver ``speaker_id``).
-        self._estilo_por_defecto: Optional[int] = None
-
-        # Lista de URLs a probar: la configurada primero y luego el fallback
-        # localhost <-> 127.0.0.1 (en Windows a veces uno resuelve y el otro no).
-        self._urls_a_probar = self._construir_urls_a_probar(self.voicevox_url)
 
         # Motor alternativo (comando externo) para voces custom / otros idiomas.
         self._motor_comando = MotorComando(str(cfg.get("tts_comando", "") or ""))
@@ -246,22 +266,71 @@ class TextoAVoz:
         # arrancó.
         self._proceso_voicevox: Optional[subprocess.Popen] = None
         self._voicevox_lo_lanzamos = False
-
-        # URL que efectivamente responde (se fija en la primera verificación ok).
-        self._voicevox_url_activa: Optional[str] = None
-        # Arranque de VOICEVOX: un solo intento de lanzarlo y, si está caído,
-        # no volver a sondearlo en cada frase (cada sondeo cuesta hasta ~4 s).
+        # Protege el arranque del motor y el cambio de un motor a otro.
         self._voicevox_lock = threading.Lock()
-        self._voicevox_intento_lanzado = False
-        self._voicevox_caido_hasta = 0.0
-        # Hasta cuándo (time.monotonic) vale el último chequeo exitoso: evita un GET /speakers por frase.
-        self._voicevox_ok_hasta = 0.0
+        #: Puesto mientras el motor todavía no respondió desde que arrancó Miku o se cambió de motor (en
+        #: general, porque está arrancando: AivisSpeech tarda ~30 s). Las frases que lo necesitan esperan
+        #: aparte, en ``_diferidos``, sin trabar la fila ni dejar sordo al micrófono (ver ``_diferir``).
+        self._motor_pendiente = threading.Event()
+        self._diferidos: List[str] = []
+
+        # Qué motor japonés se usa (VOICEVOX o AivisSpeech): el de TTS_MOTOR. Se puede cambiar sin
+        # reiniciar (``cambiar_motor``); ``_usar_motor`` deja la URL y el estado del motor elegido.
+        self._usar_motor(MOTORES_JAPONESES.get(self._motor_elegido(), MOTORES_JAPONESES["voicevox"]))
+        #: Voz que ya quedó cargada en el motor: ``(motor, número de voz)`` (ver ``_cargar_voz``).
+        self._voz_cargada: Optional[Tuple[str, int]] = None
 
         logger.info("Motor de voz: %s en %s.", self.motor_jp.nombre, self.voicevox_url)
 
         # Caché de audio en disco (se crea la primera vez que se usa; ver ``_cache_audio``).
         self._cache: Optional[CacheAudio] = None
         self._cache_resuelta = False
+
+    # ---------------- Qué motor se usa ----------------
+    def _usar_motor(self, motor: MotorJapones) -> None:
+        """Apunta a ``motor``: su URL, y sin chequeos, intentos de arranque ni voz heredados de otro."""
+        self.motor_jp = motor
+        url = str(self.cfg.get(f"{motor.clave}_url", "") or motor.url)
+        self.voicevox_url = url.rstrip("/")
+        # Lista de URLs a probar: la configurada primero y luego el fallback
+        # localhost <-> 127.0.0.1 (en Windows a veces uno resuelve y el otro no).
+        self._urls_a_probar = self._construir_urls_a_probar(self.voicevox_url)
+        #: Primer estilo disponible del motor (se usa si no se eligió una voz; ver ``speaker_id``).
+        self._estilo_por_defecto: Optional[int] = None
+        # URL que efectivamente responde (se fija en la primera verificación ok).
+        self._voicevox_url_activa: Optional[str] = None
+        # Arranque del motor: un solo intento de lanzarlo y, si está caído,
+        # no volver a sondearlo en cada frase (cada sondeo cuesta hasta ~4 s).
+        self._voicevox_intento_lanzado = False
+        self._voicevox_caido_hasta = 0.0
+        # Hasta cuándo (time.monotonic) vale el último chequeo exitoso: evita un GET /speakers por frase.
+        self._voicevox_ok_hasta = 0.0
+        self._motor_pendiente.set()                 # hasta que se sepa si este motor responde
+
+    def cambiar_motor(self, clave: str) -> bool:
+        """Pasa a otro motor japonés (``voicevox`` o ``aivisspeech``) sin reiniciar Miku.
+
+        Cierra el anterior solo si lo había abierto Miku (uno que abriste vos queda como está). El nuevo
+        se arranca con la próxima frase, o ya mismo con ``precalentar``.
+
+        Returns:
+            True si cambió de motor (False si ya era ese o no es un motor japonés).
+        """
+        nuevo = MOTORES_JAPONESES.get(clave)
+        if nuevo is None or nuevo.clave == self.motor_jp.clave:
+            return False                                # lo de siempre: ni se toma el lock
+        with self._voicevox_lock:
+            if nuevo.clave == self.motor_jp.clave:      # otro hilo ya lo cambió
+                return False
+            anterior = self.motor_jp.nombre
+            self.detener_voicevox_si_lo_arrancamos()
+            self._usar_motor(nuevo)
+        logger.info("[Voz] Cambio de motor: %s -> %s (%s).", anterior, nuevo.nombre, self.voicevox_url)
+        return True
+
+    def _seguir_motor_elegido(self) -> None:
+        """Si se eligió otro motor japonés en la config (desde la ventana de configuración), pasa a ese."""
+        self.cambiar_motor(self._motor_elegido())
 
     # ---------------- Voz elegida y ajustes (se leen en cada frase) ----------------
     @property
@@ -415,7 +484,12 @@ class TextoAVoz:
             else:
                 # Caído: no lo sondeamos de nuevo durante 30 s.
                 self._voicevox_caido_hasta = time.monotonic() + 30.0
-            return ok
+            # Ya se sabe si el motor está (o que no va a estar). Dentro del lock: un cambio de motor que
+            # llegue justo después vuelve a marcarlo pendiente, y no se pisa.
+            self._motor_pendiente.clear()
+        # Lo que esperaba a que arrancara vuelve a la fila (si no arrancó, sale con la voz de Windows).
+        self._reencolar_diferidos()
+        return ok
 
     def _asegurar_voicevox_sin_lock(self) -> bool:
         """Cuerpo de ``_asegurar_voicevox`` (se llama con el lock tomado)."""
@@ -501,9 +575,10 @@ class TextoAVoz:
         # Esperamos (con cortes) a que levante el puerto.
         # Se sondea con un corte por TIEMPO (cada sondeo puede tardar lo suyo mientras el puerto no existe) y
         # seguido: antes se esperaba 2 s entre sondeos y se perdía hasta ese tiempo tras estar listo.
-        logger.info("[Voz] Esperando a que levante el puerto (hasta ~%d s)...", int(_ESPERA_ARRANQUE_VOICEVOX))
+        espera = self.motor_jp.espera_arranque
+        logger.info("[Voz] Esperando a que levante el puerto (hasta ~%d s)...", int(espera))
         inicio = time.monotonic()
-        while time.monotonic() - inicio < _ESPERA_ARRANQUE_VOICEVOX:
+        while time.monotonic() - inicio < espera:
             time.sleep(0.5)
             if self._verificar_voicevox(timeout=1.0):
                 logger.info("[Voz] Quedó activo tras %.1f s.", time.monotonic() - inicio)
@@ -513,7 +588,7 @@ class TextoAVoz:
                 return False
         logger.warning("[Voz] No respondió tras ~%d s. PID del proceso "
                        "lanzado: %s (sigue vivo: %s). Uso pyttsx3 por ahora.",
-                       int(_ESPERA_ARRANQUE_VOICEVOX), getattr(proc, "pid", "?"), proc.poll() is None)
+                       int(espera), getattr(proc, "pid", "?"), proc.poll() is None)
         return False
 
     def _quiere_gpu(self) -> bool:
@@ -585,19 +660,70 @@ class TextoAVoz:
         return ok
 
     def precalentar(self, frases: Optional[list] = None) -> None:
-        """Deja listo VOICEVOX y las frases que Miku va a decir seguro (para llamar en segundo plano).
+        """Deja listo el motor de voz y las frases que Miku va a decir seguro (para llamar en segundo plano).
 
-        Verifica/arranca VOICEVOX y sintetiza las ``frases`` que todavía no estén en la caché de audio (la
-        primera vez de la vida; después ya están). Así, el "¿Sí? Decime." de cada invocación suena al
+        Arranca el motor elegido si hace falta (o pasa a él, si lo cambiaste en la ventana de
+        configuración), carga la voz y sintetiza las ``frases`` que todavía no estén en la caché de audio
+        (la primera vez de la vida; después ya están). Así, el "¿Sí? Decime." de cada invocación suena al
         instante en vez de pagar la traducción y la síntesis.
         """
-        if not self.asegurar_voicevox_inicial() or self._motor_elegido() not in MOTORES_JAPONESES:
-            return                      # con voz de sistema o motor propio no hay nada que precalentar
+        if self._motor_elegido() not in MOTORES_JAPONESES:
+            return                      # con voz de sistema o motor propio no hay motor que arrancar
+        self._seguir_motor_elegido()
+        if not self.asegurar_voicevox_inicial():
+            return
+        self._cargar_voz()
         for frase in dividir_en_frases(limpiar_texto_para_voz(" ".join(frases or []))):
             try:
                 self._preparar_audio_frase(frase)
             except Exception:  # noqa: BLE001
                 logger.debug("No pude precalentar %r.", frase, exc_info=True)
+
+    def _cargar_voz(self) -> None:
+        """Carga en el motor la voz elegida, sintetizando una frase corta que no se guarda.
+
+        Los motores cargan cada voz recién cuando se la usa: en AivisSpeech son ~7 s, y con GPU la primera
+        síntesis tarda ~5 s más. Sin esto lo pagaría la primera respuesta de Miku, porque los saludos fijos
+        salen de la caché de audio y no despiertan al motor. Se hace una vez por voz.
+        """
+        voz = (self.motor_jp.clave, self.speaker_id)
+        if voz == self._voz_cargada:
+            return
+        inicio = time.monotonic()
+        if self._sintetizar_voicevox(FRASE_CALENTAR):
+            self._voz_cargada = voz
+            logger.info("[Voz] Voz %s de %s lista en %.1f s.", voz[1], self.motor_jp.nombre,
+                        time.monotonic() - inicio)
+
+    def instalar_voz(self, ruta: str) -> List[Tuple[int, str]]:
+        """Instala en AivisSpeech un modelo de voz (``.aivmx``, por ejemplo de AivisHub).
+
+        El motor guarda su propia copia (en ``%APPDATA%\\AivisSpeech-Engine\\Models``), así que el
+        archivo original se puede borrar o mover después.
+
+        Returns:
+            Las voces nuevas que trajo, como en ``voces()`` ([] si ya estaba instalado).
+
+        Raises:
+            RuntimeError: Con un mensaje para mostrar, si el motor en uso no es AivisSpeech, no responde
+                o no aceptó el archivo.
+        """
+        if self.motor_jp.clave != "aivisspeech":
+            raise RuntimeError("los modelos .aivmx son de AivisSpeech: elegilo antes como motor de voz.")
+        if not self._asegurar_voicevox():
+            raise RuntimeError("AivisSpeech no responde (revisá el log de Miku).")
+        antes = {identificador for identificador, _ in self.voces()}
+        with open(ruta, "rb") as archivo:
+            resp = red.post(f"{self._url_activa()}/aivm_models/install",
+                            files={"file": (os.path.basename(ruta), archivo, "application/octet-stream")},
+                            timeout=600)
+        if resp.status_code not in (200, 204):
+            raise RuntimeError(f"AivisSpeech no aceptó el archivo: {_motivo_del_error(resp)}")
+        self._estilo_por_defecto = None
+        nuevas = [(identificador, nombre) for identificador, nombre in self.voces() if identificador not in antes]
+        logger.info("[Voz] Instalé %s en AivisSpeech: %s.", os.path.basename(ruta),
+                    ", ".join(nombre for _, nombre in nuevas) or "ya estaba")
+        return nuevas
 
     def cerrar(self) -> None:
         """Oculta los subtítulos y cierra VOICEVOX si lo lanzó esta instancia."""
@@ -605,9 +731,9 @@ class TextoAVoz:
         self.detener_voicevox_si_lo_arrancamos()
 
     def detener_voicevox_si_lo_arrancamos(self) -> None:
-        """Cierra el run.exe de VOICEVOX SOLO si fue esta instancia quien lo lanzó.
+        """Cierra el run.exe del motor en uso SOLO si fue esta instancia quien lo lanzó.
 
-        Si VOICEVOX ya estaba corriendo (lo abriste vos manualmente), este
+        Si el motor ya estaba corriendo (lo abriste vos manualmente), este
         método no hace nada y no te mata el proceso.
         """
         if not self._voicevox_lo_lanzamos or self._proceso_voicevox is None:
@@ -620,9 +746,9 @@ class TextoAVoz:
                     proc.wait(timeout=3)
                 except Exception:  # noqa: BLE001
                     proc.kill()
-                logger.info("VOICEVOX (lanzado por Miku) terminado al cerrar.")
+                logger.info("%s (lanzado por Miku) cerrado.", self.motor_jp.nombre)
             except Exception as e:  # noqa: BLE001
-                logger.warning("No pude terminar VOICEVOX: %s", e)
+                logger.warning("No pude cerrar %s: %s", self.motor_jp.nombre, e)
         self._proceso_voicevox = None
         self._voicevox_lo_lanzamos = False
 
@@ -651,11 +777,14 @@ class TextoAVoz:
         if not texto_limpio:
             return
         print(f"\nMiku: {texto_limpio}")
+        self._encolar(texto_limpio)
 
+    def _encolar(self, texto: str) -> None:
+        """Pone ``texto`` (ya limpio) en la fila del hilo reproductor, y lo arranca si hace falta."""
         with self._lock_decir:
             self._pendientes += 1
             self._libre.clear()
-            self._cola.put(texto_limpio)
+            self._cola.put(texto)
             if (self._hilo_reproductor is None
                     or not self._hilo_reproductor.is_alive()):
                 self._hilo_reproductor = threading.Thread(
@@ -664,6 +793,45 @@ class TextoAVoz:
                     name="tts_player",
                 )
                 self._hilo_reproductor.start()
+
+    def _hay_que_esperar_al_motor(self, frases: List[str]) -> bool:
+        """True si alguna frase necesita al motor japonés y todavía no se sabe si responde (arrancando).
+
+        Lo que ya está en la caché de audio no lo necesita: el "¿Sí? Decime." suena aunque el motor esté
+        arrancando.
+        """
+        if self._motor_elegido() not in MOTORES_JAPONESES:
+            return False
+        self._seguir_motor_elegido()
+        if not self._motor_pendiente.is_set():
+            return False
+        cache = self._cache_audio()
+        if cache is None:
+            return True
+        voz = self._firma_voz()
+        return any(cache.obtener(frase, voz) is None for frase in frases)
+
+    def _diferir(self, texto: str) -> None:
+        """Deja ``texto`` esperando al motor, sin trabar la fila.
+
+        Mientras Miku tiene algo para decir, el micrófono no graba (para no oírse a sí misma). Si una frase
+        que espera a que arranque el motor trabara la fila, Miku quedaba sorda hasta que el motor
+        respondiera: con AivisSpeech, casi un minuto. Apenas se sabe si el motor está, ``_asegurar_voicevox``
+        devuelve el texto a la fila (en orden).
+        """
+        with self._lock_decir:
+            self._diferidos.append(texto)
+        logger.info("[Voz] %s todavía está arrancando: esa frase sale apenas responda.", self.motor_jp.nombre)
+        if not self._voicevox_lock.locked():
+            # Nadie lo está revisando (por ejemplo, porque no se precalentó): que lo revise otro hilo.
+            threading.Thread(target=self._asegurar_voicevox, name="tts_arranque", daemon=True).start()
+
+    def _reencolar_diferidos(self) -> None:
+        """Devuelve a la fila, en el mismo orden, lo que esperaba a que arrancara el motor."""
+        with self._lock_decir:
+            diferidos, self._diferidos = self._diferidos, []
+        for texto in diferidos:
+            self._encolar(texto)
 
     def _actualizar_subtitulos(self, texto: str) -> None:
         """Actualiza el subtítulo SIN ocultar/mostrar (anti-parpadeo).
@@ -694,7 +862,8 @@ class TextoAVoz:
     def esperar_libre(self, timeout: Optional[float] = 30.0) -> bool:
         """Bloquea hasta que Miku termina de hablar (nada encolado ni sonando).
 
-        Sirve para que el micrófono no grabe la propia voz de Miku.
+        Sirve para que el micrófono no grabe la propia voz de Miku. Lo que espera a que arranque el
+        motor de voz no cuenta (todavía no puede sonar): mientras tanto, Miku sigue escuchando.
 
         Args:
             timeout: Segundos máximos a esperar (None = sin límite).
@@ -739,6 +908,9 @@ class TextoAVoz:
         """
         frases = dividir_en_frases(limpiar_texto_para_voz(texto_es))
         if not frases:
+            return
+        if self._hay_que_esperar_al_motor(frases):
+            self._diferir(texto_es)
             return
         logger.debug("Reproduciendo en %d frase(s).", len(frases))
 
@@ -800,6 +972,7 @@ class TextoAVoz:
             return {"motor": "sistema", "wav": None, "idioma": "es"}
         if motor == "comando":
             return self._preparar_con_comando(texto_es)
+        self._seguir_motor_elegido()            # si lo cambiaste en la ventana, ya habla con ese
 
         # Frase ya sintetizada antes con esta voz: suena de inmediato, sin traducir ni consultar a VOICEVOX.
         cache, voz = self._cache_audio(), self._firma_voz()

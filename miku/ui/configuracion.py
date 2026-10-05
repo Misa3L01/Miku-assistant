@@ -5,13 +5,14 @@ Dos pestañas:
 
     **Voz**      Motor (VOICEVOX / AivisSpeech / voz de Windows / propio), qué voz usar (la lista sale del
                  motor en uso), velocidad, tono, entonación, volumen y ritmo, con un botón para probar
-                 cómo suena antes de guardar.
+                 cómo suena antes de guardar y otro para instalar voces de AivisSpeech (``.aivmx``).
+                 Al guardar otro motor, Miku pasa a ese sin reiniciar (y es con el que arranca después).
     **Ajustes**  Cada opción de sí/no y cada una de "elegí entre estas", agrupadas como en
                  ``config_local.py``. El "!" al lado de cada una explica qué hace al pasarle el mouse.
 
 La ventana **no inventa un lugar nuevo para guardar**: escribe en tu ``config_local.py`` (solo la línea de
 cada opción que cambiaste, ver ``miku/ajustes/escritura.py``), así la ventana y el archivo dicen siempre
-lo mismo. Casi todo vale al instante; lo que no (el motor de voz, el VAD...) queda marcado "al reiniciar".
+lo mismo. Casi todo vale al instante; lo que no (el VAD, la palabra clave...) queda marcado "al reiniciar".
 
 Las opciones salen del esquema (``miku/ajustes/esquema.py``): una opción nueva aparece sola, con su
 descripción como ayuda, sin tocar este archivo.
@@ -22,6 +23,7 @@ from __future__ import annotations
 
 import html
 import logging
+import os
 import threading
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -41,7 +43,7 @@ EXCLUIDAS = frozenset({"modo_entrada", "personalidad", "tecla_invocar", "tts_mot
 
 #: Opciones que recién se aplican al reiniciar Miku (el resto vale al instante).
 REQUIEREN_REINICIO = frozenset({
-    "tts_motor", "tts_cache", "voicevox_gpu", "stt_vad", "vad_proveedor", "wake_proveedor",
+    "tts_cache", "voicevox_gpu", "stt_vad", "vad_proveedor", "wake_proveedor",
     "stt_proveedor", "memoria_activa", "embeddings_activos", "proactivo_activo", "log_level",
 })
 
@@ -52,6 +54,8 @@ MOTORES: Tuple[Tuple[str, str], ...] = (
     ("sistema", "Voz de Windows (en español)"),
     ("comando", "Motor propio (TTS_COMANDO)"),
 )
+#: Los motores que tienen voces para elegir (y que hay que arrancar).
+MOTORES_CON_VOCES = ("voicevox", "aivisspeech")
 
 #: Deslizadores de la voz: (opción, rótulo, mínimo, máximo, por defecto).
 DESLIZADORES: Tuple[Tuple[str, str, float, float, float], ...] = (
@@ -103,9 +107,12 @@ class _PanelConfiguracion:
         self._originales: Dict[str, Any] = {}
         self._combo_voz: Any = None
         self._nota_voz: Any = None
+        self._boton_agregar: Any = None
         self._estado: Any = None
-        #: Motor con el que arrancó Miku (el que suena ahora). Uno nuevo recién vale al reiniciar.
-        self._motor_arranque = str(cfg.get("tts_motor", "voicevox") or "voicevox")
+        #: El motor que suena ahora. Cambia al guardar otro (Miku pasa a ese sin reiniciar).
+        self._motor_activo = str(cfg.get("tts_motor", "voicevox") or "voicevox")
+        #: Voz recién instalada, para dejarla elegida cuando llegue la lista (ver ``instalar_voz``).
+        self._voz_a_elegir: Optional[int] = None
 
     # ------------------------------------------------------------------ construcción
     def _crear(self) -> None:
@@ -199,10 +206,19 @@ class _PanelConfiguracion:
         for clave, rotulo, minimo, maximo, _ in DESLIZADORES:
             self._deslizador(grilla, clave, rotulo, minimo, maximo)
 
+        botones = QtWidgets.QHBoxLayout()
         probar = QtWidgets.QPushButton("Probar voz")
         probar.setToolTip(_html("Dice una frase con lo que elegiste arriba, sin guardarlo todavía."))
         probar.clicked.connect(self.probar_voz)
-        capas.addWidget(probar, 0, QtCore.Qt.AlignLeft)
+        botones.addWidget(probar)
+        agregar = QtWidgets.QPushButton("Agregar voz (.aivmx)…")
+        agregar.setToolTip(_html("Instala en AivisSpeech un modelo de voz que descargaste (por ejemplo de "
+                                 "AivisHub) y lo deja elegido en la lista. Solo con el motor AivisSpeech."))
+        agregar.clicked.connect(self.agregar_voz)
+        botones.addWidget(agregar)
+        botones.addStretch(1)
+        self._boton_agregar = agregar
+        capas.addLayout(botones)
         capas.addStretch(1)
         return pagina
 
@@ -299,12 +315,12 @@ class _PanelConfiguracion:
 
     # ------------------------------------------------------------------ voces
     def _motor_en_uso(self) -> str:
-        """El motor que está sonando ahora (el que se eligió al arrancar Miku)."""
-        return self._motor_arranque
+        """El motor que está sonando ahora."""
+        return self._motor_activo
 
     def _clave_voz(self) -> str:
         motor = self._motor_en_uso()
-        return f"{motor if motor in ('voicevox', 'aivisspeech') else 'voicevox'}_speaker_id"
+        return f"{motor if motor in MOTORES_CON_VOCES else 'voicevox'}_speaker_id"
 
     def _voz_en_config(self) -> Optional[int]:
         try:
@@ -337,23 +353,30 @@ class _PanelConfiguracion:
             return
         for identificador, nombre in voces:
             self._combo_voz.addItem(nombre, identificador)
-        actual = self._originales.get(self._clave_voz())
+        # Recién instalada, queda elegida (sin guardar todavía); si no, la que se usa ahora.
+        actual = self._voz_a_elegir if self._voz_a_elegir is not None else self._originales.get(self._clave_voz())
+        self._voz_a_elegir = None
         indice = self._combo_voz.findData(actual)
         self._combo_voz.setCurrentIndex(max(indice, 0))
+        if indice < 0 and actual == 0 and self._motor_en_uso() == "aivisspeech":
+            # En AivisSpeech, 0 es "la primera voz que tengas": la que quedó elegida es la que ya suena,
+            # no un cambio tuyo (si no, se escribiría en config_local.py sin que la hayas tocado).
+            self._originales[self._clave_voz()] = self._combo_voz.currentData()
         self._combo_voz.setEnabled(self.controles["tts_motor"].currentData() == self._motor_en_uso())
 
     def _al_cambiar_motor(self, *_: Any) -> None:
-        """Si elegís otro motor, sus voces recién se ven después de reiniciar (hay que levantarlo)."""
-        if self._nota_voz is None:
+        """Si elegís otro motor, se avisa que Miku pasa a ese al guardar (y que ahí se ven sus voces)."""
+        if self._nota_voz is None or self._boton_agregar is None:
             return
         elegido = self.controles["tts_motor"].currentData()
         en_uso = self._motor_en_uso()
         nombres = dict(MOTORES)
+        self._boton_agregar.setEnabled(elegido == en_uso == "aivisspeech")
         if elegido != en_uso:
-            self._nota_voz.setText(f"Guardá y reiniciá Miku para usar {nombres.get(elegido, elegido)}; "
-                                   f"después vas a ver acá sus voces.")
+            self._nota_voz.setText(f"Tocá Guardar y Miku pasa a {nombres.get(elegido, elegido)} sin reiniciar; "
+                                   "después vas a ver acá sus voces.")
             self._combo_voz.setEnabled(False)
-        elif en_uso in ("voicevox", "aivisspeech"):
+        elif en_uso in MOTORES_CON_VOCES:
             self._nota_voz.setText(f"Voces de {nombres[en_uso]}. La voz y los ajustes de abajo se aplican al "
                                    "instante.")
             self._combo_voz.setEnabled(self._combo_voz.currentData() is not None)
@@ -396,8 +419,72 @@ class _PanelConfiguracion:
         texto = f"Guardado en {ruta.name}: {', '.join(k.upper() for k in cambios)}."
         if reiniciar:
             texto += f" Reiniciá Miku para que tome: {', '.join(reiniciar)}."
+        if "tts_motor" in cambios:
+            texto += " " + self._activar_motor(str(cambios["tts_motor"]))
         self._estado.setText(texto)
         return cambios
+
+    def _activar_motor(self, motor: str) -> str:
+        """Pasa Miku a ``motor`` sin reiniciar. Devuelve qué contarle al usuario.
+
+        La voz ya habla con el motor nuevo desde la próxima frase (la config se actualizó al guardar). Si
+        tiene voces, además se lo arranca ya, en segundo plano, y al terminar se muestran sus voces.
+        """
+        self._motor_activo = motor
+        nombre = dict(MOTORES).get(motor, motor)
+        if motor not in MOTORES_CON_VOCES:
+            self._al_cambiar_motor()
+            return f"Miku ya habla con {nombre}."
+        self._originales[self._clave_voz()] = self._voz_en_config()
+        self._combo_voz.clear()
+        self._combo_voz.addItem(f"Arrancando {nombre}…", None)
+        self._al_cambiar_motor()
+
+        def arrancar() -> None:
+            try:
+                self._obtener_voz().precalentar()
+            except Exception:  # noqa: BLE001
+                logger.exception("No pude arrancar %s.", nombre)
+            self._hilo.ejecutar(self.cargar_voces)
+
+        threading.Thread(target=arrancar, name="miku_config_motor", daemon=True).start()
+        return f"Pasando a {nombre}: puede tardar hasta un minuto en arrancar."
+
+    def agregar_voz(self) -> None:
+        """Botón "Agregar voz": elegís el archivo .aivmx y se instala en AivisSpeech."""
+        ruta, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self.ventana, "Elegí el modelo de voz de AivisSpeech", "", "Modelos de AivisSpeech (*.aivmx)")
+        if ruta:
+            self.instalar_voz(ruta)
+
+    def instalar_voz(self, ruta: str) -> None:
+        """Instala el modelo en otro hilo (son unos segundos) y después deja elegida la voz nueva."""
+        nombre = os.path.basename(ruta)
+        self._estado.setText(f"Instalando {nombre} en AivisSpeech… (unos segundos)")
+        self._boton_agregar.setEnabled(False)
+
+        def instalar() -> None:
+            try:
+                nuevas, error = self._obtener_voz().instalar_voz(ruta), ""
+            except Exception as e:  # noqa: BLE001
+                logger.warning("No pude instalar %s: %s", nombre, e)
+                nuevas, error = [], str(e)
+            self._hilo.ejecutar(lambda: self._voz_instalada(nombre, nuevas, error))
+
+        threading.Thread(target=instalar, name="miku_config_instalar", daemon=True).start()
+
+    def _voz_instalada(self, nombre: str, nuevas: List[Tuple[int, str]], error: str) -> None:
+        self._al_cambiar_motor()                    # vuelve a habilitar el botón
+        if error:
+            self._estado.setText(f"No pude instalar {nombre}: {error}")
+            return
+        if nuevas:
+            self._voz_a_elegir = nuevas[0][0]
+            self._estado.setText(f"Instalé {', '.join(voz for _, voz in nuevas)} y la dejé elegida: "
+                                 "probala y tocá Guardar.")
+        else:
+            self._estado.setText(f"{nombre} ya estaba instalada: elegila en la lista.")
+        self.cargar_voces()
 
     def cancelar(self) -> None:
         """Descarta lo no guardado (también lo que "Probar voz" había aplicado) y cierra."""

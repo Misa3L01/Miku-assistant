@@ -2,6 +2,8 @@
 memoria sin trabajo inútil y reintento del LLM."""
 from __future__ import annotations
 
+import threading
+import time
 from unittest import mock
 
 import pytest
@@ -38,6 +40,7 @@ def voz(cfg, monkeypatch):
 
     monkeypatch.setattr(v, "_traducir_a_japones", traducir)
     monkeypatch.setattr(v, "_sintetizar_voicevox", sintetizar)
+    monkeypatch.setattr(v, "_cargar_voz", lambda: None)     # tiene sus propios tests (test_configuracion.py)
     return v
 
 
@@ -109,6 +112,98 @@ def test_precalentar_no_hace_nada_si_voicevox_no_esta(voz, monkeypatch):
     monkeypatch.setattr(voz, "asegurar_voicevox_inicial", lambda: False)
     voz.precalentar(["¿Sí? Decime."])
     assert voz.cuenta["sintetizar"] == 0
+
+
+def test_con_la_voz_de_windows_no_se_arranca_ningun_motor(voz, cfg, monkeypatch):
+    cfg.valores["tts_motor"] = "sistema"
+    arranques = []
+    monkeypatch.setattr(voz, "asegurar_voicevox_inicial", lambda: arranques.append(1) or True)
+    voz.precalentar(["¿Sí? Decime."])
+    assert arranques == [] and voz.cuenta["sintetizar"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# TTS: mientras el motor arranca, Miku no queda sorda
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def arrancando(cfg, monkeypatch):
+    """TTS recién creada con el motor arrancando: el lock lo tiene otro hilo (como ``precalentar``)."""
+    v = tts_mod.TextoAVoz(cfg)
+    v.sonadas = []
+    monkeypatch.setattr(v, "_reproducir_bytes", lambda wav, texto="": v.sonadas.append(texto))
+    monkeypatch.setattr(v, "_traducir_a_japones", lambda texto: f"ja:{texto}")
+    monkeypatch.setattr(v, "_sintetizar_voicevox", lambda texto_ja: WAV)
+    monkeypatch.setattr(v, "_asegurar_voicevox_sin_lock", lambda: True)
+    for frase in ("¿Sí?", "Decime."):                     # el saludo quedó en la caché otro día
+        v._cache_audio().guardar(frase, v._firma_voz(), WAV)
+    v._voicevox_lock.acquire()
+    yield v
+    if v._voicevox_lock.locked():
+        v._voicevox_lock.release()
+
+
+def _esperar(condicion, segundos=3.0):
+    limite = time.monotonic() + segundos
+    while time.monotonic() < limite:
+        if condicion():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_lo_que_necesita_al_motor_espera_aparte_y_lo_de_la_cache_suena_igual(arrancando):
+    hilo = threading.Thread(target=arrancando._reproducir_texto_por_frases, args=("Me pongo con el comedor.",))
+    hilo.start()
+    hilo.join(2)
+    assert not hilo.is_alive(), "no se queda esperando al motor"
+    assert arrancando._diferidos == ["Me pongo con el comedor."] and arrancando.sonadas == []
+    arrancando._reproducir_texto_por_frases("¿Sí? Decime.")
+    assert arrancando.sonadas == ["¿Sí?", "Decime."], "el saludo de la caché suena aunque el motor arranque"
+
+
+def test_mientras_el_motor_arranca_el_microfono_no_queda_sordo(arrancando):
+    """El micrófono espera a que Miku termine de hablar: con AivisSpeech arrancando eran ~50 s sorda."""
+    arrancando.decir("Me pongo con el comedor.")
+    assert arrancando.esperar_libre(timeout=2) is True, "lo que espera al motor no cuenta como hablar"
+    assert arrancando.sonadas == []
+    arrancando._voicevox_lock.release()                 # el motor ya respondió
+    assert arrancando._asegurar_voicevox() is True
+    assert arrancando.esperar_libre(timeout=5) and arrancando.sonadas == ["Me pongo con el comedor."], \
+        "y la frase sale apenas está"
+    assert not arrancando._motor_pendiente.is_set()
+
+
+def test_lo_que_espera_al_motor_sale_en_orden(arrancando):
+    arrancando.decir("Primero.")
+    arrancando.decir("Segundo.")
+    assert _esperar(lambda: arrancando._diferidos == ["Primero.", "Segundo."])
+    arrancando._voicevox_lock.release()
+    arrancando._asegurar_voicevox()
+    assert arrancando.esperar_libre(timeout=5) and arrancando.sonadas == ["Primero.", "Segundo."]
+
+
+def test_si_nadie_revisa_el_motor_lo_revisa_otro_hilo(arrancando):
+    arrancando._voicevox_lock.release()                 # sin precalentar: nadie lo está arrancando
+    arrancando.decir("Me pongo con el comedor.")
+    assert _esperar(lambda: arrancando.sonadas == ["Me pongo con el comedor."])
+
+
+def test_si_el_motor_no_arranca_la_frase_sale_con_la_voz_de_windows(arrancando, monkeypatch):
+    dichas = []
+    monkeypatch.setattr(arrancando, "_hablar_sistema", dichas.append)
+    monkeypatch.setattr(arrancando, "_asegurar_voicevox_sin_lock", lambda: False)
+    arrancando.decir("Me pongo con el comedor.")
+    assert arrancando.esperar_libre(timeout=2)
+    arrancando._voicevox_lock.release()
+    assert arrancando._asegurar_voicevox() is False
+    assert arrancando.esperar_libre(timeout=5) and dichas == ["Me pongo con el comedor."], "no se pierde"
+
+
+def test_con_el_motor_ya_revisado_no_se_difiere_nada(cfg, monkeypatch):
+    v = tts_mod.TextoAVoz(cfg)
+    monkeypatch.setattr(v, "_asegurar_voicevox_sin_lock", lambda: True)
+    v._asegurar_voicevox()
+    assert v._hay_que_esperar_al_motor(["Una frase nueva."]) is False
 
 
 # --------------------------------------------------------------------------- #
@@ -194,6 +289,16 @@ def test_si_voicevox_nunca_levanta_se_rinde_por_tiempo_y_no_para_siempre(arranqu
     assert arranque._asegurar_voicevox() is False
     transcurrido = arranque.reloj.t - 1000.0
     assert tts_mod._ESPERA_ARRANQUE_VOICEVOX <= transcurrido < tts_mod._ESPERA_ARRANQUE_VOICEVOX + 2
+
+
+def test_aivisspeech_tiene_mas_tiempo_para_arrancar(arranque, monkeypatch):
+    """Revisa sus voces y carga un modelo de idioma antes de abrir el puerto: ~30 s, más que VOICEVOX."""
+    arranque.cambiar_motor("aivisspeech")
+    monkeypatch.setattr(arranque, "_verificar_voicevox", lambda timeout=2.0: False)
+    assert arranque._asegurar_voicevox() is False
+    espera = tts_mod.MOTORES_JAPONESES["aivisspeech"].espera_arranque
+    assert espera > tts_mod._ESPERA_ARRANQUE_VOICEVOX
+    assert espera <= arranque.reloj.t - 1000.0 < espera + 2
 
 
 def test_si_el_proceso_de_voicevox_muere_no_se_espera_en_vano(arranque, monkeypatch):

@@ -36,3 +36,10 @@ Thumbs.db
 
 # Material de entrenamiento del wake word (grabaciones de tu voz): nunca se sube
 entrenamiento/
+
+# Modelos de voz (AivisSpeech) y de palabra clave: pesados y con licencia propia, nunca se suben
+# (aunque los dejes sueltos en la raíz del proyecto)
+*.aivmx
+*.aivm
+*.onnx
+*.tflite
