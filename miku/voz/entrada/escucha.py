@@ -56,6 +56,8 @@ _ESPERA_INVOCACION = 1.0
 _ESPERA_CIERRE_HILO = 20.0
 # Cuánto audio se guarda ANTES de detectar voz: sin esto se perdería el arranque de la primera palabra.
 _COLCHON_INICIO_SEG = 0.3
+# Segundos que el micrófono espera, tras una pregunta de Miku, a que empieces a contestar sin decir "Miku".
+_ESPERA_RESPUESTA = 6
 
 
 def _duracion_audio(audio) -> float:
@@ -96,6 +98,10 @@ class SpeechToText:
         # Invocación directa (tecla de invocación / atajo): saluda y toma el PRÓXIMO comando sin
         # exigir la palabra "Miku". La atiende el hilo de escucha.
         self._invocada = threading.Event()
+        # Tras una pregunta de Miku ("¿Lo hago?"): el próximo audio es la respuesta, sin exigir "Miku"
+        # (ver ``esperar_respuesta``). ``_en_seguimiento`` es True mientras se entrega esa respuesta.
+        self._respuesta_esperada = threading.Event()
+        self._en_seguimiento = False
 
         # Handler cuando se detecta la palabra de activación.
         self.on_wake: Optional[CallbackTranscripcion] = None
@@ -362,6 +368,7 @@ class SpeechToText:
                 return
 
         self._stop.clear()
+        self._respuesta_esperada.clear()          # una pregunta de otra sesión ya no vale
         self._hilo_escucha = threading.Thread(
             target=self._bucle_escucha_permanente,
             daemon=True,
@@ -383,6 +390,16 @@ class SpeechToText:
         "Miku" y esperar el "¿Sí? Decime.". Es seguro llamarlo desde cualquier hilo.
         """
         self._invocada.set()
+
+    def esperar_respuesta(self) -> None:
+        """Abre el micrófono unos segundos, sin pedir "Miku", para que contestes una pregunta ("sí", "no", "el 2").
+
+        Empieza apenas Miku termina de hablar y no la saluda. Es seguro llamarlo desde cualquier hilo.
+        Se ignora si ya se está entregando una respuesta: si contestás otra cosa, la pregunta sigue
+        pendiente pero el micrófono no se abre de nuevo solo (se retoma con "Miku", como siempre).
+        """
+        if not self._en_seguimiento:
+            self._respuesta_esperada.set()
 
     def _esperar_silencio(self) -> None:
         """Bloquea mientras Miku habla (si hay un hook), para no oírse a sí misma.
@@ -461,7 +478,12 @@ class SpeechToText:
             self._esperar_silencio()
             if self._invocada.is_set():
                 self._invocada.clear()
+                self._respuesta_esperada.clear()
                 self._atender_invocacion(source)
+                continue
+            if self._respuesta_esperada.is_set():
+                self._respuesta_esperada.clear()
+                self._atender_respuesta(source)
                 continue
             try:
                 # timeout corto: si nadie habla, el bucle vuelve a revisar si lo invocaron.
@@ -520,6 +542,28 @@ class SpeechToText:
                 logger.exception("Error en on_wake.")
         if not self._stop.is_set():
             self._capturar_y_reportar_comando(source)
+
+    def _atender_respuesta(self, source) -> None:
+        """Toma la respuesta a una pregunta de Miku: lo que digas se entrega como comando, sin "Miku"."""
+        try:
+            with metricas.etapa("escuchar"):
+                audio = self._capturar(source, _ESPERA_RESPUESTA, 12)
+        except Exception as e:  # noqa: BLE001
+            if not isinstance(e, self.sr.WaitTimeoutError):
+                logger.warning("No llegó la respuesta a la pregunta: %s", e)
+            else:
+                logger.info("No contestaste la pregunta; vuelvo a esperar la palabra clave.")
+            return
+        with metricas.etapa("stt"):
+            respuesta = self.transcribir_audio(audio)
+        if not respuesta:
+            return
+        logger.info("Respuesta a la pregunta: %s", respuesta)
+        self._en_seguimiento = True
+        try:
+            self._entregar_comando(respuesta)
+        finally:
+            self._en_seguimiento = False
 
     def _entregar_comando(self, comando: str) -> None:
         """Entrega ``comando`` a ``on_comando`` sin dejar caer el hilo."""

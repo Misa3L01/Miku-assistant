@@ -162,6 +162,8 @@ def adorno_corto(texto: str) -> str:
         return texto
     # No adosar si ya parece una pregunta o exclamación larga.
     base = texto.rstrip()
+    if base.endswith("?"):
+        return texto                        # una pregunta ("¿Lo hago?") se deja corta y clara
     sufijo = random.choice(sufijos)
     if not sufijo:
         return texto

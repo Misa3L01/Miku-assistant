@@ -17,7 +17,11 @@ from miku.servicios import arranque
 class STTFalso:
     def __init__(self):
         self.invocaciones = 0
+        self.respuestas_esperadas = 0
         self.detenido = False
+
+    def esperar_respuesta(self):
+        self.respuestas_esperadas += 1
 
     def invocar(self):
         self.invocaciones += 1
@@ -354,3 +358,26 @@ def test_la_espera_de_silencio_reacciona_al_pedido_de_parar(cfg):
     stt._stop.set()
     hilo.join(2)
     assert not hilo.is_alive(), "no debe quedar bloqueada esperando a que Miku calle"
+
+
+# ---------------------------------------------------------------- contestar sin decir "Miku"
+class ParserFalso:
+    def __init__(self, espera):
+        self.espera = espera
+
+    def espera_respuesta(self):
+        return self.espera
+
+
+def test_si_miku_hizo_una_pregunta_el_microfono_se_abre_para_la_respuesta(asistente, monkeypatch):
+    asistente.stt, asistente.parser = STTFalso(), ParserFalso(espera=True)
+    monkeypatch.setattr(asistente, "responder", lambda texto, origen="texto": "¿Apago la PC?")
+    asistente._al_comando_voz("apagá la pc")
+    assert asistente.stt.respuestas_esperadas == 1
+
+
+def test_sin_pregunta_pendiente_el_microfono_sigue_como_siempre(asistente, monkeypatch):
+    asistente.stt, asistente.parser = STTFalso(), ParserFalso(espera=False)
+    monkeypatch.setattr(asistente, "responder", lambda texto, origen="texto": "Son las 3.")
+    asistente._al_comando_voz("qué hora es")
+    assert asistente.stt.respuestas_esperadas == 0

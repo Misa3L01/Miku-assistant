@@ -742,9 +742,9 @@ class CommandParser:
     # Descripciones legibles por tool para el texto de confirmación.
     _DESCRIPCION_PELIGROSA = {
         "control_energia": {
-            "apagar": "apagar la PC",
-            "reiniciar": "reiniciar la PC",
-            "suspender": "suspender la PC",
+            "apagar": "apago la PC",
+            "reiniciar": "reinicio la PC",
+            "suspender": "suspendo la PC",
         },
     }
 
@@ -769,8 +769,7 @@ class CommandParser:
                 return "¿Qué querés hacer: apagar, reiniciar o suspender la PC?"
             texto_accion = self._DESCRIPCION_PELIGROSA["control_energia"].get(
                 accion, accion)
-            return (f"¿Confirmás que quiero {texto_accion}? "
-                    f"Decime 'sí' para confirmar o 'no' para cancelar.")
+            return f"¿{texto_accion[:1].upper()}{texto_accion[1:]}?"
 
         if tool == "programar_accion":
             return self._describir_programar(args)
@@ -783,39 +782,31 @@ class CommandParser:
             contacto = str((args or {}).get("contacto", "") or "").strip() or "esa persona"
             que = str((args or {}).get("mensaje", "") or "").strip() or str((args or {}).get("archivo", "") or "").strip() \
                 or "eso"
-            return (f"¿Confirmás que le mande por WhatsApp a {contacto}: {que[:80]}? "
-                    f"Decime 'sí' para confirmar o 'no' para cancelar.")
+            return f"¿Le mando '{que[:60]}' a {contacto}?"
 
         if tool == "enviar_a_contacto_telegram":
             contacto = str((args or {}).get("contacto", "") or "").strip() or "esa persona"
             archivo = str((args or {}).get("archivo", "") or "").strip() or "la última captura"
-            return (f"¿Confirmás que le mande {archivo} a {contacto} por Telegram? "
-                    f"Decime 'sí' para confirmar o 'no' para cancelar.")
+            return f"¿Le mando {archivo} a {contacto} por Telegram?"
 
         # Genérico para futuras tools peligrosas.
-        return ("Esto es una acción importante, ¿la confirmás? "
-                "Decime 'sí' para confirmar o 'no' para cancelar.")
+        return "¿Lo hago?"
 
     def _describir_discord(self, tool: str, args: Dict[str, Any]) -> str:
         """Arma la pregunta de confirmación para las tools de Discord."""
         usuario = str((args or {}).get("usuario", "") or "").strip() or "ese usuario"
         if tool == "expulsar_usuario_discord":
-            return (f"¿Confirmás que expulse a {usuario} del servidor de "
-                    f"Discord? Decime 'sí' para confirmar o 'no' para cancelar.")
+            return f"¿Expulso a {usuario}?"
         if tool == "silenciar_usuario_discord":
             silenciar = bool((args or {}).get("silenciar", True))
-            verbo = "silencie" if silenciar else "le quite el silencio a"
-            return (f"¿Confirmás que {verbo} {usuario} en Discord? "
-                    f"Decime 'sí' para confirmar o 'no' para cancelar.")
+            return f"¿Silencio a {usuario}?" if silenciar else f"¿Le quito el silencio a {usuario}?"
         # volumen_usuario_discord
         accion = str((args or {}).get("accion", "") or "").strip().lower()
         verbos = {
-            "silenciar": "silencie", "desilenciar": "reactive el micro de",
-            "ensordecer": "ensordezca", "desensordecer": "reactive el audio de",
+            "silenciar": "Silencio a", "desilenciar": "Le reactivo el micro a",
+            "ensordecer": "Ensordezco a", "desensordecer": "Le reactivo el audio a",
         }
-        verbo = verbos.get(accion, "ajuste el audio de")
-        return (f"¿Confirmás que {verbo} {usuario} en Discord? "
-                f"Decime 'sí' para confirmar o 'no' para cancelar.")
+        return f"¿{verbos.get(accion, 'Ajusto el audio de')} {usuario}?"
 
     def _describir_programar(self, args: Dict[str, Any]) -> str:
         """Arma la pregunta de confirmación para `programar_accion`."""
@@ -827,14 +818,19 @@ class CommandParser:
         except (TypeError, ValueError):
             minutos_txt = str(minutos)
         if accion == "recordatorio":
-            detalle = f"te recuerde '{mensaje}'" if mensaje else "te avise"
-            return (f"¿Confirmás que en {minutos_txt} {detalle}? "
-                    f"Decime 'sí' para confirmar o 'no' para cancelar.")
-        mapa = {"apagar": "apague la PC", "reiniciar": "reinicie la PC",
-                "suspender": "suspenda la PC"}
-        detalle = mapa.get(accion, accion)
-        return (f"¿Confirmás que en {minutos_txt} {detalle}? "
-                f"Decime 'sí' para confirmar o 'no' para cancelar.")
+            detalle = f"Te recuerdo '{mensaje}'" if mensaje else "Te aviso"
+            return f"¿{detalle} en {minutos_txt}?"
+        mapa = {"apagar": "Apago la PC", "reiniciar": "Reinicio la PC", "suspender": "Suspendo la PC"}
+        return f"¿{mapa.get(accion, accion.capitalize())} en {minutos_txt}?"
+
+    def espera_respuesta(self) -> bool:
+        """True si Miku acaba de hacer una pregunta y espera la respuesta (confirmar o elegir una opción).
+
+        La usa la app para abrir el micrófono sin pedir "Miku" de nuevo: se contesta "sí" a secas.
+        """
+        if self._espera_confirmacion and not self._confirmacion_vencida():
+            return True
+        return self._pendiente_desambiguacion is not None
 
     def _limpiar_confirmacion(self) -> None:
         """Borra el estado de confirmación pendiente."""
@@ -875,22 +871,7 @@ class CommandParser:
             return res if isinstance(res, str) and res else "Listo."
 
         # Sin confirmación ni cancelación clara: seguimos esperando.
-        tool = pendiente.get("tool", "")
-        args = pendiente.get("args", {}) or {}
-        if tool == "control_energia":
-            accion = str(args.get("accion", "")).lower().strip()
-            texto_accion = self._DESCRIPCION_PELIGROSA["control_energia"].get(
-                accion, accion)
-            return (f"Todavía no me confirmaste. ¿{texto_accion}? "
-                    f"Decime 'sí' o 'no'.")
-        if tool == "programar_accion":
-            return ("Todavía no me confirmaste. ¿Lo programo? "
-                    "Decime 'sí' o 'no'.")
-        if tool in ("silenciar_usuario_discord", "expulsar_usuario_discord",
-                    "volumen_usuario_discord"):
-            return ("Todavía no me confirmaste la acción en Discord. "
-                    "Decime 'sí' o 'no'.")
-        return "Todavía no me confirmaste. Decime 'sí' o 'no'."
+        return "No te entendí, ¿sí o no?"
 
     # ---------------- Desambiguación (mecanismo genérico) ----------------
     @staticmethod
@@ -929,8 +910,7 @@ class CommandParser:
             etiqueta = op.get("etiqueta", "?")
             lineas.append(f"{idx}. {etiqueta}")
         listado = "\n".join(lineas)
-        return (f"Encontré varias opciones, ¿cuál querés?\n{listado}\n"
-                f"Decime el número, 'el primero'… o parte del nombre.")
+        return f"Encontré varias, ¿cuál querés?\n{listado}"
 
     def _cancelar_desambiguacion(self) -> None:
         """Borra el estado de desambiguación pendiente."""
