@@ -77,6 +77,110 @@ def test_bucle_de_escucha(stt):
     assert len(esperas) >= 3, "debe esperar a que Miku termine de hablar antes de escuchar"
 
 
+# ---------------------------------------------------------------- respuesta a una pregunta de Miku
+class ReconocedorConTiempos(Reconocedor):
+    """Como ``Reconocedor``, pero un ``TimeoutError`` en la cola simula que nadie habló."""
+
+    def listen(self, source=None, timeout=None, phrase_time_limit=None):
+        item = super().listen(source, timeout, phrase_time_limit)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+def _escuchar_hasta(stt, condicion):
+    def cortar():
+        for _ in range(100):
+            if condicion():
+                break
+            time.sleep(0.05)
+        stt._stop.set()
+
+    threading.Thread(target=cortar).start()
+    stt._escuchar(object())
+
+
+def test_se_contesta_una_pregunta_sin_decir_miku(stt):
+    """Tras "¿Lo hago?", un "sí" a secas se toma: no hace falta "Miku" ni el saludo."""
+    frases = iter(["miku", "apagá la pc", "sí", "hola, ¿qué tal?"])
+    stt._sr_mod = types.SimpleNamespace(WaitTimeoutError=TimeoutError)
+    stt._transcribir_wake = lambda a: next(frases)
+    stt.transcribir_audio = lambda a: next(frases)
+    stt._reconocedor = Reconocedor([Audio(1)] * 4)
+    comandos, saludos = [], []
+
+    def al_comando(texto):
+        comandos.append(texto)
+        stt.esperar_respuesta()                     # lo que hace la app si Miku quedó con una pregunta
+
+    stt.on_comando, stt.on_wake = al_comando, saludos.append
+    stt.esperar_silencio = lambda t=0.5: True
+    _escuchar_hasta(stt, lambda: len(comandos) >= 2)
+    assert comandos == ["apagá la pc", "sí"]
+    assert len(saludos) == 1, "la respuesta no vuelve a saludar con '¿Sí? Decime.'"
+
+
+def test_despues_de_la_respuesta_vuelve_a_pedir_miku(stt):
+    """Si contestás otra cosa, la pregunta sigue pendiente pero el micrófono no se abre de nuevo solo."""
+    frases = iter(["miku", "apagá la pc", "poné música", "charla de la tele"])
+    stt._sr_mod = types.SimpleNamespace(WaitTimeoutError=TimeoutError)
+    stt._transcribir_wake = lambda a: next(frases)
+    stt.transcribir_audio = lambda a: next(frases)
+    stt._reconocedor = Reconocedor([Audio(1)] * 4)
+    comandos = []
+
+    def al_comando(texto):
+        comandos.append(texto)
+        stt.esperar_respuesta()                     # la pregunta sigue pendiente
+
+    stt.on_comando, stt.on_wake = al_comando, lambda t: None
+    stt.esperar_silencio = lambda t=0.5: True
+    _escuchar_hasta(stt, lambda: len(stt._reconocedor.cola) == 0)
+    assert comandos == ["apagá la pc", "poné música"], "la charla de la tele no se toma como respuesta"
+    assert stt._respuesta_esperada.is_set() is False
+
+
+def test_si_no_contestas_vuelve_a_esperar_la_palabra_clave(stt):
+    frases = iter(["miku", "apagá la pc", "miku, qué hora es"])
+    stt._sr_mod = types.SimpleNamespace(WaitTimeoutError=TimeoutError)
+    stt._transcribir_wake = lambda a: next(frases)
+    stt.transcribir_audio = lambda a: next(frases)
+    stt._reconocedor = ReconocedorConTiempos([Audio(1), Audio(1), TimeoutError(), Audio(1)])
+    comandos = []
+
+    def al_comando(texto):
+        comandos.append(texto)
+        if len(comandos) == 1:
+            stt.esperar_respuesta()
+
+    stt.on_comando, stt.on_wake = al_comando, lambda t: None
+    stt.esperar_silencio = lambda t=0.5: True
+    _escuchar_hasta(stt, lambda: len(comandos) >= 2)
+    assert comandos == ["apagá la pc", "qué hora es"]
+
+
+def test_esperar_respuesta_se_ignora_mientras_se_entrega_una_respuesta(stt):
+    stt._en_seguimiento = True
+    stt.esperar_respuesta()
+    assert stt._respuesta_esperada.is_set() is False
+    stt._en_seguimiento = False
+    stt.esperar_respuesta()
+    assert stt._respuesta_esperada.is_set() is True
+
+
+def test_la_invocacion_con_tecla_anula_una_respuesta_pendiente(stt):
+    stt._respuesta_esperada.set()
+    stt.invocar()
+    stt._sr_mod = types.SimpleNamespace(WaitTimeoutError=TimeoutError)
+    stt._reconocedor = Reconocedor([Audio(1)])
+    stt.transcribir_audio = lambda a: "abrí brave"
+    comandos = []
+    stt.on_comando, stt.on_wake = comandos.append, lambda t: None
+    stt.esperar_silencio = lambda t=0.5: True
+    _escuchar_hasta(stt, lambda: len(comandos) >= 1)
+    assert comandos == ["abrí brave"] and stt._respuesta_esperada.is_set() is False
+
+
 # ---------------------------------------------------------------- TTS
 def test_decir_concurrente_usa_un_solo_hilo_reproductor(cfg):
     voz = TextoAVoz(cfg, subtitulos_activos=False)

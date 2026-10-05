@@ -21,7 +21,7 @@ def pedir_apagado(parser, cerebro):
 
 def test_pide_confirmacion_antes_de_apagar(parser, cerebro, plugin):
     r = pedir_apagado(parser, cerebro)
-    assert "Confirmás" in r
+    assert r == "¿Apago la PC?"
     assert plugin.llamadas == []          # todavía NO se ejecutó
 
 
@@ -36,7 +36,7 @@ def test_cancelar_tiene_prioridad_y_no_ejecuta(parser, cerebro, plugin, frase):
 def test_no_confirma_por_substring(parser, cerebro, plugin, frase):
     """'sistema', 'así' y 'silenciá' contienen 'si' pero NO son un sí."""
     pedir_apagado(parser, cerebro)
-    assert "Todavía no me confirmaste" in parser.procesar(frase, {})
+    assert parser.procesar(frase, {}) == "No te entendí, ¿sí o no?"
     assert plugin.llamadas == []
 
 
@@ -53,6 +53,66 @@ def test_la_confirmacion_vence(parser, cerebro, plugin):
     cerebro.resp = {"respuesta": "hola che", "tools_call": []}
     assert parser.procesar("sí", {}) == "hola che"        # se trató como mensaje nuevo
     assert plugin.llamadas == []
+
+
+# ---------------------------------------------------------------- preguntas cortas
+@pytest.mark.parametrize("tool,args,esperada", [
+    ("control_energia", {"accion": "reiniciar"}, "¿Reinicio la PC?"),
+    ("control_energia", {"accion": "suspender"}, "¿Suspendo la PC?"),
+    ("enviar_whatsapp_a_contacto", {"contacto": "Mati", "mensaje": "ya llego"}, "¿Le mando 'ya llego' a Mati?"),
+    ("enviar_whatsapp_a_contacto", {"contacto": "Mati", "archivo": "foto.png"}, "¿Le mando 'foto.png' a Mati?"),
+    ("enviar_a_contacto_telegram", {"contacto": "Mati", "archivo": "la captura"},
+     "¿Le mando la captura a Mati por Telegram?"),
+    ("expulsar_usuario_discord", {"usuario": "Juan"}, "¿Expulso a Juan?"),
+    ("silenciar_usuario_discord", {"usuario": "Juan"}, "¿Silencio a Juan?"),
+    ("silenciar_usuario_discord", {"usuario": "Juan", "silenciar": False}, "¿Le quito el silencio a Juan?"),
+    ("volumen_usuario_discord", {"usuario": "Juan", "accion": "ensordecer"}, "¿Ensordezco a Juan?"),
+    ("programar_accion", {"accion": "apagar", "en_minutos": 30}, "¿Apago la PC en 30 minutos?"),
+    ("programar_accion", {"accion": "recordatorio", "en_minutos": 5, "mensaje": "la pizza"},
+     "¿Te recuerdo 'la pizza' en 5 minutos?"),
+    ("alguna_tool_peligrosa", {}, "¿Lo hago?"),
+])
+def test_las_preguntas_de_confirmacion_son_cortas(parser, tool, args, esperada):
+    pregunta = parser._encolar_confirmacion(tool, args)
+    assert pregunta == esperada
+    assert "Decime" not in pregunta and "Confirmás" not in pregunta and len(pregunta) < 60
+
+
+def test_un_mensaje_largo_se_recorta_en_la_pregunta(parser):
+    pregunta = parser._encolar_confirmacion("enviar_whatsapp_a_contacto",
+                                            {"contacto": "Mati", "mensaje": "hola " * 40})
+    assert len(pregunta) < 90 and pregunta.endswith("a Mati?")
+
+
+def test_la_lista_de_opciones_no_explica_como_contestar(parser):
+    pregunta = parser._guardar_desambiguacion({
+        "tool_origen": "buscar_archivo", "opciones": [{"indice": 1, "etiqueta": "a.txt"},
+                                                       {"indice": 2, "etiqueta": "b.txt"}]})
+    assert pregunta == "Encontré varias, ¿cuál querés?" + chr(10) + "1. a.txt" + chr(10) + "2. b.txt"
+
+
+# ---------------------------------------------------------------- ¿hay una pregunta esperando?
+def test_espera_respuesta_mientras_la_confirmacion_esta_pendiente(parser, cerebro):
+    assert parser.espera_respuesta() is False
+    pedir_apagado(parser, cerebro)
+    assert parser.espera_respuesta() is True
+    parser.procesar("no", {})
+    assert parser.espera_respuesta() is False
+
+
+def test_espera_respuesta_termina_al_confirmar_o_vencer(parser, cerebro):
+    pedir_apagado(parser, cerebro)
+    parser.procesar("sí", {})
+    assert parser.espera_respuesta() is False
+    pedir_apagado(parser, cerebro)
+    parser._confirmacion_desde -= 120
+    assert parser.espera_respuesta() is False, "una pregunta vencida ya no espera respuesta"
+
+
+def test_espera_respuesta_tambien_con_una_lista_de_opciones(parser):
+    parser._guardar_desambiguacion({"tool_origen": "buscar_archivo",
+                                    "opciones": [{"indice": 1, "etiqueta": "a.txt"}]})
+    assert parser.espera_respuesta() is True
 
 
 # ---------------------------------------------------------------- fast-path
@@ -254,3 +314,12 @@ def test_el_parser_manda_al_llm_solo_las_tools_relacionadas(parser, cerebro):
     parser.cfg.valores["enrutar_tools"] = False
     parser.procesar("abrí discord", {})
     assert len(enviadas[1]) == 21
+
+
+# ---------------------------------------------------------------- personalidad
+def test_una_pregunta_corta_no_lleva_coletilla_de_personalidad(monkeypatch):
+    """Con una personalidad que agrega frases ("Hmph..."), "¿Lo hago?" se queda corta y clara."""
+    from miku.servicios import personalidad
+    monkeypatch.setattr(personalidad, "cargar_perfil", lambda: "tsundere")
+    assert personalidad.adorno_corto("¿Lo hago?") == "¿Lo hago?"
+    assert personalidad.adorno_corto("Listo.") != "Listo.", "una respuesta común sí la lleva"

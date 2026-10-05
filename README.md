@@ -257,6 +257,8 @@ Cada plugin declara en `peligrosas` qué tools exigen confirmación (`energia`: 
 - **Confirma** solo con palabras completas ("sí", "dale", "ok", "confirmo"…). "No, dejalo así" **no** confirma.
 - **Cancelar tiene prioridad** ("no, dale" cancela).
 - **Vence a los 60 s**: un "sí" perdido más tarde no dispara nada.
+- **Preguntas cortas**, para que no tarden en decirse: "¿Lo hago?", "¿Apago la PC?", "¿Le mando 'hola' a Mati?".
+- **Se contesta sin decir "Miku"**: apenas Miku termina de preguntar, el micrófono se abre unos 6 s y un "sí" o un "no" a secas alcanza (también para elegir entre varias opciones: "el 2"). Si contestás otra cosa o no decís nada, la pregunta sigue pendiente hasta los 60 s, pero para retomarla hay que volver a decir "Miku". Con el teclado se contesta directo, como siempre.
 
 ### Pipeline de voz e hilos
 

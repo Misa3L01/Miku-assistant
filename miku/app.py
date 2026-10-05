@@ -283,6 +283,9 @@ class Asistente:
         print(f"\nVos: {comando}")
         respuesta = self.responder(comando, origen="voz")
         metricas.fin_turno()
+        # Si Miku quedó esperando un "sí/no" (o qué opción elegir), el micrófono se abre sin pedir "Miku".
+        if self.stt is not None and self.parser is not None and self.parser.espera_respuesta():
+            self.stt.esperar_respuesta()
         if self.consola is not None:
             self.consola.agregar("Vos (voz)", comando)
             self.consola.agregar("Miku", respuesta)

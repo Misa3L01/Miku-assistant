@@ -278,7 +278,7 @@ def test_un_nombre_que_no_esta_en_los_contactos_se_busca_en_los_chats(wsp, monke
 def test_enviar_a_otra_persona_es_peligroso_y_pregunta(wsp, parser):
     assert "enviar_whatsapp_a_contacto" in wsp.peligrosas and "enviar_a_whatsapp" not in wsp.peligrosas
     pregunta = parser._encolar_confirmacion("enviar_whatsapp_a_contacto", {"contacto": "mamá", "mensaje": "llego tarde"})
-    assert "mamá" in pregunta and "llego tarde" in pregunta and "WhatsApp" in pregunta
+    assert pregunta == "¿Le mando 'llego tarde' a mamá?"
 
 
 # --------------------------------------------------------------------------- #
