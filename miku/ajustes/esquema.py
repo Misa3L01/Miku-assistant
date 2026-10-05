@@ -419,6 +419,10 @@ _OPCIONES: List[Opcion] = [
     _o("booster_volumen_objetivo", 20, "juegos",
        "Volumen (0-100) al que se bajan esas apps mientras jugás.", "entero",
        usado_por="game_booster"),
+    _o("booster_espera_salida", 10.0, "juegos",
+       "Segundos seguidos fuera del juego antes de restaurar el volumen y avisar que salió. Con un alt-tab "
+       "más corto que esto no pasa nada. La entrada al juego sigue siendo inmediata.", "decimal",
+       usado_por="game_booster"),
     _o("booster_aviso", True, "juegos",
        "Avisar (notificación + voz) al entrar y salir del modo gaming.", "booleano",
        usado_por="game_booster"),
