@@ -158,7 +158,13 @@ class Habitos(Plugin):
             inactivo = float(self._leer_inactivo())
         except Exception:  # noqa: BLE001
             inactivo = 0.0
+        antes = self._vigilante.a_la_vista
         disparo = self._vigilante.revisar(self._leer_ventana(), inactivo)
+        ahora = self._vigilante.a_la_vista
+        if ahora is not None and ahora != antes:
+            # Solo el nombre de TU regla (nunca el título de la página): sirve para ver en el log que la detecta.
+            logger.info("Hábitos: '%s' a la vista; si seguís ahí %d s, te rezongo.", ahora,
+                        int(self._vigilante.espera_seg))
         if disparo is not None:
             self._rezongar(disparo)
 
@@ -179,6 +185,7 @@ class Habitos(Plugin):
                 "modo": "ventana" if d.incognito and d.clave == INCOGNITO else "pestana"}
         if not preguntar(texto, "cerrar_pagina_vigilada", args, lambda: frases.elegir("habito.perdon")):
             self._vigilante.olvidar(d.clave)               # había otra pregunta esperando: se reintenta enseguida
+            logger.info("Hábitos: no pude preguntar por '%s' (había otra pregunta esperando); reintento.", d.nombre)
             return
         self._registro.sumar(d.nombre, 1.0)
         logger.info("Hábitos: rezongué por '%s' (%d hoy).", d.nombre, veces)

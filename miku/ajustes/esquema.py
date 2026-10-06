@@ -144,6 +144,17 @@ _OPCIONES: List[Opcion] = [
        "Textos que aparecen en el título de una ventana de incógnito de tu navegador (sin acentos). Si Miku no "
        "reconoce las tuyas, mirá cómo se llama con: python -m miku.servicios.habitos", "lista",
        usado_por="habitos"),
+    _o("ideas_activo", True, "avisos",
+       "Ideas guardadas: guardar una captura o foto para revisarla más tarde y que Miku te la recuerde. Se las "
+       "pasás por Telegram (foto o captura) o con la voz: 'guardá la última captura para después'. La imagen se "
+       "manda una vez a la visión (Gemini o Groq) para ponerle título; se guarda en data/ideas/.", "booleano",
+       usado_por="ideas"),
+    _o("ideas_hora_aviso", "18:00", "avisos",
+       "A qué hora te recuerda una idea cuando no dijiste otra ('mañana', 'en 3 días'...), en formato HH:MM.",
+       usado_por="ideas"),
+    _o("ideas_hora_finde", "11:00", "avisos",
+       "A qué hora te recuerda una idea que pediste para el fin de semana (sábado y domingo), en formato HH:MM.",
+       usado_por="ideas"),
     _o("telegram_aprobar_seg", 20.0, "avisos",
        "Si Miku te hace una pregunta por voz (por ejemplo '¿Apago la PC?') y no la contestás en estos segundos, "
        "te la manda al celular por Telegram con botones Sí / No (0 = no mandar). Necesita el bot de Telegram "

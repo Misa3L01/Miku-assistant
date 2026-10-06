@@ -596,6 +596,23 @@ LLM_API_KEY = ""
 # (usado por: habitos)
 # HABITOS_MARCAS_INCOGNITO = ['incognito', 'inprivate', '(private)', 'private browsing', 'navegacion privada', '(privado)', '(privada)']
 
+# Ideas guardadas: guardar una captura o foto para revisarla más tarde y que Miku te la
+# recuerde. Se las pasás por Telegram (foto o captura) o con la voz: 'guardá la última
+# captura para después'. La imagen se manda una vez a la visión (Gemini o Groq) para
+# ponerle título; se guarda en data/ideas/.
+# (usado por: ideas)
+# IDEAS_ACTIVO = True
+
+# A qué hora te recuerda una idea cuando no dijiste otra ('mañana', 'en 3 días'...), en
+# formato HH:MM.
+# (usado por: ideas)
+# IDEAS_HORA_AVISO = "18:00"
+
+# A qué hora te recuerda una idea que pediste para el fin de semana (sábado y domingo),
+# en formato HH:MM.
+# (usado por: ideas)
+# IDEAS_HORA_FINDE = "11:00"
+
 # Si Miku te hace una pregunta por voz (por ejemplo '¿Apago la PC?') y no la contestás
 # en estos segundos, te la manda al celular por Telegram con botones Sí / No (0 = no
 # mandar). Necesita el bot de Telegram configurado (TELEGRAM_BOT_TOKEN y

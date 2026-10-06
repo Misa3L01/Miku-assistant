@@ -145,6 +145,33 @@ class Vision(Plugin):
                 return f"{texto} (Ojo: la captura se envió a Groq para analizarla.)"
         return problema or "No pude leer la respuesta de la visión."
 
+    def analizar_imagen(self, img_b64: str, pregunta: str) -> Tuple[Optional[str], str]:
+        """Le pregunta ``pregunta`` a la visión sobre una imagen que ya tenés (JPEG en base64).
+
+        Es lo mismo que ``ver_pantalla`` pero sin capturar: sirve para una foto o una captura guardada.
+        Usa el mismo orden de proveedores (Gemini y, si falla, Groq).
+
+        Returns:
+            ``(texto, problema)``: el texto de la respuesta, o ``None`` y un mensaje de por qué no se pudo.
+        """
+        cfg = config_mod.config
+        proveedor = str(cfg.get("vision_proveedor", "auto") or "auto").strip().lower()
+        usar_gemini = proveedor in ("auto", "gemini") and bool(cfg.gemini_api_key) \
+            and time.monotonic() >= self._gemini_caido_hasta
+        usar_groq = proveedor in ("auto", "groq") and bool(str(cfg.groq_api_key).strip())
+        if not usar_gemini and not usar_groq:
+            return None, "No tengo con qué mirar imágenes (falta GEMINI_API_KEY o GROQ_API_KEY)."
+        problema = ""
+        if usar_gemini:
+            texto, problema = self._via_gemini(pregunta, img_b64)
+            if texto:
+                return texto, ""
+        if usar_groq:
+            texto = self._via_groq(pregunta, img_b64)
+            if texto:
+                return texto, ""
+        return None, problema or "No pude leer la respuesta de la visión."
+
     # ---------------- Proveedores ---------------- #
     def _via_gemini(self, pregunta: str, img_b64: str) -> Tuple[Optional[str], str]:
         """``(texto, mensaje de problema)``. Si Gemini falla por clave/cuota/créditos se lo aparta 10 min."""

@@ -129,6 +129,11 @@ class Vigilante:
         self._actual: Optional[Tuple[str, float]] = None       # (regla, desde cuándo está seguida a la vista)
         self._ultimo: dict = {}                                 # regla -> cuándo se la rezongó por última vez
 
+    @property
+    def a_la_vista(self) -> Optional[str]:
+        """La regla que está a la vista ahora (esperando los segundos de gracia), o None."""
+        return self._actual[0] if self._actual else None
+
     def coincidencia(self, ventana: Optional[Ventana]) -> Optional[Disparo]:
         """La regla que cumple esta ventana (sin tener en cuenta tiempos ni cooldowns), o None."""
         if ventana is None:

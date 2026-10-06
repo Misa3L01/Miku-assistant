@@ -184,6 +184,7 @@ sacale el `#`. Las opciones principales:
 | `PERSONALIDAD` | Estilo por defecto | `personalidad` |
 | `JUEGOS_BOOSTER`, `BOOSTER_*` | Modo gaming automático | `game_booster` |
 | `USO_REGISTRO`, `USO_AVISO_HORAS`, `USO_PAUSA_MIN` | Registro de uso y aviso de horas de juego | `uso_pc` |
+| `IDEAS_ACTIVO`, `IDEAS_HORA_AVISO`, `IDEAS_HORA_FINDE` | Ideas guardadas (captura o foto + recordatorio) | `ideas` |
 | `HABITOS_VIGILAR`, `HABITOS_INCOGNITO`, `HABITOS_ESPERA_SEG`, `HABITOS_COOLDOWN_MIN`, `HABITOS_NAVEGADORES`, `HABITOS_MARCAS_INCOGNITO` | Control de hábitos | `habitos` |
 | `BRAVE_RUTA_EXE`, `BRAVE_DEBUG_PORT`, `TIDAL_RUTA_EXE` | Brave por CDP y TIDAL | `browser`, `tidal` |
 | `TESSERACT_RUTA`, `OCR_IDIOMA` | OCR | `ocr` |
@@ -324,6 +325,7 @@ Se cargan de forma perezosa desde `miku/plugins/registro.py`; uno roto o sin dep
 | `traductor_juegos` | `traducir_mensaje_juego` (cualquier texto a **cualquier idioma**; deja el resultado **solo en el portapapeles**) | Groq; opcional `IDIOMA_JUEGO`, `PERFILES_JUEGO`, `MENSAJES_JUEGO` |
 | `discord_control` | `silenciar_usuario_discord` ⚠️, `volumen_usuario_discord` ⚠️, `expulsar_usuario_discord` ⚠️ | `DISCORD_BOT_TOKEN`, intent *Server Members* |
 | `game_booster` | *(automático)* baja el volumen de apps al detectar un juego y lo restaura al salir | `JUEGOS_BOOSTER` |
+| `ideas` | `guardar_idea` ("guardá la última captura para después"), `listar_ideas`, `recordar_idea`, `cerrar_idea`; las fotos por Telegram se guardan solas | visión (`GEMINI_API_KEY` o `GROQ_API_KEY`) para el título; `TELEGRAM_*` para el celular |
 | `habitos` | `resumen_habitos` ("¿cuántas veces entré a Facebook?"); el resto es automático: rezonga por las páginas de `HABITOS_VIGILAR` | `HABITOS_VIGILAR` o `HABITOS_INCOGNITO` |
 | `uso_pc` | `tiempo_de_uso` ("¿en qué gasté el tiempo hoy / ayer / esta semana?"): minutos por programa y juego | `USO_REGISTRO` |
 | `asistente_proactivo` | *(automático)* avisos proactivos (ver abajo) | psutil, `CIUDAD_CLIMA` para el clima |
@@ -426,6 +428,17 @@ Detalles que conviene saber:
 - **Telegram:** solo responde al **usuario** autorizado (no al chat/grupo) y no puede prender la PC.
 
 ---
+
+### Ideas guardadas
+
+Para no perder esa idea que viste en un foro o en Facebook y que después te olvidás de revisar.
+
+- **Desde el celular:** mandale la foto o la captura al bot de Telegram (puede ir como imagen o como archivo). Si le agregás un texto, lo toma como nota y, si dice cuándo (*"recordámela el sábado"*), lo entiende. Miku la mira, le pone título y resumen, la guarda y te contesta con botones para elegir cuándo recordártela: **Mañana / Este finde / En una semana / Sin recordatorio**. Si no tocás nada, queda para mañana a las 18.
+- **Desde la PC:** sacá una captura (`Win+Shift+S`, o `Win+ImprPant`) y decile *"guardá la última captura para después"* (también *"…y recordámela el sábado"*, o *"guardá lo que estoy viendo"*). "La última captura" es el archivo más nuevo de tus carpetas de capturas (Imágenes\Screenshots y la de Miku) si es de los últimos 15 minutos; si no, la imagen que tengas copiada; y si no hay nada, el archivo más nuevo aunque sea viejo (y te dice de hace cuánto, para que no guardes una captura de ayer sin querer).
+- **El recordatorio:** a la hora elegida Miku te lo dice por voz y te lo manda por Telegram **con la imagen** y botones: *Ya la vi / Mañana / Este finde / Descartar*. De noche respeta el horario de silencio de los avisos y lo dice cuando termina.
+- **Pedirlas:** *"¿qué ideas tengo guardadas?"*, *"recordame la idea 3 en una semana"*, *"ya vi la idea"*, *"descartá la idea 2"*.
+- **Horas:** `IDEAS_HORA_AVISO` (18:00) para "mañana", "en 3 días"…; `IDEAS_HORA_FINDE` (11:00) para sábado y domingo. Entiende *mañana, pasado mañana, el sábado, este finde, en 3 días, en una semana, esta noche, a las 9, más tarde…*
+- **Privacidad:** la imagen se manda **una vez** a la visión (Gemini o, si no hay créditos, Groq) para ponerle el título; después queda en tu PC (`data/ideas.db` y `data/ideas/`, que no se suben a GitHub). Las ideas sin visión disponible se guardan igual, con tu nota de título.
 
 ### Control de hábitos
 

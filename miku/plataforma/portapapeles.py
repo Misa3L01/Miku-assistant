@@ -84,3 +84,21 @@ def escribir_texto(texto: str) -> bool:
             time.sleep(_PAUSA_S)
     logger.error("No pude escribir en el portapapeles.")
     return False
+
+
+def leer_imagen() -> Optional[Any]:
+    """La imagen que hay copiada en el portapapeles (por ejemplo, tras ``Win+Shift+S``), o None.
+
+    Devuelve una imagen de Pillow. Si lo copiado son archivos de imagen, abre el primero.
+    """
+    try:
+        from PIL import Image, ImageGrab  # import tardío
+        contenido = ImageGrab.grabclipboard()
+        if contenido is None:
+            return None
+        if isinstance(contenido, list):                    # archivos copiados desde el Explorador
+            return Image.open(contenido[0]) if contenido else None
+        return contenido
+    except Exception as e:  # noqa: BLE001
+        logger.debug("No pude leer una imagen del portapapeles: %s", e)
+        return None

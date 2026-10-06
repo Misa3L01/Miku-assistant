@@ -44,7 +44,7 @@ EXCLUIDAS = frozenset({"modo_entrada", "personalidad", "tecla_invocar", "tts_mot
 #: Opciones que recién se aplican al reiniciar Miku (el resto vale al instante).
 REQUIEREN_REINICIO = frozenset({
     "tts_cache", "voicevox_gpu", "stt_vad", "vad_proveedor", "wake_proveedor",
-    "stt_proveedor", "memoria_activa", "embeddings_activos", "proactivo_activo", "log_level", "uso_registro",
+    "stt_proveedor", "memoria_activa", "embeddings_activos", "proactivo_activo", "log_level", "uso_registro", "ideas_activo",
 })
 
 #: Motores de voz para el desplegable: (valor de TTS_MOTOR, cómo se muestra).

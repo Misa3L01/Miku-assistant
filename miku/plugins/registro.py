@@ -65,6 +65,8 @@ _CATALOGO: List[_Entrada] = [
     # Rezonga por las páginas de tu lista (HABITOS_VIGILAR) o por el incógnito: sin nada que vigilar, ni se importa.
     _Entrada("asistente.habitos", "Habitos",
              lambda cfg: bool(cfg.get("habitos_vigilar")) or bool(cfg.get("habitos_incognito", False))),
+    # Capturas o fotos para revisar más tarde, con recordatorio (por Telegram o "guardá la última captura").
+    _Entrada("productividad.ideas", "Ideas", lambda cfg: bool(cfg.get("ideas_activo", True))),
     _Entrada("pantalla.vision", "Vision"),
     _Entrada("productividad.todoist", "Todoist"),
     _Entrada("productividad.comedor", "Comedor",

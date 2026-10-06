@@ -10,6 +10,9 @@ asistente está corriendo.
 Preguntas con botones: si Miku te pregunta algo ("¿Apago la PC?") y no contestás a tiempo, la app la manda
 acá con botones Sí / No (``preguntar``); un toque la resuelve en la PC (``_on_boton``).
 
+Ideas guardadas: una foto o captura que le mandes (con un pie opcional) la guarda el plugin ``ideas`` y te
+pregunta con botones cuándo recordártela; a la hora elegida el recordatorio llega por acá (``enviar``).
+
 Seguridad: solo responde al ``TELEGRAM_CHAT_ID`` autorizado (en config_local).
 Si no hay token/chat, el plugin queda inactivo (no rompe el arranque).
 
@@ -23,8 +26,10 @@ red): nunca tumba el asistente.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import threading
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from miku.plataforma import red
@@ -33,6 +38,8 @@ from miku.plugins.base import Plugin
 logger = logging.getLogger("miku.plugins.telegram_control")
 
 _API = "https://api.telegram.org/bot{token}/{metodo}"
+#: Una imagen de más de esto no se baja (Telegram deja bajar hasta 20 MB; una captura no pesa tanto).
+_MAX_FOTO_BYTES = 15 * 1024 * 1024
 
 
 class TelegramControl(Plugin):
@@ -126,6 +133,7 @@ class TelegramControl(Plugin):
             app.add_handler(MessageHandler(
                 filters.TEXT & ~filters.COMMAND, self._on_texto))
             app.add_handler(CallbackQueryHandler(self._on_boton))
+            app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, self._on_foto))
             logger.info("Telegram: iniciando polling...")
             # ``stop_signals=None``: no instalar handlers de señales (solo se
             # puede desde el hilo principal y acá corremos en un hilo aparte).
@@ -243,6 +251,9 @@ class TelegramControl(Plugin):
         if not self._autorizado(update):
             await consulta.answer()
             return
+        if str(consulta.data or "").startswith("idea:"):
+            await self._on_boton_idea(consulta)
+            return
         accion, _, numero = str(consulta.data or "").partition(":")
         if accion not in ("ok", "no") or not numero.isdigit():
             await consulta.answer()
@@ -262,6 +273,103 @@ class TelegramControl(Plugin):
             await consulta.edit_message_text(f"{original}\n\n{nota}"[:4000])    # sin reply_markup: quita los botones
         except Exception:  # noqa: BLE001
             logger.debug("No pude actualizar el mensaje de la pregunta.", exc_info=True)
+
+    # ---------------- Ideas guardadas ----------------
+    def _plugin(self, nombre: str) -> Any:
+        """Otro plugin del bus por su nombre (None si no está cargado)."""
+        for p in getattr(self._event_bus, "plugins", []) or []:
+            if getattr(p, "nombre", "") == nombre:
+                return p
+        return None
+
+    @staticmethod
+    def _teclado(filas: List[List[Tuple[str, str]]]) -> Any:
+        """Filas de ``(texto, dato)`` como teclado de botones de Telegram."""
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        return InlineKeyboardMarkup([[InlineKeyboardButton(t, callback_data=d) for t, d in fila] for fila in filas])
+
+    async def _on_foto(self, update: Any, context: Any) -> None:
+        """Una foto o captura: se guarda como idea y se pregunta con botones cuándo recordarla."""
+        if not self._autorizado(update):
+            return
+        mensaje = update.message
+        ideas = self._plugin("ideas")
+        if ideas is None:
+            await mensaje.reply_text("No tengo activado el guardado de ideas.")
+            return
+        archivo = None
+        if getattr(mensaje, "photo", None):
+            archivo = mensaje.photo[-1]                          # la de mayor resolución
+        elif getattr(mensaje, "document", None) and str(getattr(mensaje.document, "mime_type", "") or "").startswith("image/"):
+            archivo = mensaje.document
+        if archivo is None:
+            return
+        if (getattr(archivo, "file_size", 0) or 0) > _MAX_FOTO_BYTES:
+            await mensaje.reply_text("Esa imagen es demasiado grande para guardarla (más de 15 MB).")
+            return
+        try:
+            fichero = await context.bot.get_file(archivo.file_id)
+            datos = bytes(await fichero.download_as_bytearray())
+        except Exception as e:  # noqa: BLE001
+            logger.warning("No pude bajar la imagen de Telegram (%s).", type(e).__name__)
+            await mensaje.reply_text("No pude bajar esa imagen. Probá de nuevo.")
+            return
+        await mensaje.reply_text("Mirando la imagen…")           # la visión tarda unos segundos
+        idea, texto = await asyncio.to_thread(ideas.guardar_desde_imagen, datos,
+                                              (mensaje.caption or "").strip(), "telegram")
+        if idea is None:
+            await mensaje.reply_text(texto)
+            return
+        await mensaje.reply_text(texto + "\n\n¿La recordamos en otro momento?",
+                                 reply_markup=self._teclado(ideas.botones_de_fecha(idea.id)))
+
+    async def _on_boton_idea(self, consulta: Any) -> None:
+        """Un botón de una idea: cambiar cuándo recordarla, marcarla vista o descartarla."""
+        partes = str(consulta.data or "").split(":")
+        ideas = self._plugin("ideas")
+        if len(partes) != 3 or not partes[1].isdigit() or ideas is None:
+            await consulta.answer("Eso ya no está disponible.")
+            return
+        texto = await asyncio.to_thread(ideas.responder_boton, int(partes[1]), partes[2])
+        await consulta.answer("Listo")
+        mensaje = consulta.message
+        try:
+            if getattr(mensaje, "photo", None):                  # el recordatorio con imagen: el texto es el pie
+                await consulta.edit_message_caption(f"{(mensaje.caption or '')}\n\n{texto}"[:1000])
+            else:
+                await consulta.edit_message_text(f"{(getattr(mensaje, 'text', '') or '')}\n\n{texto}"[:4000])
+        except Exception:  # noqa: BLE001
+            logger.debug("No pude actualizar el mensaje de la idea.", exc_info=True)
+
+    def enviar(self, texto: str, foto: Optional[str] = None,
+               botones: Optional[List[List[Tuple[str, str]]]] = None) -> bool:
+        """Manda un mensaje a tu chat (con una foto y botones si se pide). True si salió.
+
+        Lo usa el recordatorio de las ideas. Solo escribe al ``TELEGRAM_CHAT_ID`` configurado.
+        """
+        from miku.ajustes import carga as config_mod
+        token, chat = config_mod.config.telegram_bot_token, config_mod.config.telegram_chat_id
+        if not token or not chat:
+            return False
+        teclado = ({"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in fila] for fila in botones]}
+                   if botones else None)
+        try:
+            if foto:
+                datos = {"chat_id": chat, "caption": texto[:1000]}
+                if teclado:
+                    datos["reply_markup"] = json.dumps(teclado)
+                with open(foto, "rb") as imagen:
+                    resp = red.post(_API.format(token=token, metodo="sendPhoto"), data=datos, timeout=30,
+                                    files={"photo": (Path(foto).name, imagen, "image/jpeg")})
+            else:
+                cuerpo: Dict[str, Any] = {"chat_id": chat, "text": texto[:4000]}
+                if teclado:
+                    cuerpo["reply_markup"] = teclado
+                resp = red.post(_API.format(token=token, metodo="sendMessage"), json=cuerpo, timeout=10)
+            return resp.status_code == 200 and bool(resp.json().get("ok"))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("No pude mandar el mensaje a Telegram (%s).", type(e).__name__)   # sin la URL: lleva el token
+            return False
 
     def _resolver_boton(self, numero: int, acepta: bool) -> Optional[str]:
         """Resuelve la pregunta ``numero`` en el parser (None si ya no está pendiente)."""

@@ -10,4 +10,4 @@
 - [x] Registro de uso por programa (solo nombres y minutos) + "¿en qué gasté el tiempo?" + aviso cada 2 h de juego seguido (`USO_AVISO_HORAS`).
 - [x] Aprobar desde el celular: si Miku pregunta y no contestás en 20 s, la pregunta llega por Telegram con botones Sí/No.
 - [x] Control de hábitos: si ves una página/palabra de tu lista (o incógnito), Miku te rezonga con una ruleta de frases y pregunta "¿La cierro?".
-- [ ] Ideas guardadas: foto o captura (Telegram o "guardá la última captura") + recordatorio con botones (mañana / finde / semana).
+- [x] Ideas guardadas: foto o captura (Telegram o "guardá la última captura") + recordatorio con botones (mañana / finde / semana).
