@@ -386,8 +386,44 @@ def test_si_sigue_pendiente_los_botones_se_quedan(asistente):
     assert asistente.telegram.cerradas == [] and asistente._pregunta_enviada == 3
 
 
-def test_una_orden_por_voz_que_deja_una_pregunta_la_programa(asistente, monkeypatch):
-    monkeypatch.setattr(asistente, "responder", lambda texto, origen="texto": "¿Apago la PC?")
+def test_una_orden_por_voz_que_deja_una_pregunta_la_programa(asistente):
     asistente.stt = types.SimpleNamespace(esperar_respuesta=lambda: None)
     asistente._al_comando_voz("apagá la pc")
     assert len(Temporizador.creados) == 1
+
+
+def test_en_el_modo_texto_de_depuracion_tambien(asistente):
+    """La ventana de texto responde por otro camino que la voz: también tiene que mandar la pregunta."""
+    asistente._enviar_desde_consola("apagá la pc")
+    (t,) = Temporizador.creados
+    assert t.espera == 20.0 and t.args == (3, "¿Apago la PC?")
+    t.funcion(*t.args)
+    assert asistente.telegram.preguntas == [(3, "¿Apago la PC?")]
+
+
+def test_la_misma_pregunta_no_se_programa_dos_veces(asistente):
+    """Si Miku repite '¿sí o no?', no se arma otro temporizador (llegaría dos veces al celular)."""
+    asistente.responder("mmm")
+    asistente.responder("no sé")
+    assert len(Temporizador.creados) == 1
+    t = Temporizador.creados[0]
+    t.funcion(*t.args)
+    asistente.responder("eh")
+    assert len(Temporizador.creados) == 1, "tampoco una vez que ya se mandó"
+    assert asistente.telegram.preguntas == [(3, "¿Apago la PC?")]
+
+
+def test_una_pregunta_nueva_si_se_programa(asistente):
+    asistente.responder("mmm")
+    asistente.parser.pendiente = (4, "¿Reinicio la PC?")
+    asistente.responder("reiniciá")
+    assert [t.args[0] for t in Temporizador.creados] == [3, 4]
+
+
+def test_si_no_pudo_mandarla_se_reintenta_con_la_proxima_respuesta(asistente):
+    asistente.telegram.sale = False
+    asistente.responder("mmm")
+    t = Temporizador.creados[0]
+    t.funcion(*t.args)
+    asistente.responder("mmm")
+    assert len(Temporizador.creados) == 2

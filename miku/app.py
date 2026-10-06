@@ -143,6 +143,8 @@ class Asistente:
         self._invocacion_pendiente = False
         #: Número de la pregunta que quedó en el celular con botones (None = ninguna).
         self._pregunta_enviada: Optional[int] = None
+        #: Número de la pregunta cuyo temporizador de envío ya está corriendo (para no mandarla dos veces).
+        self._pregunta_programada: Optional[int] = None
         self._hotkey: Any = None
         #: Valor de ``tecla_invocar`` con el que se registró el hotkey actual.
         self._tecla_registrada: str = ""
@@ -229,6 +231,7 @@ class Asistente:
             logger.exception("Error procesando el comando.")
             respuesta = "Disculpá, tuve un problema interno."
         self._cerrar_pregunta_enviada()
+        self._pregunta_al_celular()
 
         # Variamos el tono de respuestas CORTAS conocidas ("Listo", "Ya está")
         # para que Miku no suene repetitiva. Las respuestas largas del LLM
@@ -293,7 +296,8 @@ class Asistente:
         """Si Miku acaba de hacer una pregunta, la manda al celular cuando pasan ``TELEGRAM_APROBAR_SEG`` s sin respuesta.
 
         Pensado para cuando no estás frente a la PC: contestás desde Telegram con un toque. Si la contestás
-        antes (por voz), no se manda nada.
+        antes (por voz o escribiendo en la ventana de texto), no se manda nada. Vale para el modo voz y para el
+        de texto: los dos pasan por ``responder``.
         """
         if self.parser is None:
             return
@@ -304,6 +308,9 @@ class Asistente:
         pregunta = self.parser.pregunta_pendiente()
         if espera <= 0 or pregunta is None:
             return
+        if pregunta[0] in (self._pregunta_programada, self._pregunta_enviada):
+            return                                  # ya está en camino (o ya se mandó): una sola vez por pregunta
+        self._pregunta_programada = pregunta[0]
         temporizador = threading.Timer(espera, self._mandar_pregunta, args=pregunta)
         temporizador.daemon = True
         temporizador.name = "miku_pregunta_celular"
@@ -311,6 +318,8 @@ class Asistente:
 
     def _mandar_pregunta(self, numero: int, texto: str) -> None:
         """Manda la pregunta ``numero`` a Telegram si sigue sin contestar."""
+        if self._pregunta_programada == numero:
+            self._pregunta_programada = None
         actual = self.parser.pregunta_pendiente() if self.parser is not None else None
         if actual is None or actual[0] != numero:
             return                                  # ya la contestaste en la PC
@@ -348,7 +357,6 @@ class Asistente:
         # Si Miku quedó esperando un "sí/no" (o qué opción elegir), el micrófono se abre sin pedir "Miku".
         if self.stt is not None and self.parser is not None and self.parser.espera_respuesta():
             self.stt.esperar_respuesta()
-        self._pregunta_al_celular()
         if self.consola is not None:
             self.consola.agregar("Vos (voz)", comando)
             self.consola.agregar("Miku", respuesta)
