@@ -184,6 +184,7 @@ sacale el `#`. Las opciones principales:
 | `PERSONALIDAD` | Estilo por defecto | `personalidad` |
 | `JUEGOS_BOOSTER`, `BOOSTER_*` | Modo gaming automático | `game_booster` |
 | `USO_REGISTRO`, `USO_AVISO_HORAS`, `USO_PAUSA_MIN` | Registro de uso y aviso de horas de juego | `uso_pc` |
+| `HABITOS_VIGILAR`, `HABITOS_INCOGNITO`, `HABITOS_ESPERA_SEG`, `HABITOS_COOLDOWN_MIN`, `HABITOS_NAVEGADORES`, `HABITOS_MARCAS_INCOGNITO` | Control de hábitos | `habitos` |
 | `BRAVE_RUTA_EXE`, `BRAVE_DEBUG_PORT`, `TIDAL_RUTA_EXE` | Brave por CDP y TIDAL | `browser`, `tidal` |
 | `TESSERACT_RUTA`, `OCR_IDIOMA` | OCR | `ocr` |
 | `GEMINI_API_KEY`, `GEMINI_MODELO` | Visión de pantalla | `vision` |
@@ -323,6 +324,7 @@ Se cargan de forma perezosa desde `miku/plugins/registro.py`; uno roto o sin dep
 | `traductor_juegos` | `traducir_mensaje_juego` (cualquier texto a **cualquier idioma**; deja el resultado **solo en el portapapeles**) | Groq; opcional `IDIOMA_JUEGO`, `PERFILES_JUEGO`, `MENSAJES_JUEGO` |
 | `discord_control` | `silenciar_usuario_discord` ⚠️, `volumen_usuario_discord` ⚠️, `expulsar_usuario_discord` ⚠️ | `DISCORD_BOT_TOKEN`, intent *Server Members* |
 | `game_booster` | *(automático)* baja el volumen de apps al detectar un juego y lo restaura al salir | `JUEGOS_BOOSTER` |
+| `habitos` | `resumen_habitos` ("¿cuántas veces entré a Facebook?"); el resto es automático: rezonga por las páginas de `HABITOS_VIGILAR` | `HABITOS_VIGILAR` o `HABITOS_INCOGNITO` |
 | `uso_pc` | `tiempo_de_uso` ("¿en qué gasté el tiempo hoy / ayer / esta semana?"): minutos por programa y juego | `USO_REGISTRO` |
 | `asistente_proactivo` | *(automático)* avisos proactivos (ver abajo) | psutil, `CIUDAD_CLIMA` para el clima |
 | `telegram_control` | *(automático)* comandos remotos: texto libre, `/estado`, `/pendientes` | `python-telegram-bot`, token + tu user ID |
@@ -424,6 +426,22 @@ Detalles que conviene saber:
 - **Telegram:** solo responde al **usuario** autorizado (no al chat/grupo) y no puede prender la PC.
 
 ---
+
+### Control de hábitos
+
+Para evitarte páginas que te distraen. Poné tus palabras en `config_local.py`:
+
+```python
+HABITOS_VIGILAR = ["facebook", "tiktok", "youtube shorts"]
+HABITOS_INCOGNITO = False        # True: rezongar también por CUALQUIER ventana de incógnito
+```
+
+- **Qué mira:** el título de la pestaña que tenés **a la vista** en el navegador (Brave, Chrome, Edge, Firefox, Opera, Vivaldi), en el momento. No importan mayúsculas ni acentos, y funciona igual dentro de una ventana de incógnito.
+- **Cuándo salta:** si seguís ahí `HABITOS_ESPERA_SEG` segundos seguidos (10): un vistazo o un alt-tab no cuentan. Si la PC está sola (3 minutos sin tocar nada) tampoco.
+- **Qué hace:** te rezonga con una frase de una ruleta grande ("¿Qué hacés viendo facebook? ¿La cierro?", "¿Por qué estás viendo eso? Lo cierro, ¿sí?"…) y espera tu respuesta: **"sí"** por voz (sin decir "Miku"), escrito en la ventana de texto o con el botón del celular (si no contestás en 20 s, ver *Confirmaciones*). Con el "sí" cierra esa pestaña (una ventana de incógnito, entera). Con el **"no"** te contesta con otra frase y no vuelve a preguntar por esa página durante `HABITOS_COOLDOWN_MIN` minutos (30). Si la cerraste y la reabrís, te rezonga de nuevo a los 2 minutos, con frases de reincidencia ("ya van 3 veces hoy").
+- **No cierra nada a ciegas:** antes de cerrar vuelve a leer la ventana y comprueba que **sigas en esa página** y que esté en primer plano; si ya cambiaste de pestaña, no toca nada.
+- **Privacidad:** no guarda qué mirabas. En `data/habitos.json` solo queda cuántas veces saltó cada palabra por día. "¿Cuántas veces entré a páginas de mi lista esta semana?" lo contesta con esos números.
+- **Ajustar a tu navegador:** cada navegador titula distinto las ventanas privadas. Para ver qué lee Miku, abrí una página de tu lista y una ventana de incógnito y corré (con Miku cerrada o abierta, da igual): `venv\Scripts\python.exe -m miku.servicios.habitos`. Muestra, segundo a segundo, la ventana en primer plano y si saltaría. Si tu ventana privada figura como *normal*, agregá la palabra que aparece en su título a `HABITOS_MARCAS_INCOGNITO`.
 
 ## Crear un plugin nuevo
 

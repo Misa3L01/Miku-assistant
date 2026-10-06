@@ -562,6 +562,40 @@ LLM_API_KEY = ""
 # (usado por: whatsapp)
 # WHATSAPP_VENTANA = "minimizada"
 
+# Control de hábitos: palabras de las páginas que querés evitar. Si el título de la
+# pestaña que tenés a la vista en el navegador contiene alguna (sin importar mayúsculas
+# ni acentos) y seguís ahí unos segundos, Miku te rezonga y pregunta '¿la cierro?'. Con
+# tu 'sí' cierra esa pestaña. Para ver cómo se llama tu ventana: python -m
+# miku.servicios.habitos
+# (usado por: habitos)
+# HABITOS_VIGILAR = ["facebook", "tiktok", "youtube shorts"]
+
+# Control de hábitos: rezongar también por CUALQUIER ventana de incógnito, aunque la
+# página no esté en tu lista. (Las páginas de tu lista saltan igual dentro de una
+# ventana de incógnito.)
+# (usado por: habitos)
+# HABITOS_INCOGNITO = False
+
+# Segundos seguidos en la página antes de que Miku te rezongue (un vistazo o un alt-tab
+# no cuentan).
+# (usado por: habitos)
+# HABITOS_ESPERA_SEG = 10.0
+
+# Minutos sin volver a preguntarte por la misma página. Si decís que sí y la cerrás, la
+# vuelve a vigilar a los 2 minutos.
+# (usado por: habitos)
+# HABITOS_COOLDOWN_MIN = 30.0
+
+# Programas que cuentan como navegador (el nombre del proceso, sin .exe).
+# (usado por: habitos)
+# HABITOS_NAVEGADORES = ['brave', 'chrome', 'msedge', 'firefox', 'opera', 'vivaldi']
+
+# Textos que aparecen en el título de una ventana de incógnito de tu navegador (sin
+# acentos). Si Miku no reconoce las tuyas, mirá cómo se llama con: python -m
+# miku.servicios.habitos
+# (usado por: habitos)
+# HABITOS_MARCAS_INCOGNITO = ['incognito', 'inprivate', '(private)', 'private browsing', 'navegacion privada', '(privado)', '(privada)']
+
 # Si Miku te hace una pregunta por voz (por ejemplo '¿Apago la PC?') y no la contestás
 # en estos segundos, te la manda al celular por Telegram con botones Sí / No (0 = no
 # mandar). Necesita el bot de Telegram configurado (TELEGRAM_BOT_TOKEN y

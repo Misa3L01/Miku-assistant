@@ -121,6 +121,29 @@ _OPCIONES: List[Opcion] = [
        "texto", usado_por="whatsapp", permitidos=("minimizada", "normal", "oculta")),
     _o("whatsapp_puerto", 9225, "navegador",
        "Puerto de depuración del Brave aparte de WhatsApp.", "entero", usado_por="whatsapp"),
+    _o("habitos_vigilar", [], "avisos",
+       "Control de hábitos: palabras de las páginas que querés evitar. Si el título de la pestaña que tenés a la "
+       "vista en el navegador contiene alguna (sin importar mayúsculas ni acentos) y seguís ahí unos segundos, "
+       "Miku te rezonga y pregunta '¿la cierro?'. Con tu 'sí' cierra esa pestaña. Para ver cómo se llama tu "
+       "ventana: python -m miku.servicios.habitos", "lista",
+       'HABITOS_VIGILAR = ["facebook", "tiktok", "youtube shorts"]', "habitos"),
+    _o("habitos_incognito", False, "avisos",
+       "Control de hábitos: rezongar también por CUALQUIER ventana de incógnito, aunque la página no esté en tu "
+       "lista. (Las páginas de tu lista saltan igual dentro de una ventana de incógnito.)", "booleano",
+       usado_por="habitos"),
+    _o("habitos_espera_seg", 10.0, "avisos",
+       "Segundos seguidos en la página antes de que Miku te rezongue (un vistazo o un alt-tab no cuentan).",
+       "decimal", usado_por="habitos"),
+    _o("habitos_cooldown_min", 30.0, "avisos",
+       "Minutos sin volver a preguntarte por la misma página. Si decís que sí y la cerrás, la vuelve a vigilar "
+       "a los 2 minutos.", "decimal", usado_por="habitos"),
+    _o("habitos_navegadores", ["brave", "chrome", "msedge", "firefox", "opera", "vivaldi"], "avisos",
+       "Programas que cuentan como navegador (el nombre del proceso, sin .exe).", "lista", usado_por="habitos"),
+    _o("habitos_marcas_incognito", ["incognito", "inprivate", "(private)", "private browsing", "navegacion privada",
+                                    "(privado)", "(privada)"], "avisos",
+       "Textos que aparecen en el título de una ventana de incógnito de tu navegador (sin acentos). Si Miku no "
+       "reconoce las tuyas, mirá cómo se llama con: python -m miku.servicios.habitos", "lista",
+       usado_por="habitos"),
     _o("telegram_aprobar_seg", 20.0, "avisos",
        "Si Miku te hace una pregunta por voz (por ejemplo '¿Apago la PC?') y no la contestás en estos segundos, "
        "te la manda al celular por Telegram con botones Sí / No (0 = no mandar). Necesita el bot de Telegram "
@@ -560,6 +583,7 @@ REQUISITOS: Dict[str, Tuple[str, Sequence[Sequence[str]]]] = {
     "video_interpolador": ("interpolar videos",
                            [("carpeta_videos",), ("ruta_bat_interpolar",)]),
     "game_booster": ("el modo gaming automático", [("juegos_booster",)]),
+    "habitos": ("el control de hábitos", [("habitos_vigilar", "habitos_incognito")]),
     "browser": ("controlar Brave", [("brave_ruta_exe",)]),
 }
 

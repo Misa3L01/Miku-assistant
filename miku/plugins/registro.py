@@ -62,6 +62,9 @@ _CATALOGO: List[_Entrada] = [
              lambda cfg: bool(cfg.juegos_booster)),
     # Anota el tiempo de uso por programa (solo nombres y minutos) y lleva la cuenta de juego seguido.
     _Entrada("sistema.uso_pc", "UsoPC", lambda cfg: bool(cfg.get("uso_registro", True))),
+    # Rezonga por las páginas de tu lista (HABITOS_VIGILAR) o por el incógnito: sin nada que vigilar, ni se importa.
+    _Entrada("asistente.habitos", "Habitos",
+             lambda cfg: bool(cfg.get("habitos_vigilar")) or bool(cfg.get("habitos_incognito", False))),
     _Entrada("pantalla.vision", "Vision"),
     _Entrada("productividad.todoist", "Todoist"),
     _Entrada("productividad.comedor", "Comedor",

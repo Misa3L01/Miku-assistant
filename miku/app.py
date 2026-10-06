@@ -118,6 +118,8 @@ class Asistente:
     def __init__(self, cfg: "config_mod.Config") -> None:
         self.cfg = cfg
         self.bus = EventBus()
+        # Los plugins que quieren preguntarte algo por su cuenta (control de hábitos) usan esto.
+        self.bus.preguntar = self.preguntar_proactivo
         self.parser: Optional[CommandParser] = None
         # Objeto de voz (se crea la primera vez que hace falta hablar).
         self.voice = None
@@ -285,6 +287,27 @@ class Asistente:
         return self.voice
 
     # ---------------- Preguntas al celular (botones Sí / No por Telegram) ----------------
+    def preguntar_proactivo(self, texto: str, tool: str, args: Dict[str, Any],
+                            al_cancelar: Optional[Callable[[], str]] = None) -> bool:
+        """Miku te hace una pregunta por su cuenta ("¿La cierro?") y espera tu sí / no.
+
+        La dice en voz alta, abre el micrófono para que contestes "sí" a secas (en modo voz), la muestra en la
+        ventana de texto y, si no contestás a tiempo, la manda al celular con botones. Con tu "sí" se ejecuta
+        ``tool`` con ``args``; con tu "no" se dice lo que devuelva ``al_cancelar``.
+
+        Returns:
+            False si no se pudo preguntar (ya había otra pregunta esperando respuesta).
+        """
+        if self.parser is None or self.parser.preguntar(tool, args, texto, al_cancelar) is None:
+            return False
+        self.decir(texto)
+        if self.consola is not None:
+            self.consola.agregar("Miku", texto)
+        if self.stt is not None and self.modo == "voz":
+            self.stt.esperar_respuesta()
+        self._pregunta_al_celular()
+        return True
+
     def _plugin(self, nombre: str) -> Any:
         """Un plugin del bus por su nombre (None si no está cargado)."""
         for p in getattr(self.bus, "plugins", []) or []:

@@ -465,6 +465,8 @@ class CommandParser:
         self._confirmacion_id = 0
         self._pregunta_texto = ""
         self._boton_hasta = 0.0
+        #: Qué decir si contestás "no" a una pregunta que inició Miku (None = el "Cancelado" de siempre).
+        self._al_cancelar: Optional[Callable[[], str]] = None
 
         # ``procesar`` se llama desde hilos distintos (escucha de voz,
         # ventana de texto, Telegram) y comparte el estado de confirmación /
@@ -774,6 +776,7 @@ class CommandParser:
         self._confirmacion_desde = time.monotonic()
         self._confirmacion_id += 1
         self._boton_hasta = 0.0
+        self._al_cancelar = None
         self._pregunta_texto = self._texto_de_pregunta(tool, args)
         return self._pregunta_texto
 
@@ -848,6 +851,29 @@ class CommandParser:
             return True
         return self._pendiente_desambiguacion is not None
 
+    def preguntar(self, tool: str, args: Dict[str, Any], pregunta: str,
+                  al_cancelar: Optional[Callable[[], str]] = None) -> Optional[str]:
+        """Deja pendiente una pregunta que **inicia Miku** (no el LLM), con el texto que quiera.
+
+        Si contestás "sí", se ejecuta ``tool`` con ``args`` (la tool la maneja un plugin, igual que las
+        confirmaciones de siempre); si contestás "no", se dice lo que devuelva ``al_cancelar``. Todo lo demás
+        funciona igual: el "sí" suelto vence al minuto, los botones del celular, la ventana de respuesta...
+
+        Returns:
+            La pregunta, o None si ya había otra pregunta esperando respuesta (no se la pisa).
+        """
+        with self._lock:
+            if self._espera_confirmacion and (not self._confirmacion_vencida() or self._boton_vigente()):
+                return None
+            self._pendiente_peligroso = {"tool": str(tool), "args": dict(args or {})}
+            self._espera_confirmacion = True
+            self._confirmacion_desde = time.monotonic()
+            self._confirmacion_id += 1
+            self._boton_hasta = 0.0
+            self._pregunta_texto = pregunta
+            self._al_cancelar = al_cancelar
+            return pregunta
+
     def pregunta_pendiente(self) -> Optional[Tuple[int, str]]:
         """``(número, texto)`` de la confirmación que espera respuesta ahora, o None.
 
@@ -895,6 +921,7 @@ class CommandParser:
         self._pendiente_peligroso = None
         self._confirmacion_desde = 0.0
         self._boton_hasta = 0.0
+        self._al_cancelar = None
 
     def _confirmacion_vencida(self) -> bool:
         """True si la confirmación pendiente superó ``_TTL_CONFIRMACION``."""
@@ -917,7 +944,13 @@ class CommandParser:
 
         # Cancelar tiene prioridad: "no, dale" o "no lo hagas, ok" NO ejecutan.
         if palabras & self._CANCELAR:
+            al_cancelar = self._al_cancelar
             self._limpiar_confirmacion()
+            if al_cancelar is not None:
+                try:
+                    return al_cancelar() or "Cancelado, no hice nada."
+                except Exception:  # noqa: BLE001
+                    logger.exception("Falló la respuesta al 'no' de una pregunta propia.")
             return "Cancelado, no hice nada."
 
         # Si el usuario confirma -> se ejecuta la tool pendiente.
