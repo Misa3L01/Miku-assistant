@@ -565,14 +565,16 @@ LLM_API_KEY = ""
 # Control de hábitos: palabras de las páginas que querés evitar. Si el título de la
 # pestaña que tenés a la vista en el navegador contiene alguna (sin importar mayúsculas
 # ni acentos) y seguís ahí unos segundos, Miku te rezonga y pregunta '¿la cierro?'. Con
-# tu 'sí' cierra esa pestaña. Para ver cómo se llama tu ventana: python -m
-# miku.servicios.habitos
+# tu 'sí' cierra esa pestaña. Usá una palabra que SALGA en el título: en un video de
+# YouTube Shorts el título es el del video (no dice 'shorts'). Para ver qué título lee
+# Miku: python -m miku.servicios.habitos
 # (usado por: habitos)
 # HABITOS_VIGILAR = ["facebook", "tiktok", "youtube shorts"]
 
-# Control de hábitos: rezongar también por CUALQUIER ventana de incógnito, aunque la
-# página no esté en tu lista. (Las páginas de tu lista saltan igual dentro de una
-# ventana de incógnito.)
+# Control de hábitos: rezongar también por una ventana de incógnito, aunque la página no
+# esté en tu lista. Ojo: Brave y Chrome solo ponen 'privada' en el título de la pestaña
+# NUEVA; con una página cargada la ventana se ve igual que una normal. Las páginas de tu
+# lista saltan igual dentro de incógnito.
 # (usado por: habitos)
 # HABITOS_INCOGNITO = False
 
@@ -594,7 +596,7 @@ LLM_API_KEY = ""
 # acentos). Si Miku no reconoce las tuyas, mirá cómo se llama con: python -m
 # miku.servicios.habitos
 # (usado por: habitos)
-# HABITOS_MARCAS_INCOGNITO = ['incognito', 'inprivate', '(private)', 'private browsing', 'navegacion privada', '(privado)', '(privada)']
+# HABITOS_MARCAS_INCOGNITO = ['incognito', 'inprivate', '(private)', 'private browsing', 'navegacion privada', '(privado)', '(privada)', 'pestana privada', 'private new tab', 'ventana privada']
 
 # Ideas guardadas: guardar una captura o foto para revisarla más tarde y que Miku te la
 # recuerde. Se las pasás por Telegram (foto o captura) o con la voz: 'guardá la última

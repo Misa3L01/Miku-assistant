@@ -106,9 +106,19 @@ def test_el_incognito_solo_cuenta_si_se_pide():
 
 @pytest.mark.parametrize("titulo", ["Nueva pestaña - Google Chrome (Incógnito)", "Inicio - Microsoft Edge InPrivate",
                                     "Nueva pestaña - Brave (Private)", "Mozilla Firefox Private Browsing",
-                                    "Inicio - Firefox (Navegación privada)"])
+                                    "Inicio - Firefox (Navegación privada)", "Nueva pestaña privada - Brave",
+                                    "Private New Tab - Brave"])
 def test_marcas_de_incognito_de_cada_navegador(titulo):
     assert habitos.es_incognito(titulo) is True
+
+
+def test_una_pagina_cargada_en_una_ventana_privada_de_brave_se_ve_como_normal_pero_la_regla_salta():
+    """Límite real de Brave (visto con el diagnóstico): con una página cargada, el título no dice que es privada."""
+    cargada = ventana("Facebook - Brave")
+    assert habitos.es_incognito("Facebook - Brave") is False
+    v = Vigilante(habitos.cargar_reglas(["facebook"]))
+    d = v.coincidencia(cargada)
+    assert d is not None and d.clave == "facebook", "igual se la detecta, por el nombre de la página"
 
 
 def test_una_pagina_de_la_lista_dentro_de_incognito_salta_por_la_pagina():

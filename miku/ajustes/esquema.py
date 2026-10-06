@@ -124,12 +124,14 @@ _OPCIONES: List[Opcion] = [
     _o("habitos_vigilar", [], "avisos",
        "Control de hábitos: palabras de las páginas que querés evitar. Si el título de la pestaña que tenés a la "
        "vista en el navegador contiene alguna (sin importar mayúsculas ni acentos) y seguís ahí unos segundos, "
-       "Miku te rezonga y pregunta '¿la cierro?'. Con tu 'sí' cierra esa pestaña. Para ver cómo se llama tu "
-       "ventana: python -m miku.servicios.habitos", "lista",
+       "Miku te rezonga y pregunta '¿la cierro?'. Con tu 'sí' cierra esa pestaña. Usá una palabra que SALGA en el "
+       "título: en un video de YouTube Shorts el título es el del video (no dice 'shorts'). Para ver qué título "
+       "lee Miku: python -m miku.servicios.habitos", "lista",
        'HABITOS_VIGILAR = ["facebook", "tiktok", "youtube shorts"]', "habitos"),
     _o("habitos_incognito", False, "avisos",
-       "Control de hábitos: rezongar también por CUALQUIER ventana de incógnito, aunque la página no esté en tu "
-       "lista. (Las páginas de tu lista saltan igual dentro de una ventana de incógnito.)", "booleano",
+       "Control de hábitos: rezongar también por una ventana de incógnito, aunque la página no esté en tu lista. "
+       "Ojo: Brave y Chrome solo ponen 'privada' en el título de la pestaña NUEVA; con una página cargada la "
+       "ventana se ve igual que una normal. Las páginas de tu lista saltan igual dentro de incógnito.", "booleano",
        usado_por="habitos"),
     _o("habitos_espera_seg", 10.0, "avisos",
        "Segundos seguidos en la página antes de que Miku te rezongue (un vistazo o un alt-tab no cuentan).",
@@ -140,7 +142,8 @@ _OPCIONES: List[Opcion] = [
     _o("habitos_navegadores", ["brave", "chrome", "msedge", "firefox", "opera", "vivaldi"], "avisos",
        "Programas que cuentan como navegador (el nombre del proceso, sin .exe).", "lista", usado_por="habitos"),
     _o("habitos_marcas_incognito", ["incognito", "inprivate", "(private)", "private browsing", "navegacion privada",
-                                    "(privado)", "(privada)"], "avisos",
+                                    "(privado)", "(privada)", "pestana privada", "private new tab",
+                                    "ventana privada"], "avisos",
        "Textos que aparecen en el título de una ventana de incógnito de tu navegador (sin acentos). Si Miku no "
        "reconoce las tuyas, mirá cómo se llama con: python -m miku.servicios.habitos", "lista",
        usado_por="habitos"),

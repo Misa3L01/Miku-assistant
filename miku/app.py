@@ -300,6 +300,7 @@ class Asistente:
         """
         if self.parser is None or self.parser.preguntar(tool, args, texto, al_cancelar) is None:
             return False
+        logger.info("Miku pregunta por su cuenta: %s", texto)
         self.decir(texto)
         if self.consola is not None:
             self.consola.agregar("Miku", texto)

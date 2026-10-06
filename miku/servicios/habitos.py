@@ -36,8 +36,11 @@ logger = logging.getLogger("miku.servicios.habitos")
 NAVEGADORES = ("brave", "chrome", "msedge", "firefox", "opera", "vivaldi")
 #: Textos que aparecen en el título de una ventana privada. Cada navegador (y cada idioma) usa los suyos: si el
 #: tuyo no está, se agrega en ``HABITOS_MARCAS_INCOGNITO`` (el diagnóstico muestra cómo se llama).
+#: Ojo: Brave y Chrome solo marcan así la pestaña NUEVA de una ventana privada ("Nueva pestaña privada - Brave");
+#: apenas carga una página, el título es el de la página, igual que en una ventana normal. Por eso lo que se
+#: detecta siempre es la página de tu lista, esté en una ventana normal o en una privada.
 MARCAS_INCOGNITO = ("incognito", "inprivate", "(private)", "private browsing", "navegacion privada",
-                    "(privado)", "(privada)")
+                    "(privado)", "(privada)", "pestana privada", "private new tab", "ventana privada")
 #: Segundos seguidos en la página antes de rezongar (un vistazo o un alt-tab no cuentan).
 ESPERA_SEG = 10.0
 #: Minutos sin volver a preguntar por la misma regla.
