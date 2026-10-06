@@ -459,6 +459,12 @@ class CommandParser:
         # ``_TTL_CONFIRMACION`` segundos se descarta, para que un "sí" perdido
         # más tarde no ejecute una acción peligrosa que nadie recuerda.
         self._confirmacion_desde: float = 0.0
+        # Cada confirmación tiene un número, y el texto de su pregunta: así se la puede mandar al celular con
+        # botones Sí/No y saber, cuando alguien toca uno, si la pregunta sigue siendo esa. ``_boton_hasta``
+        # (time.monotonic) es hasta cuándo valen esos botones, más que el "sí" suelto (ver ``habilitar_boton``).
+        self._confirmacion_id = 0
+        self._pregunta_texto = ""
+        self._boton_hasta = 0.0
 
         # ``procesar`` se llama desde hilos distintos (escucha de voz,
         # ventana de texto, Telegram) y comparte el estado de confirmación /
@@ -557,10 +563,14 @@ class CommandParser:
             return "Sí? No escuché nada."
 
         # 1) Confirmación de acción peligrosa pendiente (estado persistente).
+        por_texto = True
         if self._espera_confirmacion and self._confirmacion_vencida():
-            logger.info("La confirmación pendiente venció; se descarta.")
-            self._limpiar_confirmacion()
-        if self._espera_confirmacion:
+            if self._boton_vigente():
+                por_texto = False         # un "sí" suelto ya no vale, pero los botones del celular todavía sí
+            else:
+                logger.info("La confirmación pendiente venció; se descarta.")
+                self._limpiar_confirmacion()
+        if self._espera_confirmacion and por_texto:
             resultado = self._manejar_confirmacion(texto, contexto)
             if resultado is not None:
                 return resultado
@@ -762,7 +772,13 @@ class CommandParser:
         self._pendiente_peligroso = {"tool": tool, "args": dict(args or {})}
         self._espera_confirmacion = True
         self._confirmacion_desde = time.monotonic()
+        self._confirmacion_id += 1
+        self._boton_hasta = 0.0
+        self._pregunta_texto = self._texto_de_pregunta(tool, args)
+        return self._pregunta_texto
 
+    def _texto_de_pregunta(self, tool: str, args: Dict[str, Any]) -> str:
+        """La pregunta corta de confirmación de ``tool`` ("¿Apago la PC?")."""
         if tool == "control_energia":
             accion = str((args or {}).get("accion", "")).lower().strip()
             if not accion:
@@ -832,11 +848,53 @@ class CommandParser:
             return True
         return self._pendiente_desambiguacion is not None
 
+    def pregunta_pendiente(self) -> Optional[Tuple[int, str]]:
+        """``(número, texto)`` de la confirmación que espera respuesta ahora, o None.
+
+        La app la usa para mandar la pregunta al celular si no la contestás.
+        """
+        with self._lock:
+            if self._espera_confirmacion and not self._confirmacion_vencida():
+                return self._confirmacion_id, self._pregunta_texto
+            return None
+
+    def habilitar_boton(self, numero: int, segundos: float) -> bool:
+        """Deja vigentes los botones del celular de la pregunta ``numero`` durante ``segundos``.
+
+        Un "sí" dicho o escrito vence a los ``_TTL_CONFIRMACION`` s (por seguridad: un "sí" perdido no debe
+        disparar nada). Un botón es otra cosa: es una respuesta deliberada a ESA pregunta, y como suele tocarse
+        desde el celular lejos de la PC, necesita más margen.
+        """
+        with self._lock:
+            if not self._espera_confirmacion or numero != self._confirmacion_id or self._confirmacion_vencida():
+                return False
+            self._boton_hasta = time.monotonic() + max(0.0, float(segundos))
+            return True
+
+    def resolver_confirmacion(self, numero: int, acepta: bool, contexto: Dict[str, Any]) -> Optional[str]:
+        """Resuelve la pregunta ``numero`` con un botón (Sí / No). None si ya no está pendiente.
+
+        Es lo que hace un toque en el celular. Si esa pregunta ya se contestó (por voz, por ejemplo), se
+        venció o la reemplazó otra, devuelve None y no hace nada: un botón viejo nunca ejecuta una acción nueva.
+        """
+        with self._lock:
+            if not self._espera_confirmacion or numero != self._confirmacion_id:
+                return None
+            if self._confirmacion_vencida() and not self._boton_vigente():
+                self._limpiar_confirmacion()
+                return None
+            return self._manejar_confirmacion("sí" if acepta else "no", contexto)
+
+    def _boton_vigente(self) -> bool:
+        """True si los botones del celular de la pregunta pendiente todavía valen."""
+        return time.monotonic() < self._boton_hasta
+
     def _limpiar_confirmacion(self) -> None:
         """Borra el estado de confirmación pendiente."""
         self._espera_confirmacion = False
         self._pendiente_peligroso = None
         self._confirmacion_desde = 0.0
+        self._boton_hasta = 0.0
 
     def _confirmacion_vencida(self) -> bool:
         """True si la confirmación pendiente superó ``_TTL_CONFIRMACION``."""

@@ -189,6 +189,7 @@ sacale el `#`. Las opciones principales:
 | `GEMINI_API_KEY`, `GEMINI_MODELO` | Visión de pantalla | `vision` |
 | `TODOIST_API_TOKEN` | Tareas | `todoist` |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Control remoto (el ID es **tu id de usuario**) | `telegram_control` |
+| `TELEGRAM_APROBAR_SEG`, `TELEGRAM_APROBAR_VENCE_MIN` | Preguntas al celular con botones Sí / No | `telegram_control` |
 | `PROACTIVO_*` | Avisos proactivos: clima, estado de la PC, batería, disco, horario de silencio | `asistente_proactivo` |
 | `DISCORD_BOT_TOKEN`, `DISCORD_GUILD_ID` | Bot de Discord | `discord_control` |
 
@@ -260,6 +261,7 @@ Cada plugin declara en `peligrosas` qué tools exigen confirmación (`energia`: 
 - **Confirma** solo con palabras completas ("sí", "dale", "ok", "confirmo"…). "No, dejalo así" **no** confirma.
 - **Cancelar tiene prioridad** ("no, dale" cancela).
 - **Vence a los 60 s**: un "sí" perdido más tarde no dispara nada.
+- **Si no estás frente a la PC**: cuando Miku te pregunta por voz y pasan `TELEGRAM_APROBAR_SEG` segundos (20 por defecto) sin respuesta, la pregunta te llega a Telegram con botones **✅ Sí / ❌ No**. Un toque la resuelve en la PC y el mensaje se actualiza con el resultado. Lo que contestes primero (voz o celular) vale, y el otro queda como "ya resuelto". Cada pregunta tiene su número: un botón viejo **nunca** ejecuta una acción nueva. Los botones valen `TELEGRAM_APROBAR_VENCE_MIN` minutos (5): como los tocás lejos de la PC necesitan más margen que un "sí" suelto, que sigue venciendo al minuto. Solo escribe a tu `TELEGRAM_CHAT_ID` y solo atiende tus toques. Apagalo con `TELEGRAM_APROBAR_SEG = 0`.
 - **Preguntas cortas**, para que no tarden en decirse: "¿Lo hago?", "¿Apago la PC?", "¿Le mando 'hola' a Mati?".
 - **Se contesta sin decir "Miku"**: apenas Miku termina de preguntar, el micrófono se abre unos 6 s y un "sí" o un "no" a secas alcanza (también para elegir entre varias opciones: "el 2"). Si contestás otra cosa o no decís nada, la pregunta sigue pendiente hasta los 60 s, pero para retomarla hay que volver a decir "Miku". Con el teclado se contesta directo, como siempre.
 

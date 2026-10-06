@@ -7,6 +7,9 @@ asistente en la PC (así "interpolá el último video" o "recordame X" funcionan
 remotos). NO prende la PC (fuera de alcance): solo ejecuta comandos mientras el
 asistente está corriendo.
 
+Preguntas con botones: si Miku te pregunta algo ("¿Apago la PC?") y no contestás a tiempo, la app la manda
+acá con botones Sí / No (``preguntar``); un toque la resuelve en la PC (``_on_boton``).
+
 Seguridad: solo responde al ``TELEGRAM_CHAT_ID`` autorizado (en config_local).
 Si no hay token/chat, el plugin queda inactivo (no rompe el arranque).
 
@@ -22,11 +25,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
+from miku.plataforma import red
 from miku.plugins.base import Plugin
 
 logger = logging.getLogger("miku.plugins.telegram_control")
+
+_API = "https://api.telegram.org/bot{token}/{metodo}"
 
 
 class TelegramControl(Plugin):
@@ -44,6 +50,8 @@ class TelegramControl(Plugin):
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._app = None
         self._parser = None
+        # Preguntas con botones que quedaron en el chat: número -> (chat, id del mensaje, texto del mensaje).
+        self._preguntas: Dict[int, Tuple[str, int, str]] = {}
 
     # ---------------------------------------------------------- #
     def initialize(self, event_bus: Any = None) -> None:
@@ -98,8 +106,8 @@ class TelegramControl(Plugin):
         Corre ``run_polling`` hasta que el loop se detiene (cerrar()).
         """
         try:
-            from telegram.ext import (ApplicationBuilder, CommandHandler,
-                                      MessageHandler, filters)
+            from telegram.ext import (ApplicationBuilder, CallbackQueryHandler,
+                                      CommandHandler, MessageHandler, filters)
         except Exception as e:  # noqa: BLE001
             logger.error("No pude importar telegram.ext: %s", e)
             return
@@ -117,6 +125,7 @@ class TelegramControl(Plugin):
             app.add_handler(CommandHandler("pendientes", self._cmd_pendientes))
             app.add_handler(MessageHandler(
                 filters.TEXT & ~filters.COMMAND, self._on_texto))
+            app.add_handler(CallbackQueryHandler(self._on_boton))
             logger.info("Telegram: iniciando polling...")
             # ``stop_signals=None``: no instalar handlers de señales (solo se
             # puede desde el hilo principal y acá corremos en un hilo aparte).
@@ -182,6 +191,88 @@ class TelegramControl(Plugin):
         respuesta = await asyncio.to_thread(self._respuesta_local, texto)
         # Telegram limita a ~4096 chars por mensaje: recortamos por seguridad.
         await update.message.reply_text(respuesta[:4000])
+
+    # ---------------- Preguntas con botones ----------------
+    def preguntar(self, numero: int, texto: str) -> bool:
+        """Manda ``texto`` al celular con botones Sí / No. True si el mensaje salió.
+
+        ``numero`` es el de la pregunta en el parser (``pregunta_pendiente``): el botón lo lleva consigo para que
+        un toque viejo no resuelva una pregunta nueva. Solo escribe al ``TELEGRAM_CHAT_ID`` configurado.
+        """
+        from miku.ajustes import carga as config_mod
+        token, chat = config_mod.config.telegram_bot_token, config_mod.config.telegram_chat_id
+        if not token or not chat:
+            return False
+        mensaje = f"🎙️ Miku pregunta:\n{texto}"
+        teclado = {"inline_keyboard": [[{"text": "✅ Sí", "callback_data": f"ok:{numero}"},
+                                        {"text": "❌ No", "callback_data": f"no:{numero}"}]]}
+        try:
+            resp = red.post(_API.format(token=token, metodo="sendMessage"), timeout=10,
+                            json={"chat_id": chat, "text": mensaje, "reply_markup": teclado})
+            datos = resp.json()
+        except Exception as e:  # noqa: BLE001
+            # Solo el tipo del error: el texto de una excepción de red trae la URL, y la URL lleva el token.
+            logger.warning("No pude mandar la pregunta a Telegram (%s).", type(e).__name__)
+            return False
+        if resp.status_code != 200 or not datos.get("ok"):
+            logger.warning("Telegram no aceptó la pregunta (HTTP %s).", resp.status_code)
+            return False
+        self._preguntas[numero] = (str(chat), int(datos["result"]["message_id"]), mensaje)
+        logger.info("Pregunta mandada al celular: %s", texto)
+        return True
+
+    def cerrar_pregunta(self, numero: int, nota: str) -> None:
+        """Quita los botones de una pregunta que ya se resolvió en la PC y le deja una nota."""
+        datos = self._preguntas.pop(numero, None)
+        if datos is None:
+            return
+        chat, mensaje_id, texto = datos
+        from miku.ajustes import carga as config_mod
+        token = config_mod.config.telegram_bot_token
+        try:
+            red.post(_API.format(token=token, metodo="editMessageText"), timeout=10,
+                     json={"chat_id": chat, "message_id": mensaje_id, "text": f"{texto}\n\n{nota}"})
+        except Exception as e:  # noqa: BLE001
+            logger.debug("No pude actualizar la pregunta en Telegram (%s).", type(e).__name__)
+
+    async def _on_boton(self, update: Any, context: Any) -> None:
+        """Un toque en Sí / No de una pregunta de Miku: se resuelve en la PC y se avisa el resultado."""
+        consulta = update.callback_query
+        if consulta is None:
+            return
+        if not self._autorizado(update):
+            await consulta.answer()
+            return
+        accion, _, numero = str(consulta.data or "").partition(":")
+        if accion not in ("ok", "no") or not numero.isdigit():
+            await consulta.answer()
+            return
+        acepta = accion == "ok"
+        # Ejecutar la acción puede tardar (es la tool de verdad): fuera del event loop del bot.
+        resultado = await asyncio.to_thread(self._resolver_boton, int(numero), acepta)
+        self._preguntas.pop(int(numero), None)
+        original = (consulta.message.text if consulta.message else "") or ""
+        if resultado is None:
+            await consulta.answer("Eso ya estaba resuelto.")
+            nota = "Ya estaba resuelto en la PC."
+        else:
+            await consulta.answer("Listo")
+            nota = ("✅ Sí: " if acepta else "❌ No: ") + resultado
+        try:
+            await consulta.edit_message_text(f"{original}\n\n{nota}"[:4000])    # sin reply_markup: quita los botones
+        except Exception:  # noqa: BLE001
+            logger.debug("No pude actualizar el mensaje de la pregunta.", exc_info=True)
+
+    def _resolver_boton(self, numero: int, acepta: bool) -> Optional[str]:
+        """Resuelve la pregunta ``numero`` en el parser (None si ya no está pendiente)."""
+        parser = self._parser or getattr(self._event_bus, "parser", None)
+        if parser is None:
+            return None
+        try:
+            return parser.resolver_confirmacion(numero, acepta, self._contexto())
+        except Exception:  # noqa: BLE001
+            logger.exception("Error resolviendo la pregunta desde Telegram.")
+            return "Tuve un problema ejecutándolo."
 
     # ---------------- Puente al parser ----------------
     def _respuesta_local(self, texto: str) -> str:

@@ -368,6 +368,9 @@ class ParserFalso:
     def espera_respuesta(self):
         return self.espera
 
+    def pregunta_pendiente(self):
+        return None                     # el envío al celular se prueba en test_aprobar_telegram.py
+
 
 def test_si_miku_hizo_una_pregunta_el_microfono_se_abre_para_la_respuesta(asistente, monkeypatch):
     asistente.stt, asistente.parser = STTFalso(), ParserFalso(espera=True)

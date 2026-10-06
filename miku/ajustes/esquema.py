@@ -121,6 +121,14 @@ _OPCIONES: List[Opcion] = [
        "texto", usado_por="whatsapp", permitidos=("minimizada", "normal", "oculta")),
     _o("whatsapp_puerto", 9225, "navegador",
        "Puerto de depuración del Brave aparte de WhatsApp.", "entero", usado_por="whatsapp"),
+    _o("telegram_aprobar_seg", 20.0, "avisos",
+       "Si Miku te hace una pregunta por voz (por ejemplo '¿Apago la PC?') y no la contestás en estos segundos, "
+       "te la manda al celular por Telegram con botones Sí / No (0 = no mandar). Necesita el bot de Telegram "
+       "configurado (TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID).", "decimal", usado_por="telegram_control"),
+    _o("telegram_aprobar_vence_min", 5.0, "avisos",
+       "Minutos que valen esos botones en el celular. Un 'sí' dicho o escrito en la PC sigue venciendo al "
+       "minuto (por seguridad); los botones necesitan más margen porque los tocás lejos de la PC.", "decimal",
+       usado_por="telegram_control"),
     _o("telegram_contactos", {}, "avisos",
        "Personas a las que Miku puede mandarles archivos por Telegram: nombre -> ID numérico de chat "
        "(deben haber iniciado tu bot con /start). Enviar a otra persona pide confirmación.", "mapa",

@@ -8,6 +8,6 @@
 - [x] Preguntas de confirmación cortas ("¿Lo hago?") y respuesta por voz sin decir "Miku" (el micrófono se abre unos segundos tras la pregunta).
 - [ ] Renombrar y copiar archivos en lote, con confirmación y deshacer (pospuesto a pedido de Misael).
 - [x] Registro de uso por programa (solo nombres y minutos) + "¿en qué gasté el tiempo?" + aviso cada 2 h de juego seguido (`USO_AVISO_HORAS`).
-- [ ] Aprobar desde el celular: si Miku pregunta y no contestás en 20 s, la pregunta llega por Telegram con botones Sí/No.
+- [x] Aprobar desde el celular: si Miku pregunta y no contestás en 20 s, la pregunta llega por Telegram con botones Sí/No.
 - [ ] Control de hábitos: si ves una página/palabra de tu lista (o incógnito), Miku te rezonga y pregunta "¿La cierro?".
 - [ ] Ideas guardadas: foto o captura (Telegram o "guardá la última captura") + recordatorio con botones (mañana / finde / semana).
