@@ -60,6 +60,8 @@ _CATALOGO: List[_Entrada] = [
     # Sin tools propias y sin efecto si no están configurados: ni se importan.
     _Entrada("gaming.game_booster", "GameBooster",
              lambda cfg: bool(cfg.juegos_booster)),
+    # Anota el tiempo de uso por programa (solo nombres y minutos) y lleva la cuenta de juego seguido.
+    _Entrada("sistema.uso_pc", "UsoPC", lambda cfg: bool(cfg.get("uso_registro", True))),
     _Entrada("pantalla.vision", "Vision"),
     _Entrada("productividad.todoist", "Todoist"),
     _Entrada("productividad.comedor", "Comedor",

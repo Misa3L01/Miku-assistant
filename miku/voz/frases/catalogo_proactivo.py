@@ -49,6 +49,11 @@ CATALOGO: Dict[str, List[str]] = {
         "Ojo que con {juego} la PC anda pesada, {detalle}. Cerrá lo que no necesites.",
         "{juego} está pidiendo bastante: {detalle}. Fijate si podés cerrar algo.",
     ],
+    "juego.horas": [
+        "Llevás {tiempo} con {juego}. Capaz te conviene tomarte un descanso.",
+        "Ya van {tiempo} seguidas de {juego}. Pará un rato, estirá las piernas y tomá agua.",
+        "{tiempo} jugando a {juego}. Hacé una pausa, dale.",
+    ],
     "pc.carga": [
         "La {recurso} está muy cargada hace un rato ({valor}%). Puede que algo esté trabado.",
         "Hace varios minutos que la {recurso} anda en {valor}%. Revisá qué la está usando.",
@@ -96,6 +101,7 @@ TITULOS: Dict[str, str] = {
     "clima.calor": "Hace calor",
     "pc.juego_tranquilo": "Estado de la PC",
     "pc.juego_exigente": "La PC va exigida",
+    "juego.horas": "A descansar un rato",
     "pc.carga": "PC muy cargada",
     "pc.gpu_caliente": "GPU muy caliente",
     "pc.bateria": "Batería baja",

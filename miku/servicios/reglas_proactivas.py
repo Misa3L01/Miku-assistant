@@ -42,6 +42,20 @@ def nombre_de_juego(proceso: str) -> str:
     return base.capitalize() or proceso
 
 
+def duracion_en_texto(segundos: float) -> str:
+    """"1 hora y 20 minutos", "45 minutos", "menos de un minuto": para decirlo en voz alta."""
+    minutos = int(round(max(0.0, segundos) / 60.0))
+    if minutos < 1:
+        return "menos de un minuto"
+    horas, resto = divmod(minutos, 60)
+    if horas == 0:
+        return f"{resto} minuto" + ("" if resto == 1 else "s")
+    texto = f"{horas} hora" + ("" if horas == 1 else "s")
+    if resto:
+        texto += f" y {resto} minuto" + ("" if resto == 1 else "s")
+    return texto
+
+
 # --------------------------------------------------------------------------- #
 # Batería y disco (las reglas de siempre, ahora con frases que rotan)
 # --------------------------------------------------------------------------- #
@@ -328,6 +342,38 @@ class ComedorDiario(Regla):
         return [Aviso("comedor.aviso", "comedor.es_hora", {"hora": hora}, una_vez_por_dia=True, cooldown_min=0)]
 
 
+class HorasDeJuego(Regla):
+    """Avisa cada ``USO_AVISO_HORAS`` horas de juego seguido ("llevás 2 horas con CS2, descansá un rato").
+
+    La sesión la lleva el vigía de uso (``servicios/uso.py``): solo cuenta el tiempo con el juego en primer
+    plano y una pausa larga la reinicia. Cada hito (2 h, 4 h...) tiene su propia clave con un cooldown de un
+    día: si el aviso no puede salir justo (horario de silencio), se reintenta hasta que pueda, y una vez
+    dicho no se repite.
+    """
+
+    nombre = "horas_juego"
+    intervalo = 30.0
+
+    def __init__(self, sesion: Callable[[], Optional[Tuple[str, float, int]]]) -> None:
+        self._sesion = sesion
+
+    def evaluar(self, ctx: Contexto) -> Iterable[Aviso]:
+        paso = _num(ctx.cfg, "uso_aviso_horas", 2.0) * 3600.0
+        if paso <= 0:
+            return ()
+        actual = self._sesion()
+        if not actual:
+            return ()
+        juego, segundos, numero = actual
+        hitos = int(segundos // paso)
+        if hitos < 1:
+            return ()
+        # De todos los hitos cumplidos solo se dice el último ("llevás 4 horas", no también "2 horas").
+        return [Aviso(f"juego.horas.{numero}.{hitos}", "juego.horas",
+                      {"juego": nombre_de_juego(juego), "tiempo": duracion_en_texto(hitos * paso)},
+                      cooldown_min=24 * 60, ignora_juego=True, urgente=True)]
+
+
 def reglas_por_defecto(cfg: Any, contexto: Callable[[], Optional[dict]] = lambda: None,
                        plugin: Callable[[str], Any] = lambda nombre: None) -> List[Regla]:
     """Conjunto de reglas del asistente según la configuración.
@@ -336,9 +382,13 @@ def reglas_por_defecto(cfg: Any, contexto: Callable[[], Optional[dict]] = lambda
         contexto: ``f() -> dict`` con el contexto de runtime (scheduler...) para el resumen al volver.
         plugin: ``f(nombre) -> plugin`` para las reglas que dependen de otro plugin (comedor).
     """
+    def sesion_de_juego() -> Optional[Tuple[str, float, int]]:
+        uso = plugin("uso_pc")
+        return uso.sesion_juego() if uso is not None else None
+
     reglas: List[Regla] = [BateriaBaja(cfg), DiscoLleno(cfg), EstadoAlJugar(), CargaSostenida(),
                            GpuCaliente(), BriefingAlVolver(contexto),
-                           ComedorDiario(lambda: plugin("comedor"))]
+                           ComedorDiario(lambda: plugin("comedor")), HorasDeJuego(sesion_de_juego)]
     if cfg.get("proactivo_clima", True):
         reglas.append(ClimaAvisos(cfg))
     return reglas

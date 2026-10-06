@@ -489,6 +489,24 @@ LLM_API_KEY = ""
 # (usado por: game_booster)
 # BOOSTER_VOLUMEN_OBJETIVO = 20
 
+# Anotar cuánto tiempo usás cada programa, para poder preguntarle '¿en qué gasté el
+# tiempo hoy?' y para el aviso de horas de juego. Solo guarda el nombre del programa y
+# los minutos (nunca títulos de ventana ni páginas), en data/uso.json.
+# (usado por: uso_pc)
+# USO_REGISTRO = True
+
+# Cada cuántas horas de juego seguido te avisa que descanses (0 = no avisar). Necesita
+# los avisos automáticos activos (PROACTIVO_ACTIVO) y JUEGOS_BOOSTER con tus juegos. De
+# noche respeta el horario de silencio de los avisos (PROACTIVO_SILENCIO_DESDE /
+# PROACTIVO_SILENCIO_HASTA).
+# (usado por: uso_pc)
+# USO_AVISO_HORAS = 2.0
+
+# Minutos sin jugar que cortan la cuenta de juego seguido (un alt-tab corto no la
+# corta).
+# (usado por: uso_pc)
+# USO_PAUSA_MIN = 15
+
 # Segundos seguidos fuera del juego antes de restaurar el volumen y avisar que salió.
 # Con un alt-tab más corto que esto no pasa nada. La entrada al juego sigue siendo
 # inmediata.

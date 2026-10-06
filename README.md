@@ -183,6 +183,7 @@ sacale el `#`. Las opciones principales:
 | `CIUDAD_CLIMA` (o `CLIMA_LAT`/`CLIMA_LON`) | Clima y briefing | `clima` |
 | `PERSONALIDAD` | Estilo por defecto | `personalidad` |
 | `JUEGOS_BOOSTER`, `BOOSTER_*` | Modo gaming automático | `game_booster` |
+| `USO_REGISTRO`, `USO_AVISO_HORAS`, `USO_PAUSA_MIN` | Registro de uso y aviso de horas de juego | `uso_pc` |
 | `BRAVE_RUTA_EXE`, `BRAVE_DEBUG_PORT`, `TIDAL_RUTA_EXE` | Brave por CDP y TIDAL | `browser`, `tidal` |
 | `TESSERACT_RUTA`, `OCR_IDIOMA` | OCR | `ocr` |
 | `GEMINI_API_KEY`, `GEMINI_MODELO` | Visión de pantalla | `vision` |
@@ -320,6 +321,7 @@ Se cargan de forma perezosa desde `miku/plugins/registro.py`; uno roto o sin dep
 | `traductor_juegos` | `traducir_mensaje_juego` (cualquier texto a **cualquier idioma**; deja el resultado **solo en el portapapeles**) | Groq; opcional `IDIOMA_JUEGO`, `PERFILES_JUEGO`, `MENSAJES_JUEGO` |
 | `discord_control` | `silenciar_usuario_discord` ⚠️, `volumen_usuario_discord` ⚠️, `expulsar_usuario_discord` ⚠️ | `DISCORD_BOT_TOKEN`, intent *Server Members* |
 | `game_booster` | *(automático)* baja el volumen de apps al detectar un juego y lo restaura al salir | `JUEGOS_BOOSTER` |
+| `uso_pc` | `tiempo_de_uso` ("¿en qué gasté el tiempo hoy / ayer / esta semana?"): minutos por programa y juego | `USO_REGISTRO` |
 | `asistente_proactivo` | *(automático)* avisos proactivos (ver abajo) | psutil, `CIUDAD_CLIMA` para el clima |
 | `telegram_control` | *(automático)* comandos remotos: texto libre, `/estado`, `/pendientes` | `python-telegram-bot`, token + tu user ID |
 
@@ -386,9 +388,12 @@ Un motor (`miku/servicios/proactivo.py`) revisa en segundo plano y Miku avisa **
 |---|---|
 | **Clima** | Va a llover en las próximas 6 h (≥60 %), está lloviendo, sensación térmica ≤12 °C (frío) o ≥32 °C (calor). **Como mucho una vez por día por condición**, y se recuerda aunque reinicies Miku. Necesita `CIUDAD_CLIMA` (o `CLIMA_LAT`/`CLIMA_LON`). |
 | **Estado al jugar** | ~45 s después de que arranca un juego de `JUEGOS_BOOSTER`: "todo tranquilo, CPU al 35 %, RAM…, GPU al 70 % a 65 grados", o una advertencia si va exigida. |
+| **Horas de juego** | Cada `USO_AVISO_HORAS` horas (2 por defecto) de juego seguido: "llevás 4 horas con Counter-Strike 2, descansá un rato". Cuenta solo el tiempo con el juego en primer plano; una pausa de más de `USO_PAUSA_MIN` minutos (15) reinicia la cuenta. Avisa aunque estés jugando, pero respeta el horario de silencio. |
 | **Carga sostenida** | CPU o RAM ≥92 % durante ~5 minutos (no por picos). |
 | **GPU caliente** | GPU NVIDIA por encima de 85 °C (avisa incluso jugando; usa `nvidia-smi`). |
 | **Batería / disco** | Batería baja sin cargador; poco espacio libre en el disco del sistema. |
+
+**Registro de uso.** Cada 5 s Miku anota qué programa tenés en primer plano y suma el tiempo (`data/uso.json`, no se sube a GitHub). **Solo guarda el nombre del programa y los minutos: nunca títulos de ventana, páginas ni capturas.** No cuenta el tiempo con la PC sola (más de 5 min sin tocar mouse ni teclado, salvo jugando) ni cuando estuvo suspendida. Se apaga con `USO_REGISTRO = False`.
 
 Política: **horario de silencio** (23:00–08:00 por defecto), **no molestar mientras jugás** (salvo estado al empezar y GPU caliente), cooldown por aviso y **máximo 4 por hora**. Todo se ajusta con las opciones `PROACTIVO_*` (`python -m miku.ajustes estado` las lista) y se apaga con `PROACTIVO_ACTIVO = False`.
 

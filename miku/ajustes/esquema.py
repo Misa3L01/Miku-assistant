@@ -422,6 +422,18 @@ _OPCIONES: List[Opcion] = [
     _o("booster_volumen_objetivo", 20, "juegos",
        "Volumen (0-100) al que se bajan esas apps mientras jugás.", "entero",
        usado_por="game_booster"),
+    _o("uso_registro", True, "juegos",
+       "Anotar cuánto tiempo usás cada programa, para poder preguntarle '¿en qué gasté el tiempo hoy?' y para "
+       "el aviso de horas de juego. Solo guarda el nombre del programa y los minutos (nunca títulos de "
+       "ventana ni páginas), en data/uso.json.", "booleano", usado_por="uso_pc"),
+    _o("uso_aviso_horas", 2.0, "juegos",
+       "Cada cuántas horas de juego seguido te avisa que descanses (0 = no avisar). Necesita los avisos "
+       "automáticos activos (PROACTIVO_ACTIVO) y JUEGOS_BOOSTER con tus juegos. De noche respeta el horario "
+       "de silencio de los avisos (PROACTIVO_SILENCIO_DESDE / PROACTIVO_SILENCIO_HASTA).", "decimal",
+       usado_por="uso_pc"),
+    _o("uso_pausa_min", 15, "juegos",
+       "Minutos sin jugar que cortan la cuenta de juego seguido (un alt-tab corto no la corta).", "entero",
+       usado_por="uso_pc"),
     _o("booster_espera_salida", 10.0, "juegos",
        "Segundos seguidos fuera del juego antes de restaurar el volumen y avisar que salió. Con un alt-tab "
        "más corto que esto no pasa nada. La entrada al juego sigue siendo inmediata.", "decimal",

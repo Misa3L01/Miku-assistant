@@ -59,7 +59,7 @@ def test_catalogo_proactivo_es_coherente():
         assert len(variantes) >= 3 or clave == "briefing.texto", clave
         # Rellenar con datos genéricos no debe dejar llaves sueltas.
         datos = {k: "1" for k in ("cuando", "prob", "sensacion", "juego", "detalle", "recurso",
-                                  "valor", "temp", "porcentaje", "libre", "texto")}
+                                  "valor", "temp", "porcentaje", "libre", "texto", "tiempo")}
         for _ in range(len(variantes) * 2):
             texto = b.elegir(clave, **datos)
             assert "{" not in texto and texto.strip()
